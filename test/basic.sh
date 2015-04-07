@@ -1,9 +1,7 @@
 test_basic_usage() {
   if ! lxc image alias list | grep -q ^testimage$; then
     if [ -e "$LXD_TEST_IMAGE" ]; then
-        IMAGE_SHA256=$(sha256sum "$LXD_TEST_IMAGE" | cut -d ' ' -f1)
-        lxc image import $LXD_TEST_IMAGE
-        lxc image alias create testimage $IMAGE_SHA256
+        lxc image import $LXD_TEST_IMAGE --alias testimage
     else
         ../scripts/lxd-images import busybox --alias testimage
     fi
@@ -24,8 +22,7 @@ test_basic_usage() {
 
   # Re-import the image
   mv ${LXD_DIR}/$name ${LXD_DIR}/testimage.tar.xz
-  lxc image import ${LXD_DIR}/testimage.tar.xz
-  lxc image alias create testimage $sum
+  lxc image import ${LXD_DIR}/testimage.tar.xz --alias testimage
   rm ${LXD_DIR}/testimage.tar.xz
 
   # Test filename for image export (should be "out")
@@ -36,7 +33,19 @@ test_basic_usage() {
   # Test container creation
   lxc init testimage foo
   lxc list | grep foo | grep STOPPED
+
+  # Test container rename
+  lxc move foo bar
+
+  # Test container copy
+  lxc copy bar foo
   lxc delete foo
+  lxc delete bar
+
+  # Test randomly named container creation
+  lxc init testimage
+  RDNAME=$(lxc list | grep STOPPED | cut -d' ' -f2)
+  lxc delete $RDNAME
 
   # Test "nonetype" container creation
   wait_for my_curl -X POST $BASEURL/1.0/containers \
@@ -61,8 +70,15 @@ test_basic_usage() {
 
   # cycle it a few times
   lxc start foo
+  mac1=$(lxc exec foo cat /sys/class/net/eth0/address)
   lxc stop foo  --force # stop is hanging
   lxc start foo
+  mac2=$(lxc exec foo cat /sys/class/net/eth0/address)
+
+  if [ "$mac1" != "$mac2" ]; then
+    echo "==> MAC addresses didn't match across restarts"
+    false
+  fi
 
   # check that we can set the environment
   lxc exec foo pwd | grep /root

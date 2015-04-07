@@ -179,7 +179,7 @@ func (c *imageCmd) run(config *lxd.Config, args []string) error {
 			return err
 		}
 		image := dereferenceAlias(d, inName)
-		return d.CopyImage(image, dest, copyAliases, addAliases)
+		return d.CopyImage(image, dest, copyAliases, addAliases, publicImage)
 
 	case "delete":
 		/* delete [<remote>:]<image> */
@@ -274,10 +274,12 @@ func (c *imageCmd) run(config *lxd.Config, args []string) error {
 			return err
 		}
 
-		_, err = d.PostImage(imagefile, properties, publicImage)
+		fingerprint, err := d.PostImage(imagefile, properties, publicImage, addAliases)
 		if err != nil {
 			return err
 		}
+
+		fmt.Printf(gettext.Gettext("Image imported with fingerprint: %s\n"), fingerprint)
 
 		return nil
 
@@ -294,27 +296,9 @@ func (c *imageCmd) run(config *lxd.Config, args []string) error {
 			return err
 		}
 
-		imagenames, err := d.ListImages()
+		images, err := d.ListImages()
 		if err != nil {
 			return err
-		}
-
-		images := []shared.ImageInfo{}
-		prefix := "/1.0/images/"
-		offset := len(prefix)
-		for _, image := range imagenames {
-			var plainname string
-			if len(image) < offset+1 {
-				fmt.Printf(gettext.Gettext("(Bad image entry: %s\n"), image)
-				continue
-			}
-			plainname = image[offset:]
-			info, err := d.GetImageInfo(plainname)
-			if err != nil {
-				// XXX should we warn?  bail?
-				continue
-			}
-			images = append(images, *info)
 		}
 
 		return showImages(images)

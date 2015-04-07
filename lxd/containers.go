@@ -1,16 +1,20 @@
 package main
 
 import (
+	"bytes"
+	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
+	"math/big"
 	"net/http"
 	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -89,6 +93,9 @@ type containerImageSource struct {
 	Mode       string            `json:"mode"`
 	Operation  string            `json:"operation"`
 	Websockets map[string]string `json:"secrets"`
+
+	/* for "copy" type */
+	Source string `json:"source"`
 }
 
 type containerPostReq struct {
@@ -130,6 +137,11 @@ func createFromImage(d *Daemon, req *containerPostReq) Response {
 		}
 	}
 
+	_, err = dbImageGet(d, uuid, false)
+	if err != nil {
+		return SmartError(err)
+	}
+
 	dpath := shared.VarPath("lxc", req.Name)
 	if shared.PathExists(dpath) {
 		return InternalError(fmt.Errorf("Container exists"))
@@ -145,7 +157,7 @@ func createFromImage(d *Daemon, req *containerPostReq) Response {
 	_, err = dbCreateContainer(d, name, cTypeRegular, req.Config, req.Profiles)
 	if err != nil {
 		removeContainerPath(d, name)
-		return InternalError(err)
+		return SmartError(err)
 	}
 
 	/*
@@ -159,7 +171,7 @@ func createFromNone(d *Daemon, req *containerPostReq) Response {
 
 	_, err := dbCreateContainer(d, req.Name, cTypeRegular, req.Config, req.Profiles)
 	if err != nil {
-		return InternalError(err)
+		return SmartError(err)
 	}
 
 	/* The container already exists, so don't do anything. */
@@ -175,16 +187,13 @@ func createFromMigration(d *Daemon, req *containerPostReq) Response {
 
 	_, err := dbCreateContainer(d, req.Name, cTypeRegular, req.Config, req.Profiles)
 	if err != nil {
-		if err == DbErrAlreadyDefined {
-			return Conflict
-		}
-		return InternalError(err)
+		return SmartError(err)
 	}
 
 	c, err := newLxdContainer(req.Name, d)
 	if err != nil {
 		removeContainer(d, req.Name)
-		return InternalError(err)
+		return SmartError(err)
 	}
 
 	// rsync complaisn if the parent directory for the rootfs sync doesn't
@@ -226,6 +235,38 @@ func createFromMigration(d *Daemon, req *containerPostReq) Response {
 	return &asyncResponse{run: run, containers: []string{req.Name}}
 }
 
+func createFromCopy(d *Daemon, req *containerPostReq) Response {
+	if req.Source.Source == "" {
+		return BadRequest(fmt.Errorf("must specify a source container"))
+	}
+
+	// Make sure the source exists.
+	_, err := newLxdContainer(req.Source.Source, d)
+	if err != nil {
+		return SmartError(err)
+	}
+
+	_, err = dbCreateContainer(d, req.Name, cTypeRegular, req.Config, req.Profiles)
+	if err != nil {
+		return SmartError(err)
+	}
+
+	dpath := shared.VarPath("lxc", req.Name)
+	if err := os.MkdirAll(dpath, 0700); err != nil {
+		removeContainer(d, req.Name)
+		return InternalError(err)
+	}
+
+	oldPath := migration.AddSlash(shared.VarPath("lxc", req.Source.Source, "rootfs"))
+	newPath := fmt.Sprintf("%s/%s", dpath, "rootfs")
+	run := func() shared.OperationResult {
+		err := exec.Command("rsync", "-a", "--devices", oldPath, newPath).Run()
+		return shared.OperationError(err)
+	}
+
+	return &asyncResponse{run: run, containers: []string{req.Name, req.Source.Source}}
+}
+
 func containersPost(d *Daemon, r *http.Request) Response {
 	shared.Debugf("responding to create")
 
@@ -250,6 +291,8 @@ func containersPost(d *Daemon, r *http.Request) Response {
 		return createFromNone(d, &req)
 	case "migration":
 		return createFromMigration(d, &req)
+	case "copy":
+		return createFromCopy(d, &req)
 	default:
 		return BadRequest(fmt.Errorf("unknown source type %s", req.Source.Type))
 	}
@@ -327,8 +370,6 @@ func extractShiftRootfs(uuid string, name string, d *Daemon) error {
 	return nil
 }
 
-var DbErrAlreadyDefined = fmt.Errorf("already exists")
-
 func dbRemoveContainer(d *Daemon, name string) {
 	_, _ = shared.DbExec(d.db, "DELETE FROM containers WHERE name=?", name)
 }
@@ -401,7 +442,7 @@ func containerGet(d *Daemon, r *http.Request) Response {
 	}
 	c, err := newLxdContainer(name, d)
 	if err != nil {
-		return InternalError(err)
+		return SmartError(err)
 	}
 
 	return SyncResponse(true, c.RenderState())
@@ -521,6 +562,19 @@ func dbInsertProfiles(tx *sql.Tx, id int, profiles []string) error {
 	return nil
 }
 
+// ExtractInterfaceFromConfigName returns "eth0" from "volatile.eth0.hwaddr",
+// or an error if the key does not match this pattern.
+func ExtractInterfaceFromConfigName(k string) (string, error) {
+
+	re := regexp.MustCompile("volatile\\.([^.]*)\\.hwaddr")
+	m := re.FindStringSubmatch(k)
+	if m != nil && len(m) > 1 {
+		return m[1], nil
+	}
+
+	return "", fmt.Errorf("%s did not match", k)
+}
+
 func ValidContainerConfigKey(k string) bool {
 	switch k {
 	case "limits.cpus":
@@ -532,6 +586,10 @@ func ValidContainerConfigKey(k string) bool {
 	case "raw.apparmor":
 		return true
 	case "raw.lxc":
+		return true
+	}
+
+	if _, err := ExtractInterfaceFromConfigName(k); err == nil {
 		return true
 	}
 
@@ -621,12 +679,12 @@ func containerPost(d *Daemon, r *http.Request) Response {
 	name := mux.Vars(r)["name"]
 	c, err := newLxdContainer(name, d)
 	if err != nil {
-		return InternalError(err)
+		return SmartError(err)
 	}
 
 	buf, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		return BadRequest(err)
+		return InternalError(err)
 	}
 
 	body := containerPostBody{}
@@ -642,16 +700,16 @@ func containerPost(d *Daemon, r *http.Request) Response {
 
 		return AsyncResponseWithWs(ws, nil)
 	} else {
+		if c.c.Running() {
+			return BadRequest(fmt.Errorf("renaming of running container not allowed"))
+		}
+
+		_, err := dbCreateContainer(d, body.Name, cTypeRegular, c.config, c.profiles)
+		if err != nil {
+			return SmartError(err)
+		}
+
 		run := func() error {
-			if c.c.Running() {
-				return fmt.Errorf("renaming of running container not allowed")
-			}
-
-			_, err := dbCreateContainer(d, body.Name, cTypeRegular, c.config, c.profiles)
-			if err != nil {
-				return err
-			}
-
 			oldPath := fmt.Sprintf("%s/", shared.VarPath("lxc", c.name))
 			newPath := fmt.Sprintf("%s/", shared.VarPath("lxc", body.Name))
 
@@ -671,7 +729,7 @@ func containerDelete(d *Daemon, r *http.Request) Response {
 	name := mux.Vars(r)["name"]
 	_, err := dbGetContainerId(d.db, name)
 	if err != nil {
-		return BadRequest(fmt.Errorf("Unknown container"))
+		return SmartError(err)
 	}
 	dirsToDelete := containerDeleteSnapshots(d, name)
 	dbRemoveContainer(d, name)
@@ -694,7 +752,7 @@ func containerStateGet(d *Daemon, r *http.Request) Response {
 	name := mux.Vars(r)["name"]
 	c, err := newLxdContainer(name, d)
 	if err != nil {
-		return InternalError(err)
+		return SmartError(err)
 	}
 
 	return SyncResponse(true, c.RenderState().Status)
@@ -738,11 +796,11 @@ func (c *lxdContainer) Freeze() error {
 	return c.c.Freeze()
 }
 
-func (c *lxdContainer) isUnprivileged() bool {
+func (c *lxdContainer) isPrivileged() bool {
 	switch strings.ToLower(c.config["security.privileged"]) {
-	case "0":
+	case "1":
 		return true
-	case "false":
+	case "true":
 		return true
 	}
 	return false
@@ -779,11 +837,15 @@ func (d *lxdContainer) applyConfig(config map[string]string) error {
 			err = d.c.SetConfigItem("lxc.cgroup.cpuset.cpus", cpuset)
 		case "limits.memory":
 			err = d.c.SetConfigItem("lxc.cgroup.memory.limit_in_bytes", v)
+
 		default:
 			if strings.HasPrefix(k, "user.") {
 				// ignore for now
 				err = nil
 			}
+
+			/* Things like security.privileged need to be propagatged */
+			d.config[k] = v
 		}
 		if err != nil {
 			shared.Debugf("error setting %s: %q\n", k, err)
@@ -832,6 +894,7 @@ func applyProfile(daemon *Daemon, d *lxdContainer, p string) error {
 			fmt.Printf("DBERR: applyProfile: scan returned error %q\n", err)
 			return err
 		}
+		shared.Debugf("applying %s: %s", k, v)
 		config[k] = v
 	}
 	err = rows.Err()
@@ -851,11 +914,92 @@ func applyProfile(daemon *Daemon, d *lxdContainer, p string) error {
 	return d.applyConfig(config)
 }
 
+// GenerateMacAddr generates a mac address from a string template:
+// e.g. "00:11:22:xx:xx:xx" -> "00:11:22:af:3e:51"
+func GenerateMacAddr(template string) (string, error) {
+	ret := bytes.Buffer{}
+
+	for _, c := range template {
+		if c == 'x' {
+			c, err := rand.Int(rand.Reader, big.NewInt(16))
+			if err != nil {
+				return "", err
+			}
+			ret.WriteString(fmt.Sprintf("%x", c.Int64()))
+		} else {
+			ret.WriteString(string(c))
+		}
+	}
+
+	return ret.String(), nil
+}
+
+func (c *lxdContainer) setupMacAddresses(d *Daemon) error {
+	newConfigEntries := map[string]string{}
+
+	for name, d := range c.devices {
+		if d["type"] != "nic" {
+			continue
+		}
+
+		found := false
+
+		for key, val := range c.config {
+			device, err := ExtractInterfaceFromConfigName(key)
+			if err == nil && device == name {
+				found = true
+				d["hwaddr"] = val
+			}
+		}
+
+		if !found {
+			var hwaddr string
+			var err error
+			if d["hwaddr"] != "" {
+				hwaddr, err = GenerateMacAddr(d["hwaddr"])
+				if err != nil {
+					return err
+				}
+			} else {
+				hwaddr, err = GenerateMacAddr("00:16:3e:xx:xx:xx")
+				if err != nil {
+					return err
+				}
+			}
+
+			if hwaddr != d["hwaddr"] {
+				d["hwaddr"] = hwaddr
+				key := fmt.Sprintf("volatile.%s.hwaddr", name)
+				c.config[key] = hwaddr
+				newConfigEntries[key] = hwaddr
+			}
+		}
+	}
+
+	if len(newConfigEntries) > 0 {
+
+		tx, err := d.db.Begin()
+		if err != nil {
+			return err
+		}
+
+		if err := dbInsertContainerConfig(tx, c.id, newConfigEntries); err != nil {
+			tx.Rollback()
+			return err
+		}
+
+		return shared.TxCommit(tx)
+	}
+
+	return nil
+}
+
 func (c *lxdContainer) applyDevices() error {
 	for name, d := range c.devices {
 		if name == "type" {
 			continue
 		}
+
 		configs, err := DeviceToLxc(d)
 		if err != nil {
 			return fmt.Errorf("Failed configuring device %s: %s\n", name, err)
@@ -863,7 +1007,7 @@ func (c *lxdContainer) applyDevices() error {
 		for _, line := range configs {
 			err := c.c.SetConfigItem(line[0], line[1])
 			if err != nil {
-				fmt.Errorf("Failed configuring device %s: %s\n", name, err)
+				return fmt.Errorf("Failed configuring device %s: %s\n", name, err)
 			}
 		}
 		shared.Debugf("Configured device %s\n", name)
@@ -975,13 +1119,17 @@ func newLxdContainer(name string, daemon *Daemon) (*lxdContainer, error) {
 		d.devices[k] = v
 	}
 
+	if err := d.setupMacAddresses(daemon); err != nil {
+		return nil, err
+	}
+
 	/* now add the lxc.* entries for the configured devices */
 	err = d.applyDevices()
 	if err != nil {
 		return nil, err
 	}
 
-	if !d.isUnprivileged() {
+	if !d.isPrivileged() {
 		uidstr := fmt.Sprintf("u 0 %d %d\n", daemon.idMap.Uidmin, daemon.idMap.Uidrange)
 		err = c.SetConfigItem("lxc.id_map", uidstr)
 		if err != nil {
@@ -1017,7 +1165,7 @@ func containerStatePut(d *Daemon, r *http.Request) Response {
 
 	c, err := newLxdContainer(name, d)
 	if err != nil {
-		return BadRequest(err)
+		return SmartError(err)
 	}
 
 	var do func() error
@@ -1049,7 +1197,7 @@ func containerFileHandler(d *Daemon, r *http.Request) Response {
 	name := mux.Vars(r)["name"]
 	c, err := newLxdContainer(name, d)
 	if err != nil {
-		return NotFound
+		return SmartError(err)
 	}
 
 	targetPath := r.FormValue("path")
@@ -1170,7 +1318,7 @@ func containerSnapshotsGet(d *Daemon, r *http.Request) Response {
 	rows, err := shared.DbQuery(d.db, "SELECT name FROM containers WHERE type=? AND SUBSTR(name,1,?)=?",
 		cTypeSnapshot, length, regexp)
 	if err != nil {
-		return InternalError(err)
+		return SmartError(err)
 	}
 	defer rows.Close()
 
@@ -1246,7 +1394,7 @@ func containerSnapshotsPost(d *Daemon, r *http.Request) Response {
 	 */
 	c, err := newLxdContainer(name, d)
 	if err != nil {
-		return InternalError(err)
+		return SmartError(err)
 	}
 
 	raw := shared.Jmap{}
@@ -1268,6 +1416,10 @@ func containerSnapshotsPost(d *Daemon, r *http.Request) Response {
 
 	fullName := fmt.Sprintf("%s/%s", name, snapshotName)
 	snapDir := snapshotDir(c, snapshotName)
+	if shared.PathExists(snapDir) {
+		return Conflict
+	}
+
 	err = os.MkdirAll(snapDir, 0700)
 	if err != nil {
 		return InternalError(err)
@@ -1276,13 +1428,11 @@ func containerSnapshotsPost(d *Daemon, r *http.Request) Response {
 	snapshot := func() error {
 
 		StateDir := snapshotStateDir(c, snapshotName)
-		if shared.PathExists(StateDir) {
-			return fmt.Errorf("Snapshot directory exists")
-		}
 		err = os.MkdirAll(StateDir, 0700)
 		if err != nil {
-			return fmt.Errorf("Error creating rootfs directory")
+			return err
 		}
+
 		if stateful {
 			// TODO - shouldn't we freeze for the duration of rootfs snapshot below?
 			if !c.c.Running() {
@@ -1320,7 +1470,7 @@ func snapshotHandler(d *Daemon, r *http.Request) Response {
 	containerName := mux.Vars(r)["name"]
 	c, err := newLxdContainer(containerName, d)
 	if err != nil {
-		return InternalError(err)
+		return SmartError(err)
 	}
 
 	snapshotName := mux.Vars(r)["snapshotName"]
@@ -1524,7 +1674,7 @@ func containerExecPost(d *Daemon, r *http.Request) Response {
 	name := mux.Vars(r)["name"]
 	c, err := newLxdContainer(name, d)
 	if err != nil {
-		return InternalError(err)
+		return SmartError(err)
 	}
 
 	if !c.c.Running() {
