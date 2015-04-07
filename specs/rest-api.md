@@ -127,9 +127,19 @@ If they don't, an error will be returned instead using HTTP error code
 
 For consistency in LXD's use of hashes, the Etag hash should be a SHA-256.
 
+# Recursion
+To optimize queries of large lists, recursion is implemented for collections.
+A "recursion" argument can be passed to a GET query against a collection.
+
+The default value is 0 which means that collection member URLs are
+returned. Setting it to 1 will have those URLs be replaced by the object
+they point to (typically a dict).
+
 # API structure
  * /
    * /1.0
+     * /1.0/certificates
+       * /1.0/certificates/\<fingerprint\>
      * /1.0/containers
        * /1.0/containers/\<name\>
          * /1.0/containers/\<name\>/exec
@@ -151,8 +161,6 @@ For consistency in LXD's use of hashes, the Etag hash should be a SHA-256.
          * /1.0/operations/\<uuid\>/websocket
      * /1.0/profiles
        * /1.0/profiles/\<name\>
-     * /1.0/certificates
-       * /1.0/certificates/\<fingerprint\>
 
 # API details
 ## /
@@ -222,7 +230,7 @@ Input (container based on a local image with the "ubuntu/devel" alias):
         'profiles': ["default"],                                            # List of profiles
         'ephemeral': True,                                                  # Whether to destroy the container on shutdown
         'config': {'resources.cpus': "2"},                                  # Config override.
-        'source': {'type': "image",                                         # Can be: "image", "migration" or "none"
+        'source': {'type': "image",                                         # Can be: "image", "migration", "copy" or "none"
                    'alias': "ubuntu/devel"},                                # Name of the alias
     }
 
@@ -235,7 +243,7 @@ Input (container based on a local image identified by its fingerprint):
         'profiles': ["default"],                                            # List of profiles
         'ephemeral': True,                                                  # Whether to destroy the container on shutdown
         'config': {'resources.cpus': "2"},                                  # Config override.
-        'source': {'type': "image",                                         # Can be: "image", "migration" or "none"
+        'source': {'type': "image",                                         # Can be: "image", "migration", "copy" or "none"
                    'fingerprint': "SHA-256"},                               # Fingerprint
     }
 
@@ -248,7 +256,7 @@ Input (container based on most recent match based on image properties):
         'profiles': ["default"],                                            # List of profiles
         'ephemeral': True,                                                  # Whether to destroy the container on shutdown
         'config': {'resources.cpus': "2"},                                  # Config override.
-        'source': {'type': "image",                                         # Can be: "image", "migration" or "none"
+        'source': {'type': "image",                                         # Can be: "image", "migration", "copy" or "none"
                    'properties': {                                          # Properties
                         'os': "ubuntu",
                         'release': "14.04",
@@ -265,7 +273,7 @@ Input (container without a pre-populated rootfs, useful when attaching to an exi
         'profiles': ["default"],                                            # List of profiles
         'ephemeral': True,                                                  # Whether to destroy the container on shutdown
         'config': {'resources.cpus': "2"},                                  # Config override.
-        'source': {'type': "none"},                                         # Can be: "image", "migration" or "none"
+        'source': {'type': "none"},                                         # Can be: "image", "migration", "copy" or "none"
     }
 
 Input (using a public remote image):
@@ -277,7 +285,7 @@ Input (using a public remote image):
         'profiles': ["default"],                                            # List of profiles
         'ephemeral': True,                                                  # Whether to destroy the container on shutdown
         'config': {'resources.cpus': "2"},                                  # Config override.
-        'source': {'type': "image",                                         # Can be: "image", "migration" or "none"
+        'source': {'type': "image",                                         # Can be: "image", "migration", "copy" or "none"
                    'mode': "pull",                                          # One of "local" (default), "pull" or "receive"
                    'server': "https://10.0.2.3:8443",                       # Remote server (pull mode only)
                    'alias': "ubuntu/devel"},                                # Name of the alias
@@ -293,7 +301,7 @@ Input (using a private remote image after having obtained a secret for that imag
         'profiles': ["default"],                                            # List of profiles
         'ephemeral': True,                                                  # Whether to destroy the container on shutdown
         'config': {'resources.cpus': "2"},                                  # Config override.
-        'source': {'type': "image",                                         # Can be: "image", "migration" or "none"
+        'source': {'type': "image",                                         # Can be: "image", "migration", "copy" or "none"
                    'mode': "pull",                                          # One of "local" (default), "pull" or "receive"
                    'server': "https://10.0.2.3:8443",                       # Remote server (pull mode only)
                    'secret': "my-secret-string",                            # Secret to use to retrieve the image (pull mode only)
@@ -309,7 +317,7 @@ Input (using a remote container, sent over the migration websocket):
         'profiles': ["default"],                                                        # List of profiles
         'ephemeral': True,                                                              # Whether to destroy the container on shutdown
         'config': {'resources.cpus': "2"},                                              # Config override.
-        'source': {'type': "migration",                                                 # Can be: "image", "migration" or "none"
+        'source': {'type': "migration",                                                 # Can be: "image", "migration", "copy" or "none"
                    'mode': "pull",                                                      # One of "pull" or "receive"
                    'operation': "https://10.0.2.3:8443/1.0/operations/<UUID>",          # Full URL to the remote operation (pull mode only)
                    'secrets': {'control': "my-secret-string",                           # Secrets to use when talking to the migration source
@@ -317,6 +325,18 @@ Input (using a remote container, sent over the migration websocket):
                                'fs':      "my third secret"},
     }
 
+Input (using a local container):
+
+    {
+        'name': "my-new-container",                                                     # 64 chars max, ASCII, no slash, no colon and no comma
+        'architecture': "x86_64",
+        'hostname': "my-container",
+        'profiles': ["default"],                                                        # List of profiles
+        'ephemeral': True,                                                              # Whether to destroy the container on shutdown
+        'config': {'resources.cpus': "2"},                                              # Config override.
+        'source': {'type': "copy",                                                      # Can be: "image", "migration", "copy" or "none"
+                   'source': "my-old-container"}                                        # Name of the source container
+    }
 
 
 ## /1.0/containers/\<name\>
