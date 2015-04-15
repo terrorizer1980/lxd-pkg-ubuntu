@@ -6,14 +6,16 @@ import (
 	"crypto/x509"
 	"database/sql"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/gorilla/mux"
 	"github.com/lxc/lxd"
 	"github.com/lxc/lxd/shared"
-	_ "github.com/stgraber/lxd-go-sqlite3"
+	_ "github.com/mattn/go-sqlite3"
 	"gopkg.in/tomb.v2"
 )
 
@@ -149,6 +151,17 @@ func (d *Daemon) isTrustedClient(r *http.Request) bool {
 	return false
 }
 
+func isJsonRequest(r *http.Request) bool {
+	for k, vs := range r.Header {
+		if strings.ToLower(k) == "content-type" &&
+			len(vs) == 1 && strings.ToLower(vs[0]) == "application/json" {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (d *Daemon) createCmd(version string, c Command) {
 	var uri string
 	if c.name == "" {
@@ -169,6 +182,19 @@ func (d *Daemon) createCmd(version string, c Command) {
 			shared.Debugf("rejecting request from untrusted client")
 			Forbidden.Render(w)
 			return
+		}
+
+		if *debug && r.Method != "GET" && isJsonRequest(r) {
+			newBody := &bytes.Buffer{}
+			captured := &bytes.Buffer{}
+			multiW := io.MultiWriter(newBody, captured)
+			if _, err := io.Copy(multiW, r.Body); err != nil {
+				InternalError(err).Render(w)
+				return
+			}
+
+			r.Body = shared.BytesReadCloser{Buf: newBody}
+			shared.DebugJson(captured)
 		}
 
 		var resp Response

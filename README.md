@@ -9,7 +9,7 @@ LXD is pronounced lex-dee.
 Since LXD development is happening at such a rapid pace, we only provide daily
 builds right now. They're available via:
 
-    sudo add-apt-repository ppa:ubuntu-lxc/lxd-daily && sudo apt-get update
+    sudo add-apt-repository ppa:ubuntu-lxc/lxd-git-master && sudo apt-get update
     sudo apt-get install lxd
 
 After you've got LXD installed, you can take your [first steps](#first-steps).
@@ -28,10 +28,10 @@ these on Ubuntu via:
 
 LXD requires Golang 1.3 or later to work.
 
-If running Ubuntu, the easiest way to get it is to use the LXC PPA:
+If running Ubuntu, the easiest way to get it is to use the LXD PPA:
 
     sudo apt-get install software-properties-common
-    sudo add-apt-repository ppa:ubuntu-lxc/lxd-daily
+    sudo add-apt-repository ppa:ubuntu-lxc/lxd-git-master
     sudo apt-get update
     sudo apt-get install golang
 
@@ -88,8 +88,8 @@ packaging or via the from-source instructions above), you can import some images
 
 With those two images imported into LXD, you can now start containers:
 
-    lxc launch ubuntu
-    lxc launch debian debian01
+    $GOPATH/bin/lxc launch ubuntu
+    $GOPATH/bin/lxc launch debian debian01
 
 ## Bug reports
 

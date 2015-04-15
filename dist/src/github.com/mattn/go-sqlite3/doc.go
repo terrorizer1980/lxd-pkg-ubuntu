@@ -5,7 +5,7 @@ This works as driver for database/sql.
 
 Installation
 
-    go get github.com/stgraber/lxd-go-sqlite3
+    go get github.com/mattn/go-sqlite3
 
 Supported Types
 

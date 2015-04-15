@@ -2,7 +2,7 @@ package main
 
 import (
 	"database/sql"
-	"github.com/stgraber/lxd-go-sqlite3"
+	"github.com/mattn/go-sqlite3"
 	"log"
 	"os"
 )
