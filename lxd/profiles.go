@@ -8,7 +8,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/lxc/lxd/shared"
-	_ "github.com/stgraber/lxd-go-sqlite3"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 func addProfileConfig(tx *sql.Tx, id int, config map[string]string) error {
@@ -181,6 +181,7 @@ func profilePut(d *Daemon, r *http.Request) Response {
 		err = rows.Scan(&i)
 		if err != nil {
 			fmt.Printf("DBERR: profilePut: scan returned error %q\n", err)
+			tx.Rollback()
 			return InternalError(err)
 		}
 		id = i
@@ -189,6 +190,7 @@ func profilePut(d *Daemon, r *http.Request) Response {
 	err = rows.Err()
 	if err != nil {
 		fmt.Printf("DBERR: profilePut: Err returned an error %q\n", err)
+		tx.Rollback()
 		return InternalError(err)
 	}
 

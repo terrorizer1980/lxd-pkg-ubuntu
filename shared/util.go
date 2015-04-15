@@ -10,7 +10,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -370,7 +370,7 @@ func WebsocketMirror(conn *websocket.Conn, w io.WriteCloser, r io.Reader) chan b
 
 // Returns a random base64 encoded string from crypto/rand.
 func RandomCryptoString() (string, error) {
-	buf := make([]byte, 100)
+	buf := make([]byte, 32)
 	n, err := rand.Read(buf)
 	if err != nil {
 		return "", err
@@ -380,7 +380,7 @@ func RandomCryptoString() (string, error) {
 		return "", fmt.Errorf("not enough random bytes read")
 	}
 
-	return base64.StdEncoding.EncodeToString(buf), nil
+	return hex.EncodeToString(buf), nil
 }
 
 func ReadCert(fpath string) (*x509.Certificate, error) {
@@ -561,4 +561,17 @@ func CopyFile(dest string, source string) error {
 
 	_, err = io.Copy(d, s)
 	return err
+}
+
+type BytesReadCloser struct {
+	Buf *bytes.Buffer
+}
+
+func (r BytesReadCloser) Read(b []byte) (n int, err error) {
+	return r.Buf.Read(b)
+}
+
+func (r BytesReadCloser) Close() error {
+	/* no-op since we're in memory */
+	return nil
 }

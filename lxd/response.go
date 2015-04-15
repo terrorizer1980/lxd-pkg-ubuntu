@@ -5,12 +5,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 
 	"github.com/lxc/lxd"
 	"github.com/lxc/lxd/shared"
-	"github.com/stgraber/lxd-go-sqlite3"
+	"github.com/mattn/go-sqlite3"
 )
 
 type resp struct {
@@ -67,6 +68,25 @@ func (r *fileResponse) Render(w http.ResponseWriter) error {
 	return nil
 }
 
+func WriteJson(w http.ResponseWriter, body interface{}) error {
+	var output io.Writer
+	var captured *bytes.Buffer
+
+	output = w
+	if *debug {
+		captured = &bytes.Buffer{}
+		output = io.MultiWriter(w, captured)
+	}
+
+	err := json.NewEncoder(output).Encode(body)
+
+	if captured != nil {
+		shared.DebugJson(captured)
+	}
+
+	return err
+}
+
 func (r *syncResponse) Render(w http.ResponseWriter) error {
 	status := shared.Success
 	if !r.success {
@@ -74,13 +94,7 @@ func (r *syncResponse) Render(w http.ResponseWriter) error {
 	}
 
 	resp := resp{Type: lxd.Sync, Status: status.String(), StatusCode: status, Metadata: r.metadata}
-	enc, err := json.Marshal(&resp)
-	if err != nil {
-		return err
-	}
-
-	_, err = w.Write(enc)
-	return err
+	return WriteJson(w, resp)
 }
 
 /*
@@ -104,16 +118,17 @@ type async struct {
 }
 
 type asyncResponse struct {
-	run        func() shared.OperationResult
-	cancel     func() error
-	ws         shared.OperationWebsocket
-	containers []string
-	done       chan shared.OperationResult
+	run       func() shared.OperationResult
+	cancel    func() error
+	ws        shared.OperationWebsocket
+	resources map[string][]string
+	metadata  shared.Jmap
+	done      chan shared.OperationResult
 }
 
 func (r *asyncResponse) Render(w http.ResponseWriter) error {
 
-	op, err := CreateOperation(nil, r.run, r.cancel, r.ws)
+	op, err := CreateOperation(r.metadata, r.resources, r.run, r.cancel, r.ws)
 	if err != nil {
 		return err
 	}
@@ -126,21 +141,26 @@ func (r *asyncResponse) Render(w http.ResponseWriter) error {
 	body := async{Type: lxd.Async, Status: shared.OK.String(), StatusCode: shared.OK, Operation: op}
 	if r.ws != nil {
 		body.Metadata = r.ws.Metadata()
+	} else if r.metadata != nil {
+		body.Metadata = r.metadata
 	}
 
-	if r.containers != nil && len(r.containers) > 0 {
-		body.Resources = map[string][]string{}
-		var containers []string
-		for _, c := range r.containers {
-			containers = append(containers, fmt.Sprintf("/%s/containers/%s", shared.APIVersion, c))
+	if r.resources != nil {
+		resources := make(map[string][]string)
+		for key, value := range r.resources {
+			var values []string
+			for _, c := range value {
+				values = append(values, fmt.Sprintf("/%s/%s/%s", shared.APIVersion, key, c))
+			}
+			resources[key] = values
 		}
-
-		body.Resources["containers"] = containers
+		body.Resources = resources
 	}
 
 	w.Header().Set("Location", op)
 	w.WriteHeader(202)
-	return json.NewEncoder(w).Encode(body)
+
+	return WriteJson(w, body)
 }
 
 func AsyncResponse(run func() shared.OperationResult, cancel func() error) Response {
@@ -157,13 +177,25 @@ type ErrorResponse struct {
 }
 
 func (r *ErrorResponse) Render(w http.ResponseWriter) error {
-	buf := bytes.Buffer{}
-	err := json.NewEncoder(&buf).Encode(shared.Jmap{"type": lxd.Error, "error": r.msg, "error_code": r.code})
+	var output io.Writer
+
+	buf := &bytes.Buffer{}
+	output = buf
+	var captured *bytes.Buffer
+	if *debug {
+		captured = &bytes.Buffer{}
+		output = io.MultiWriter(buf, captured)
+	}
+
+	err := json.NewEncoder(output).Encode(shared.Jmap{"type": lxd.Error, "error": r.msg, "error_code": r.code})
 
 	if err != nil {
 		return err
 	}
 
+	if *debug {
+		shared.DebugJson(captured)
+	}
 	http.Error(w, buf.String(), r.code)
 	return nil
 }

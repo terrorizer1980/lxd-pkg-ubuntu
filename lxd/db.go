@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"github.com/lxc/lxd/shared"
-	_ "github.com/stgraber/lxd-go-sqlite3"
+	_ "github.com/mattn/go-sqlite3"
 )
 
-const DB_CURRENT_VERSION int = 5
+const DB_CURRENT_VERSION int = 6
 
 var (
 	DbErrAlreadyDefined = fmt.Errorf("already exists")
@@ -43,6 +43,8 @@ CREATE TABLE containers (
     name VARCHAR(255) NOT NULL,
     architecture INTEGER NOT NULL,
     type INTEGER NOT NULL,
+    power_state INTEGER NOT NULL DEFAULT 0,
+    ephemeral INTEGER NOT NULL DEFAULT 0,
     UNIQUE (name)
 );
 CREATE TABLE containers_config (
@@ -165,6 +167,15 @@ func getSchema(db *sql.DB) (int, error) {
 		return v, nil
 	}
 	return 0, nil
+}
+
+func updateFromV5(db *sql.DB) error {
+	stmt := `
+ALTER TABLE containers ADD COLUMN power_state INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE containers ADD COLUMN ephemeral INTEGER NOT NULL DEFAULT 0;
+INSERT INTO schema (version, updated_at) VALUES (?, strftime("%s"));`
+	_, err := db.Exec(stmt, 6)
+	return err
 }
 
 func updateFromV4(db *sql.DB) error {
@@ -345,6 +356,12 @@ func updateDb(db *sql.DB, prev_version int) error {
 			return err
 		}
 	}
+	if prev_version < 6 {
+		err = updateFromV5(db)
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -424,7 +441,7 @@ func initDb(d *Daemon) error {
 	var db *sql.DB
 	var err error
 	timeout := 30 // TODO - make this command-line configurable?
-	openPath := fmt.Sprintf("%s?_busy_timeout=%d", dbpath, timeout*1000)
+	openPath := fmt.Sprintf("%s?_busy_timeout=%d&_txlock=immediate", dbpath, timeout*1000)
 	if !shared.PathExists(dbpath) {
 		db, err = createDb(openPath)
 		if err != nil {
@@ -475,7 +492,7 @@ func dbImageGet(d *Daemon, name string, public bool) (*shared.ImageBaseInfo, err
 	}
 
 	if countImg > 1 {
-		return nil, fmt.Errorf("Multiple images for hash")
+		return nil, fmt.Errorf("Multiple images for fingerprint")
 	}
 
 	image := new(shared.ImageBaseInfo)
