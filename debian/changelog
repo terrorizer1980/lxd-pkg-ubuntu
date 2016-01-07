@@ -1,3 +1,14 @@
+lxd (0.26-0ubuntu3) xenial; urgency=medium
+
+  * Cherry-pick upstream bugfixes:
+    - 0001-export-fix-crash-when-metadata.yaml-is-missing.patch
+    - 0002-migration-report-errors-from-criu-or-liblxc.patch
+    - 0003-lxc-copy-try-and-report-the-real-error.patch
+    - 0004-bash-completion-updates.patch (LP: #1531358)
+  * Install bash completion profile
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Thu, 07 Jan 2016 18:28:38 -0500
+
 lxd (0.26-0ubuntu2) xenial; urgency=medium
 
   * Fix autopkgtest exercise script to use new environment variable name.
