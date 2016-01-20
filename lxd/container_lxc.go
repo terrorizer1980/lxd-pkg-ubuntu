@@ -100,6 +100,55 @@ func containerLXCCreate(d *Daemon, args containerArgs) (container, error) {
 		return nil, err
 	}
 
+	// Look for a rootfs entry
+	rootfs := false
+	for _, m := range c.expandedDevices {
+		if m["type"] == "disk" && m["path"] == "/" {
+			rootfs = true
+			break
+		}
+	}
+
+	if !rootfs {
+		deviceName := "root"
+		for {
+			if c.expandedDevices[deviceName] == nil {
+				break
+			}
+
+			deviceName += "_"
+		}
+
+		c.localDevices[deviceName] = shared.Device{"type": "disk", "path": "/"}
+
+		updateArgs := containerArgs{
+			Architecture: c.architecture,
+			Config:       c.localConfig,
+			Devices:      c.localDevices,
+			Ephemeral:    c.ephemeral,
+			Profiles:     c.profiles,
+		}
+
+		err = c.Update(updateArgs, false)
+		if err != nil {
+			c.Delete()
+			return nil, err
+		}
+	}
+
+	// Validate expanded config
+	err = containerValidConfig(c.expandedConfig, false, true)
+	if err != nil {
+		c.Delete()
+		return nil, err
+	}
+
+	err = containerValidDevices(c.expandedDevices, false, true)
+	if err != nil {
+		c.Delete()
+		return nil, err
+	}
+
 	// Setup initial idmap config
 	idmap := c.IdmapSet()
 	var jsonIdmap string
@@ -216,22 +265,64 @@ func (c *containerLXC) initLXC() error {
 		return err
 	}
 
-	// Load base config
-	templateConfBase := "ubuntu"
+	// Base config
+	err = lxcSetConfigItem(cc, "lxc.cap.drop", "mac_admin mac_override sys_time sys_module")
+	if err != nil {
+		return err
+	}
+
+	err = lxcSetConfigItem(cc, "lxc.mount.auto", "cgroup:mixed proc:mixed sys:mixed")
+	if err != nil {
+		return err
+	}
+
+	err = lxcSetConfigItem(cc, "lxc.autodev", "1")
+	if err != nil {
+		return err
+	}
+
+	err = lxcSetConfigItem(cc, "lxc.pts", "1024")
+	if err != nil {
+		return err
+	}
+
+	err = lxcSetConfigItem(cc, "lxc.mount.entry", "mqueue dev/mqueue mqueue rw,relatime,create=dir,optional")
+	if err != nil {
+		return err
+	}
+
+	for _, mnt := range []string{"/proc/sys/fs/binfmt_misc", "/sys/firmware/efi/efivars", "/sys/fs/fuse/connections", "/sys/fs/pstore", "/sys/kernel/debug", "/sys/kernel/security"} {
+		err = lxcSetConfigItem(cc, "lxc.mount.entry", fmt.Sprintf("%s %s none bind,optional", mnt, strings.TrimPrefix(mnt, "/")))
+		if err != nil {
+			return err
+		}
+	}
+
+	// For lxcfs
 	templateConfDir := os.Getenv("LXD_LXC_TEMPLATE_CONFIG")
 	if templateConfDir == "" {
 		templateConfDir = "/usr/share/lxc/config"
 	}
 
-	err = lxcSetConfigItem(cc, "lxc.include", fmt.Sprintf("%s/%s.common.conf", templateConfDir, templateConfBase))
-	if err != nil {
-		return err
-	}
-
-	if !c.IsPrivileged() || runningInUserns {
-		err = lxcSetConfigItem(cc, "lxc.include", fmt.Sprintf("%s/%s.userns.conf", templateConfDir, templateConfBase))
+	if shared.PathExists(fmt.Sprintf("%s/common.conf.d/", templateConfDir)) {
+		err = lxcSetConfigItem(cc, "lxc.include", fmt.Sprintf("%s/common.conf.d/", templateConfDir))
 		if err != nil {
 			return err
+		}
+	}
+
+	// Configure devices cgroup
+	if c.IsPrivileged() && !runningInUserns && cgDevicesController {
+		err = lxcSetConfigItem(cc, "lxc.cgroup.devices.deny", "a")
+		if err != nil {
+			return err
+		}
+
+		for _, dev := range []string{"c *:* m", "b *:* m", "c 5:1 rwm", "c 1:7 rwm", "c 1:3 rwm", "c 1:8 rwm", "c 1:9 rwm", "c 5:2 rwm", "c 136:* rwm"} {
+			err = lxcSetConfigItem(cc, "lxc.cgroup.devices.allow", dev)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -295,18 +386,13 @@ func (c *containerLXC) initLXC() error {
 		return err
 	}
 
+	// FIXME: Should go away once CRIU supports checkpoint/restore of /dev/console
 	err = lxcSetConfigItem(cc, "lxc.console", "none")
 	if err != nil {
 		return err
 	}
 
 	err = lxcSetConfigItem(cc, "lxc.cgroup.devices.deny", "c 5:1 rwm")
-	if err != nil {
-		return err
-	}
-
-	// Setup the rootfs
-	err = lxcSetConfigItem(cc, "lxc.rootfs", c.RootfsPath())
 	if err != nil {
 		return err
 	}
@@ -565,19 +651,17 @@ func (c *containerLXC) initLXC() error {
 
 			// Deal with a rootfs
 			if tgtPath == "" {
-				if m["source"] != "" {
-					// Set the rootfs to the temporary mount
-					err = lxcSetConfigItem(cc, "lxc.rootfs", devPath)
+				// Set the rootfs path
+				err = lxcSetConfigItem(cc, "lxc.rootfs", c.RootfsPath())
+				if err != nil {
+					return err
+				}
+
+				// Read-only rootfs (unlikely to work very well)
+				if isReadOnly {
+					err = lxcSetConfigItem(cc, "lxc.rootfs.options", "ro")
 					if err != nil {
 						return err
-					}
-
-					// Read-only rootfs (unlikely to work very well)
-					if isReadOnly {
-						err = lxcSetConfigItem(cc, "lxc.rootfs.options", "ro")
-						if err != nil {
-							return err
-						}
 					}
 				}
 			} else {
@@ -696,6 +780,18 @@ func (c *containerLXC) startCommon() (string, error) {
 		return "", fmt.Errorf("The container is already running")
 	}
 
+	// Load any required kernel modules
+	kernelModules := c.expandedConfig["linux.kernel_modules"]
+	if kernelModules != "" {
+		for _, module := range strings.Split(kernelModules, ",") {
+			module = strings.TrimPrefix(module, " ")
+			out, err := exec.Command("modprobe", module).CombinedOutput()
+			if err != nil {
+				return "", fmt.Errorf("Failed to load kernel module '%s': %s", module, out)
+			}
+		}
+	}
+
 	/* Deal with idmap changes */
 	idmap := c.IdmapSet()
 
@@ -775,9 +871,11 @@ func (c *containerLXC) startCommon() (string, error) {
 			}
 		} else if m["type"] == "disk" {
 			// Disk device
-			_, err := c.createDiskDevice(k, m)
-			if err != nil {
-				return "", err
+			if m["path"] != "/" {
+				_, err := c.createDiskDevice(k, m)
+				if err != nil {
+					return "", err
+				}
 			}
 		}
 	}
@@ -1298,8 +1396,10 @@ func (c *containerLXC) Delete() error {
 		c.cleanup()
 
 		// Delete the container from disk
-		if err := c.storage.ContainerDelete(c); err != nil {
-			return err
+		if shared.PathExists(c.Path()) {
+			if err := c.storage.ContainerDelete(c); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -1428,13 +1528,13 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 	}
 
 	// Validate the new config
-	err := containerValidConfig(args.Config, false)
+	err := containerValidConfig(args.Config, false, false)
 	if err != nil {
 		return err
 	}
 
 	// Validate the new devices
-	err = containerValidDevices(args.Devices)
+	err = containerValidDevices(args.Devices, false, false)
 	if err != nil {
 		return err
 	}
@@ -1577,10 +1677,49 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 	// Diff the devices
 	removeDevices, addDevices := oldExpandedDevices.Update(c.expandedDevices)
 
-	// If raw.apparmor changed, re-validate the apparmor profile
+	// Do some validation of the config diff
+	err = containerValidConfig(c.expandedConfig, false, true)
+	if err != nil {
+		undoChanges()
+		return err
+	}
+
+	// Do some validation of the devices diff
+	err = containerValidDevices(c.expandedDevices, false, true)
+	if err != nil {
+		undoChanges()
+		return err
+	}
+
+	// If apparmor changed, re-validate the apparmor profile
 	for _, key := range changedConfig {
-		if key == "raw.apparmor" {
+		if key == "raw.apparmor" || key == "security.nesting" {
 			err = AAParseProfile(c)
+			if err != nil {
+				undoChanges()
+				return err
+			}
+		}
+	}
+
+	// Apply disk quota changes
+	for _, m := range addDevices {
+		var oldRootfsSize string
+		for _, m := range oldExpandedDevices {
+			if m["type"] == "disk" && m["path"] == "/" {
+				oldRootfsSize = m["size"]
+				break
+			}
+		}
+
+		if m["size"] != oldRootfsSize {
+			size, err := deviceParseBytes(m["size"])
+			if err != nil {
+				undoChanges()
+				return err
+			}
+
+			err = c.storage.ContainerSetQuota(c, size)
 			if err != nil {
 				undoChanges()
 				return err
@@ -1590,14 +1729,47 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 
 	// Apply the live changes
 	if c.IsRunning() {
+		// Confirm that the rootfs source didn't change
+		var oldRootfs shared.Device
+		for _, m := range oldExpandedDevices {
+			if m["type"] == "disk" && m["path"] == "/" {
+				oldRootfs = m
+				break
+			}
+		}
+
+		var newRootfs shared.Device
+		for _, m := range c.expandedDevices {
+			if m["type"] == "disk" && m["path"] == "/" {
+				newRootfs = m
+				break
+			}
+		}
+
+		if oldRootfs["source"] != newRootfs["source"] {
+			undoChanges()
+			return fmt.Errorf("Cannot change the rootfs path of a running container")
+		}
+
 		// Live update the container config
 		for _, key := range changedConfig {
-			if key == "raw.apparmor" {
+			value := c.expandedConfig[key]
+
+			if key == "raw.apparmor" || key == "security.nesting" {
 				// Update the AppArmor profile
 				err = AALoadProfile(c)
 				if err != nil {
 					undoChanges()
 					return err
+				}
+			} else if key == "linux.kernel_modules" && value != "" {
+				for _, module := range strings.Split(value, ",") {
+					module = strings.TrimPrefix(module, " ")
+					out, err := exec.Command("modprobe", module).CombinedOutput()
+					if err != nil {
+						undoChanges()
+						return fmt.Errorf("Failed to load kernel module '%s': %s", module, out)
+					}
 				}
 			} else if key == "limits.memory" || strings.HasPrefix(key, "limits.memory.") {
 				// Skip if no memory CGroup
@@ -1755,7 +1927,7 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 					undoChanges()
 					return err
 				}
-			} else if m["type"] == "disk" {
+			} else if m["type"] == "disk" && m["path"] != "/" {
 				err = c.removeDiskDevice(k, m)
 				if err != nil {
 					undoChanges()
@@ -1777,7 +1949,7 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 					undoChanges()
 					return err
 				}
-			} else if m["type"] == "disk" {
+			} else if m["type"] == "disk" && m["path"] != "/" {
 				err = c.insertDiskDevice(k, m)
 				if err != nil {
 					undoChanges()
@@ -1934,27 +2106,28 @@ func (c *containerLXC) Export(w io.Writer) error {
 			return err
 		}
 
-		if err := c.tarStoreFile(linkmap, offset, tw, f.Name(), fi); err != nil {
+		tmpOffset := len(path.Dir(f.Name())) + 1
+		if err := c.tarStoreFile(linkmap, tmpOffset, tw, f.Name(), fi); err != nil {
 			shared.Debugf("Error writing to tarfile: %s", err)
 			tw.Close()
 			return err
 		}
 
 		fnam = f.Name()
-	}
+	} else {
+		// Include metadata.yaml in the tarball
+		fi, err := os.Lstat(fnam)
+		if err != nil {
+			shared.Debugf("Error statting %s during export", fnam)
+			tw.Close()
+			return err
+		}
 
-	// Include metadata.yaml in the tarball
-	fi, err := os.Lstat(fnam)
-	if err != nil {
-		shared.Debugf("Error statting %s during export", fnam)
-		tw.Close()
-		return err
-	}
-
-	if err := c.tarStoreFile(linkmap, offset, tw, fnam, fi); err != nil {
-		shared.Debugf("Error writing to tarfile: %s", err)
-		tw.Close()
-		return err
+		if err := c.tarStoreFile(linkmap, offset, tw, fnam, fi); err != nil {
+			shared.Debugf("Error writing to tarfile: %s", err)
+			tw.Close()
+			return err
+		}
 	}
 
 	// Include all the rootfs files
@@ -2399,14 +2572,6 @@ func (c *containerLXC) StorageStop() error {
 	return c.storage.ContainerStop(c)
 }
 
-func (c *containerLXC) StorageFromImage(hash string) error {
-	return c.storage.ContainerCreateFromImage(c, hash)
-}
-
-func (c *containerLXC) StorageFromNone() error {
-	return c.storage.ContainerCreate(c)
-}
-
 // Mount handling
 func (c *containerLXC) insertMount(source, target, fstype string, flags int) error {
 	var err error
@@ -2728,7 +2893,12 @@ func (c *containerLXC) createNetworkDevice(name string, m shared.Device) (string
 			return "", fmt.Errorf("Failed to create the veth interface: %s", err)
 		}
 
-		if m["nictype"] == "bridge" {
+		err = exec.Command("ip", "link", "set", n1, "up").Run()
+		if err != nil {
+			return "", fmt.Errorf("Failed to bring up the veth interface %s: %s", n1, err)
+		}
+
+		if m["nictype"] == "bridged" {
 			err = exec.Command("brctl", "addif", m["parent"], n1).Run()
 			if err != nil {
 				deviceRemoveInterface(n2)

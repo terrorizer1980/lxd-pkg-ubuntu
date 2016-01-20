@@ -152,9 +152,9 @@ func HoistResponse(r *http.Response, rtype ResponseType) (*Response, error) {
 	return resp, nil
 }
 
-func readMyCert() (string, string, error) {
-	certf := ConfigPath("client.crt")
-	keyf := ConfigPath("client.key")
+func readMyCert(configDir string) (string, string, error) {
+	certf := path.Join(configDir, "client.crt")
+	keyf := path.Join(configDir, "client.key")
 
 	err := shared.FindOrGenCert(certf, keyf)
 
@@ -165,7 +165,7 @@ func readMyCert() (string, string, error) {
  * load the server cert from disk
  */
 func (c *Client) loadServerCert() {
-	cert, err := shared.ReadCert(ServerCertPath(c.Name))
+	cert, err := shared.ReadCert(c.Config.ServerCertPath(c.Name))
 	if err != nil {
 		shared.Debugf("Error reading the server certificate for %s: %v", c.Name, err)
 		return
@@ -213,7 +213,7 @@ func NewClient(config *Config, remote string) (*Client, error) {
 			c.websocketDialer.NetDial = uDial
 			c.Remote = &r
 		} else {
-			certf, keyf, err := readMyCert()
+			certf, keyf, err := readMyCert(config.ConfigDir)
 			if err != nil {
 				return nil, err
 			}
@@ -300,7 +300,7 @@ func (c *Client) baseGet(getUrl string) (*Response, error) {
 	if c.scert != nil && resp.TLS != nil {
 		if !bytes.Equal(resp.TLS.PeerCertificates[0].Raw, c.scert.Raw) {
 			pUrl, _ := url.Parse(getUrl)
-			return nil, fmt.Errorf(i18n.G("Server certificate for host %s has changed. Add correct certificate or remove certificate in %s"), pUrl.Host, ConfigPath("servercerts"))
+			return nil, fmt.Errorf(i18n.G("Server certificate for host %s has changed. Add correct certificate or remove certificate in %s"), pUrl.Host, c.Config.ConfigPath("servercerts"))
 		}
 	}
 
@@ -514,7 +514,7 @@ func (c *Client) ListContainers() ([]shared.ContainerInfo, error) {
 	return result, nil
 }
 
-func (c *Client) CopyImage(image string, dest *Client, copy_aliases bool, aliases []string, public bool) error {
+func (c *Client) CopyImage(image string, dest *Client, copy_aliases bool, aliases []string, public bool, progressHandler func(progress string)) error {
 	fingerprint := c.GetAlias(image)
 	if fingerprint == "" {
 		fingerprint = image
@@ -564,6 +564,41 @@ func (c *Client) CopyImage(image string, dest *Client, copy_aliases bool, aliase
 		return err
 	}
 
+	operation := ""
+	handler := func(msg interface{}) {
+		if msg == nil {
+			return
+		}
+
+		event := msg.(map[string]interface{})
+		if event["type"].(string) != "operation" {
+			return
+		}
+
+		if event["metadata"] == nil {
+			return
+		}
+
+		md := event["metadata"].(map[string]interface{})
+		if !strings.HasSuffix(operation, md["id"].(string)) {
+			return
+		}
+
+		if md["metadata"] == nil {
+			return
+		}
+
+		opMd := md["metadata"].(map[string]interface{})
+		_, ok := opMd["download_progress"]
+		if ok {
+			progressHandler(opMd["download_progress"].(string))
+		}
+	}
+
+	if progressHandler != nil {
+		go dest.Monitor([]string{"operation"}, handler)
+	}
+
 	for _, addr := range addresses {
 		sourceUrl := "https://" + addr
 
@@ -574,6 +609,8 @@ func (c *Client) CopyImage(image string, dest *Client, copy_aliases bool, aliase
 		if err != nil {
 			continue
 		}
+
+		operation = resp.Operation
 
 		err = dest.WaitForSuccess(resp.Operation)
 		if err != nil {
@@ -1002,7 +1039,7 @@ func (c *Client) UserAuthServerCert(name string, acceptCert bool) error {
 	}
 
 	// User acked the cert, now add it to our store
-	dnam := ConfigPath("servercerts")
+	dnam := c.Config.ConfigPath("servercerts")
 	err = os.MkdirAll(dnam, 0750)
 	if err != nil {
 		return fmt.Errorf(i18n.G("Could not create server cert dir"))
@@ -1251,25 +1288,23 @@ func (c *Client) Monitor(types []string, handler func(interface{})) error {
 	if err != nil {
 		return err
 	}
+	defer conn.Close()
 
 	for {
 		message := make(map[string]interface{})
 
 		_, data, err := conn.ReadMessage()
 		if err != nil {
-			break
+			return err
 		}
 
 		err = json.Unmarshal(data, &message)
 		if err != nil {
-			break
+			return err
 		}
 
 		handler(message)
 	}
-
-	conn.Close()
-	return nil
 }
 
 // Exec runs a command inside the LXD container. For "interactive" use such as
@@ -1638,8 +1673,9 @@ func (c *Client) ListSnapshots(container string) ([]string, error) {
 }
 
 func (c *Client) GetServerConfigString() ([]string, error) {
-	ss, err := c.ServerStatus()
 	var resp []string
+
+	ss, err := c.ServerStatus()
 	if err != nil {
 		return resp, err
 	}
@@ -1660,7 +1696,25 @@ func (c *Client) GetServerConfigString() ([]string, error) {
 }
 
 func (c *Client) SetServerConfig(key string, value string) (*Response, error) {
-	body := shared.Jmap{"config": shared.Jmap{key: value}}
+	ss, err := c.ServerStatus()
+	if err != nil {
+		return nil, err
+	}
+
+	ss.Config[key] = value
+	body := shared.Jmap{
+		"api_compat":  ss.APICompat,
+		"auth":        ss.Auth,
+		"environment": ss.Environment,
+		"config":      ss.Config,
+		"public":      ss.Public}
+
+	return c.put("", body, Sync)
+}
+
+func (c *Client) UpdateServerConfig(ss shared.BriefServerState) (*Response, error) {
+	body := shared.Jmap{"config": ss.Config}
+
 	return c.put("", body, Sync)
 }
 
@@ -1668,8 +1722,9 @@ func (c *Client) SetServerConfig(key string, value string) (*Response, error) {
  * return string array representing a container's full configuration
  */
 func (c *Client) GetContainerConfig(container string) ([]string, error) {
-	st, err := c.ContainerStatus(container)
 	var resp []string
+
+	st, err := c.ContainerStatus(container)
 	if err != nil {
 		return resp, err
 	}

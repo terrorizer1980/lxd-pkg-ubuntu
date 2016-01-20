@@ -59,6 +59,8 @@ func containerValidConfigKey(k string) bool {
 		return true
 	case "limits.memory.swap.priority":
 		return true
+	case "linux.kernel_modules":
+		return true
 	case "security.privileged":
 		return true
 	case "security.nesting":
@@ -104,64 +106,66 @@ func containerValidDeviceConfigKey(t, k string) bool {
 	switch t {
 	case "unix-char":
 		switch k {
-		case "path":
+		case "gid":
 			return true
 		case "major":
 			return true
 		case "minor":
 			return true
-		case "uid":
-			return true
-		case "gid":
-			return true
 		case "mode":
+			return true
+		case "path":
+			return true
+		case "uid":
 			return true
 		default:
 			return false
 		}
 	case "unix-block":
 		switch k {
-		case "path":
+		case "gid":
 			return true
 		case "major":
 			return true
 		case "minor":
 			return true
-		case "uid":
-			return true
-		case "gid":
-			return true
 		case "mode":
+			return true
+		case "path":
+			return true
+		case "uid":
 			return true
 		default:
 			return false
 		}
 	case "nic":
 		switch k {
-		case "parent":
-			return true
-		case "name":
+		case "host_name":
 			return true
 		case "hwaddr":
 			return true
 		case "mtu":
 			return true
+		case "name":
+			return true
 		case "nictype":
 			return true
-		case "host_name":
+		case "parent":
 			return true
 		default:
 			return false
 		}
 	case "disk":
 		switch k {
-		case "path":
+		case "optional":
 			return true
-		case "source":
+		case "path":
 			return true
 		case "readonly":
 			return true
-		case "optional":
+		case "size":
+			return true
+		case "source":
 			return true
 		default:
 			return false
@@ -173,7 +177,7 @@ func containerValidDeviceConfigKey(t, k string) bool {
 	}
 }
 
-func containerValidConfig(config map[string]string, profile bool) error {
+func containerValidConfig(config map[string]string, profile bool, expanded bool) error {
 	if config == nil {
 		return nil
 	}
@@ -198,7 +202,7 @@ func containerValidConfig(config map[string]string, profile bool) error {
 	return nil
 }
 
-func containerValidDevices(devices shared.Devices) error {
+func containerValidDevices(devices shared.Devices, profile bool, expanded bool) error {
 	// Empty device list
 	if devices == nil {
 		return nil
@@ -232,6 +236,14 @@ func containerValidDevices(devices shared.Devices) error {
 			if m["source"] == "" && m["path"] != "/" {
 				return fmt.Errorf("Disk entry is missing the required \"source\" property.")
 			}
+
+			if m["path"] == "/" && m["source"] != "" {
+				return fmt.Errorf("Root disk entry may not have a \"source\" property set.")
+			}
+
+			if m["size"] != "" && m["path"] != "/" {
+				return fmt.Errorf("Only the root disk may have a size quota.")
+			}
 		} else if shared.StringInSlice(m["type"], []string{"unix-char", "unix-block"}) {
 			if m["path"] == "" {
 				return fmt.Errorf("Unix device entry is missing the required \"path\" property.")
@@ -240,6 +252,20 @@ func containerValidDevices(devices shared.Devices) error {
 			continue
 		} else {
 			return fmt.Errorf("Invalid device type: %s", m["type"])
+		}
+	}
+
+	// Checks on the expanded config
+	if expanded {
+		foundRootfs := false
+		for _, m := range devices {
+			if m["type"] == "disk" && m["path"] == "/" {
+				foundRootfs = true
+			}
+		}
+
+		if !foundRootfs {
+			return fmt.Errorf("Container is lacking rootfs entry")
 		}
 	}
 
@@ -349,11 +375,18 @@ func containerCreateAsEmpty(d *Daemon, args containerArgs) (container, error) {
 		return nil, err
 	}
 
+	// Apply any post-storage configuration
+	err = containerConfigureInternal(c)
+	if err != nil {
+		c.Delete()
+		return nil, err
+	}
+
 	return c, nil
 }
 
 func containerCreateEmptySnapshot(d *Daemon, args containerArgs) (container, error) {
-	// Create the container
+	// Create the snapshot
 	c, err := containerCreateInternal(d, args)
 	if err != nil {
 		return nil, err
@@ -385,6 +418,13 @@ func containerCreateFromImage(d *Daemon, args containerArgs, hash string) (conta
 		return nil, err
 	}
 
+	// Apply any post-storage configuration
+	err = containerConfigureInternal(c)
+	if err != nil {
+		c.Delete()
+		return nil, err
+	}
+
 	return c, nil
 }
 
@@ -401,17 +441,24 @@ func containerCreateAsCopy(d *Daemon, args containerArgs, sourceContainer contai
 		return nil, err
 	}
 
+	// Apply any post-storage configuration
+	err = containerConfigureInternal(c)
+	if err != nil {
+		c.Delete()
+		return nil, err
+	}
+
 	return c, nil
 }
 
 func containerCreateAsSnapshot(d *Daemon, args containerArgs, sourceContainer container, stateful bool) (container, error) {
-	// Create the container
+	// Create the snapshot
 	c, err := containerCreateInternal(d, args)
 	if err != nil {
 		return nil, err
 	}
 
-	// Clone the snapshot
+	// Clone the container
 	if err := sourceContainer.Storage().ContainerSnapshotCreate(c, sourceContainer); err != nil {
 		c.Delete()
 		return nil, err
@@ -479,13 +526,13 @@ func containerCreateInternal(d *Daemon, args containerArgs) (container, error) {
 	}
 
 	// Validate container config
-	err := containerValidConfig(args.Config, false)
+	err := containerValidConfig(args.Config, false, false)
 	if err != nil {
 		return nil, err
 	}
 
 	// Validate container devices
-	err = containerValidDevices(args.Devices)
+	err = containerValidDevices(args.Devices, false, false)
 	if err != nil {
 		return nil, err
 	}
@@ -524,6 +571,29 @@ func containerCreateInternal(d *Daemon, args containerArgs) (container, error) {
 	args.Id = id
 
 	return containerLXCCreate(d, args)
+}
+
+func containerConfigureInternal(c container) error {
+	// Find the root device
+	for _, m := range c.ExpandedDevices() {
+		if m["type"] != "disk" || m["path"] != "/" || m["size"] == "" {
+			continue
+		}
+
+		size, err := deviceParseBytes(m["size"])
+		if err != nil {
+			return err
+		}
+
+		err = c.Storage().ContainerSetQuota(c, size)
+		if err != nil {
+			return err
+		}
+
+		break
+	}
+
+	return nil
 }
 
 func containerLoadById(d *Daemon, id int) (container, error) {
