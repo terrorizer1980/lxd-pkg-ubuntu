@@ -1,3 +1,29 @@
+lxd (0.27-0ubuntu1) xenial; urgency=medium
+
+  * New upstream release (0.27)
+    - Support for container disk quota (zfs and btrfs only)
+    - Download progress during image copy and container launch (LP: #1530414)
+    - Initial work on a LXC to LXD script (supports almost every
+      configuration except for unprivileged containers)
+    - New linux.kernel_modules container property (list of modules to
+      load before starting the container)
+    - New core.https_allowed_origin server property (controls the
+      Access-Control-Allow-Origin header)
+    - Profile changes are now live-applied to all affected containers
+    - "lxc config edit" now works against servers too
+    - Changes to security.nesting are now live-applied
+    - Support for xfs with the lvm backend
+    - "lxc image list" now supports filtering (by name, hash and properties)
+    - Improved bash completion profile
+    - The default remote is now visible in "lxc remote list"
+    - "lxc info" now indicates whether a container is ephemeral or persistent
+    - Various improvement to help messages
+      (LP: #1531643, LP: #1530413, LP: #1531357)
+    - A lot of bugfixes and other performance improvement, see:
+      https://linuxcontainers.org/lxd/news/
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 20 Jan 2016 09:53:05 -0500
+
 lxd (0.26-0ubuntu3) xenial; urgency=medium
 
   * Cherry-pick upstream bugfixes:
