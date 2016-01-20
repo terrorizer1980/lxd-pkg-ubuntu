@@ -94,12 +94,54 @@ func TestStringWidthInvalid(t *testing.T) {
 	}
 }
 
+func TestTruncateSmaller(t *testing.T) {
+	s := "あいうえお"
+	expected := "あいうえお"
+
+	if out := Truncate(s, 10, "..."); out != expected {
+		t.Errorf("Truncate(%q) = %q, want %q", s, out, expected)
+	}
+}
+
 func TestTruncate(t *testing.T) {
 	s := "あいうえおあいうえおえおおおおおおおおおおおおおおおおおおおおおおおおおおおおおお"
 	expected := "あいうえおあいうえおえおおおおおおおおおおおおおおおおおおおおおおおおおおお..."
 
-	if out := Truncate(s, 80, "..."); out != expected {
+	out := Truncate(s, 80, "...")
+	if out != expected {
 		t.Errorf("Truncate(%q) = %q, want %q", s, out, expected)
+	}
+	width := StringWidth(out)
+	if width != 79 {
+		t.Errorf("width of Truncate(%q) should be %d, but %d", s, 79, width)
+	}
+}
+
+func TestTruncateFit(t *testing.T) {
+	s := "aあいうえおあいうえおえおおおおおおおおおおおおおおおおおおおおおおおおおおおおおお"
+	expected := "aあいうえおあいうえおえおおおおおおおおおおおおおおおおおおおおおおおおおおお..."
+
+	out := Truncate(s, 80, "...")
+	if out != expected {
+		t.Errorf("Truncate(%q) = %q, want %q", s, out, expected)
+	}
+	width := StringWidth(out)
+	if width != 80 {
+		t.Errorf("width of Truncate(%q) should be %d, but %d", s, 80, width)
+	}
+}
+
+func TestTruncateJustFit(t *testing.T) {
+	s := "あいうえおあいうえおえおおおおおおおおおおおおおおおおおおおおおおおおおおおおお"
+	expected := "あいうえおあいうえおえおおおおおおおおおおおおおおおおおおおおおおおおおおおおお"
+
+	out := Truncate(s, 80, "...")
+	if out != expected {
+		t.Errorf("Truncate(%q) = %q, want %q", s, out, expected)
+	}
+	width := StringWidth(out)
+	if width != 80 {
+		t.Errorf("width of Truncate(%q) should be %d, but %d", s, 80, width)
 	}
 }
 
@@ -159,11 +201,29 @@ func TestFillLeft(t *testing.T) {
 	}
 }
 
+func TestFillLeftFit(t *testing.T) {
+	s := "あいうえお"
+	expected := "あいうえお"
+
+	if out := FillLeft(s, 10); out != expected {
+		t.Errorf("FillLeft(%q) = %q, want %q", s, out, expected)
+	}
+}
+
 func TestFillRight(t *testing.T) {
 	s := "あxいうえお"
 	expected := "あxいうえお    "
 
 	if out := FillRight(s, 15); out != expected {
+		t.Errorf("FillRight(%q) = %q, want %q", s, out, expected)
+	}
+}
+
+func TestFillRightFit(t *testing.T) {
+	s := "あいうえお"
+	expected := "あいうえお"
+
+	if out := FillRight(s, 10); out != expected {
 		t.Errorf("FillRight(%q) = %q, want %q", s, out, expected)
 	}
 }

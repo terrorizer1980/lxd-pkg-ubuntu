@@ -20,9 +20,11 @@ currently supported:
 Key                             | Type          | Default                   | Description
 :--                             | :---          | :------                   | :----------
 core.https\_address             | string        | -                         | Address to bind for the remote API
+core.https\_allowed\_origin     | string        | -                         | Access-Control-Allow-Origin http header value
 core.trust\_password            | string        | -                         | Password to be provided by clients to setup a trust
 storage.lvm\_vg\_name           | string        | -                         | LVM Volume Group name to be used for container and image storage. A default Thin Pool is created using 100% of the free space in the Volume Group, unless `storage.lvm_thinpool_name` is set.
 storage.lvm\_thinpool\_name     | string        | "LXDPool"                 | LVM Thin Pool to use within the Volume Group specified in `storage.lvm_vg_name`, if the default pool parameters are undesirable.
+storage.lvm\_fstype             | string        | ext4                      | Format LV with filesystem, for now it's value can be only ext4 (default) or xfs.
 storage.zfs\_pool\_name         | string        | -                         | ZFS pool name
 images.compression\_algorithm   | string        | gzip                      | Compression algorithm to use for new images (bzip2, gzip, lzma, xz or none)
 images.remote\_cache\_expiry    | integer       | 10                        | Number of days after which an unused cached remote image will be flushed
@@ -53,28 +55,35 @@ currently supported:
 
 The currently supported keys are:
 
-Key                             | Type          | Default           | Description
-:--                             | :---          | :------           | :----------
-boot.autostart                  | boolean       | false             | Always start the container when LXD starts
-boot.autostart.delay            | integer       | 0                 | Number of seconds to wait after the container started before starting the next one
-boot.autostart.priority         | integer       | 0                 | What order to start the containers in (starting with highest)
-environment.\*                  | string        | -                 | key/value environment variables to export to the container and set on exec
-limits.cpu                      | string        | - (all)           | Number or range of CPUs to expose to the container
-limits.cpu.allowance            | string        | 100%              | How much of the CPU can be used. Can be a percentage (e.g. 50%) for a soft limit or hard a chunk of time (25ms/100ms)
-limits.cpu.priority             | integer       | 10 (maximum)      | CPU scheduling priority compared to other containers sharing the same CPUs (overcommit)
-limits.memory                   | string        | - (all)           | Percentage of the host's memory or fixed value in bytes (supports kB, MB, GB, TB, PB and EB suffixes)
-limits.memory.enforce           | string        | hard              | If hard, container can't exceed its memory limit. If soft, the container can exceed its memory limit when extra host memory is available.
-limits.memory.swap              | boolean       | true              | Whether to allow some of the container's memory to be swapped out to disk
-limits.memory.swap.priority     | integer       | 10 (maximum)      | The higher this is set, the least likely the container is to be swapped to disk
-raw.apparmor                    | blob          | -                 | Apparmor profile entries to be appended to the generated profile
-raw.lxc                         | blob          | -                 | Raw LXC configuration to be appended to the generated one
-security.nesting                | boolean       | false             | Support running lxd (nested) inside the container
-security.privileged             | boolean       | false             | Runs the container in privileged mode
-user.\*                         | string        | -                 | Free form user key/value storage (can be used in search)
-volatile.\<name\>.hwaddr        | string        | -                 | Unique MAC address for a given interface (generated and set by LXD when the hwaddr field of a "nic" type device isn't set)
-volatile.base\_image            | string        | -                 | The hash of the image the container was created from, if any.
-volatile.last\_state.idmap      | string        | -                 | Serialized container uid/gid map
-volatile.last\_state.power      | string        | -                 | Container state as of last host shutdown
+Key                         | Type      | Default       | Live update   | Description
+:--                         | :---      | :------       | :----------   | :----------
+boot.autostart              | boolean   | false         | n/a           | Always start the container when LXD starts
+boot.autostart.delay        | integer   | 0             | n/a           | Number of seconds to wait after the container started before starting the next one
+boot.autostart.priority     | integer   | 0             | n/a           | What order to start the containers in (starting with highest)
+environment.\*              | string    | -             | yes (exec)    | key/value environment variables to export to the container and set on exec
+limits.cpu                  | string    | - (all)       | yes           | Number or range of CPUs to expose to the container
+limits.cpu.allowance        | string    | 100%          | yes           | How much of the CPU can be used. Can be a percentage (e.g. 50%) for a soft limit or hard a chunk of time (25ms/100ms)
+limits.cpu.priority         | integer   | 10 (maximum)  | yes           | CPU scheduling priority compared to other containers sharing the same CPUs (overcommit)
+limits.memory               | string    | - (all)       | yes           | Percentage of the host's memory or fixed value in bytes (supports kB, MB, GB, TB, PB and EB suffixes)
+limits.memory.enforce       | string    | hard          | yes           | If hard, container can't exceed its memory limit. If soft, the container can exceed its memory limit when extra host memory is available.
+limits.memory.swap          | boolean   | true          | yes           | Whether to allow some of the container's memory to be swapped out to disk
+limits.memory.swap.priority | integer   | 10 (maximum)  | yes           | The higher this is set, the least likely the container is to be swapped to disk
+linux.kernel\_modules       | string    | -             | yes           | Comma separated list of kernel modules to load before starting the container
+raw.apparmor                | blob      | -             | yes           | Apparmor profile entries to be appended to the generated profile
+raw.lxc                     | blob      | -             | no            | Raw LXC configuration to be appended to the generated one
+security.nesting            | boolean   | false         | yes           | Support running lxd (nested) inside the container
+security.privileged         | boolean   | false         | no            | Runs the container in privileged mode
+user.\*                     | string    | -             | n/a           | Free form user key/value storage (can be used in search)
+
+The following volatile keys are currently internally used by LXD:
+
+Key                         | Type      | Default       | Description
+:--                         | :---      | :------       | :----------
+volatile.\<name\>.hwaddr    | string    | -             | Network device MAC address (when no hwaddr property is set on the device itself)
+volatile.\<name\>.name      | string    | -             | Network device name (when no name propery is set on the device itself)
+volatile.base\_image        | string    | -             | The hash of the image the container was created from, if any.
+volatile.last\_state.idmap  | string    | -             | Serialized container uid/gid map
+volatile.last\_state.power  | string    | -             | Container state as of last host shutdown
 
 
 Additionally, those user keys have become common with images (support isn't guaranteed):
@@ -158,13 +167,14 @@ LXD supports different kind of network devices:
 
 Different network interface types have different additional properties, the current list is:
 
-Key     | Type      | Default           | Required  | Used by                       | Description
-:--     | :--       | :--               | :--       | :--                           | :--
-nictype | string    | -                 | yes       | all                           | The device type, one of "physical", "bridged", "macvlan" or "p2p"
-name    | string    | kernel assigned   | no        | all                           | The name of the interface inside the container
-hwaddr  | string    | randomly assigned | no        | all                           | The MAC address of the new interface
-mtu     | integer   | parent MTU        | no        | all                           | The MTU of the new interface
-parent  | string    | -                 | yes       | physical, bridged, macvlan    | The name of the host device or bridge
+Key        | Type      | Default           | Required  | Used by                       | Description
+:--        | :--       | :--               | :--       | :--                           | :--
+nictype    | string    | -                 | yes       | all                           | The device type, one of "physical", "bridged", "macvlan" or "p2p"
+name       | string    | kernel assigned   | no        | all                           | The name of the interface inside the container
+host\_name | string    | randomly assigned | no        | bridged, p2p, macvlan         | The name of the interface inside the host
+hwaddr     | string    | randomly assigned | no        | all                           | The MAC address of the new interface
+mtu        | integer   | parent MTU        | no        | all                           | The MTU of the new interface
+parent     | string    | -                 | yes       | physical, bridged, macvlan    | The name of the host device or bridge
 
 ### Type: disk
 Disk entries are essentially mountpoints inside the container. They can
@@ -179,6 +189,7 @@ path        | string    | -                 | yes       | Path inside the contai
 source      | string    | -                 | yes       | Path on the host, either to a file/directory or to a block device
 optional    | boolean   | false             | no        | Controls whether to fail if the source doesn't exist
 readonly    | boolean   | false             | no        | Controls whether to make the mount read-only
+size        | string    | -                 | no        | Disk size in bytes (supports kB, MB, GB, TB, PB and EB suffixes). This is only supported for the rootfs (/).
 
 ### Type: unix-char
 Unix character device entries simply make the requested character device

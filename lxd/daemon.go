@@ -43,6 +43,7 @@ var aaConfined = false
 // CGroup
 var cgCpuController = false
 var cgCpusetController = false
+var cgDevicesController = false
 var cgMemoryController = false
 var cgSwapAccounting = false
 
@@ -702,6 +703,11 @@ func (d *Daemon) Init() error {
 		shared.Log.Warn("Couldn't find the CGroup CPUset controller, CPU pinning will be ignored.")
 	}
 
+	cgDevicesController = shared.PathExists("/sys/fs/cgroup/devices/")
+	if !cgDevicesController {
+		shared.Log.Warn("Couldn't find the CGroup devices controller, device access control won't work.")
+	}
+
 	cgMemoryController = shared.PathExists("/sys/fs/cgroup/memory/")
 	if !cgMemoryController {
 		shared.Log.Warn("Couldn't find the CGroup memory controller, memory limits will be ignored.")
@@ -757,6 +763,9 @@ func (d *Daemon) Init() error {
 		return err
 	}
 	if err := os.MkdirAll(shared.VarPath("images"), 0700); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(shared.LogPath(), 0700); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(shared.VarPath("security"), 0700); err != nil {
@@ -854,6 +863,7 @@ func (d *Daemon) Init() error {
 
 	/* Setup the web server */
 	d.mux = mux.NewRouter()
+	d.mux.StrictSlash(false)
 
 	d.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -980,7 +990,7 @@ func (d *Daemon) Init() error {
 		for _, socket := range d.Sockets {
 			shared.Log.Info(" - binding socket", log.Ctx{"socket": socket.Socket.Addr()})
 			current_socket := socket
-			d.tomb.Go(func() error { return http.Serve(current_socket.Socket, d.mux) })
+			d.tomb.Go(func() error { return http.Serve(current_socket.Socket, &lxdHttpServer{d.mux, d}) })
 		}
 
 		d.tomb.Go(func() error {
@@ -1075,11 +1085,15 @@ func (d *Daemon) ConfigKeyIsValid(key string) bool {
 	switch key {
 	case "core.https_address":
 		return true
+	case "core.https_allowed_origin":
+		return true
 	case "core.trust_password":
 		return true
 	case "storage.lvm_vg_name":
 		return true
 	case "storage.lvm_thinpool_name":
+		return true
+	case "storage.lvm_fstype":
 		return true
 	case "storage.zfs_pool_name":
 		return true
@@ -1204,4 +1218,25 @@ func (d *Daemon) PasswordCheck(password string) bool {
 	}
 	shared.Log.Debug("Verified the admin password")
 	return true
+}
+
+type lxdHttpServer struct {
+	r *mux.Router
+	d *Daemon
+}
+
+func (s *lxdHttpServer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+	allowedOrigin, _ := s.d.ConfigValueGet("core.https_allowed_origin")
+	origin := req.Header.Get("Origin")
+	if allowedOrigin != "" && origin != "" {
+		rw.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+	}
+
+	// OPTIONS request don't need any further processing
+	if req.Method == "OPTIONS" {
+		return
+	}
+
+	// Call the original server
+	s.r.ServeHTTP(rw, req)
 }

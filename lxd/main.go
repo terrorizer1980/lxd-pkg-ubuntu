@@ -475,13 +475,13 @@ func waitReady() error {
 		for {
 			c, err := lxd.NewClient(&lxd.DefaultConfig, "local")
 			if err != nil {
-				time.Sleep(500 * 1e6 * time.Nanosecond)
+				time.Sleep(500 * time.Millisecond)
 				continue
 			}
 
 			err = c.Finger()
 			if err != nil {
-				time.Sleep(500 * 1e6 * time.Nanosecond)
+				time.Sleep(500 * time.Millisecond)
 				continue
 			}
 
@@ -664,7 +664,7 @@ func setupLXD() error {
 					storageDevice = askString("Path to the existing block device: ")
 					storageMode = "device"
 				} else {
-					storageLoopSize = askInt("Size in GB of the new loop device: ", 10, -1)
+					storageLoopSize = askInt("Size in GB of the new loop device (1GB minimum): ", 1, -1)
 					storageMode = "loop"
 				}
 			} else {

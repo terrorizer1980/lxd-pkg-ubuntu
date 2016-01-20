@@ -546,7 +546,7 @@ func (c *migrationSink) do() error {
 			 * opened by the process after it is in its user
 			 * namespace.
 			 */
-			if c.container.IsPrivileged() {
+			if !c.container.IsPrivileged() {
 				if err := c.container.IdmapSet().ShiftRootfs(imagesDir); err != nil {
 					restore <- err
 					os.RemoveAll(imagesDir)
@@ -687,6 +687,11 @@ func MigrateContainer(args []string) error {
 	if err := c.LoadConfigFile(configPath); err != nil {
 		return err
 	}
+
+	/* see https://github.com/golang/go/issues/13155, startContainer, and dc3a229 */
+	os.Stdin.Close()
+	os.Stdout.Close()
+	os.Stderr.Close()
 
 	return c.Restore(lxc.RestoreOptions{
 		Directory: imagesDir,
