@@ -41,10 +41,12 @@ var aaAvailable = true
 var aaConfined = false
 
 // CGroup
+var cgBlkioController = false
 var cgCpuController = false
 var cgCpusetController = false
 var cgDevicesController = false
 var cgMemoryController = false
+var cgNetPrioController = false
 var cgSwapAccounting = false
 
 // UserNS
@@ -437,7 +439,11 @@ func (d *Daemon) ListenAddresses() ([]string, error) {
 			}
 		}
 	} else {
-		addresses = append(addresses, fmt.Sprintf("%s:%s", localHost, localPort))
+		if strings.Contains(localHost, ":") {
+			addresses = append(addresses, fmt.Sprintf("[%s]:%s", localHost, localPort))
+		} else {
+			addresses = append(addresses, fmt.Sprintf("%s:%s", localHost, localPort))
+		}
 	}
 
 	return addresses, nil
@@ -693,6 +699,11 @@ func (d *Daemon) Init() error {
 	}
 
 	/* Detect CGroup support */
+	cgBlkioController = shared.PathExists("/sys/fs/cgroup/blkio/")
+	if !cgBlkioController {
+		shared.Log.Warn("Couldn't find the CGroup blkio controller, I/O limits will be ignored.")
+	}
+
 	cgCpuController = shared.PathExists("/sys/fs/cgroup/cpu/")
 	if !cgCpuController {
 		shared.Log.Warn("Couldn't find the CGroup CPU controller, CPU time limits will be ignored.")
@@ -711,6 +722,11 @@ func (d *Daemon) Init() error {
 	cgMemoryController = shared.PathExists("/sys/fs/cgroup/memory/")
 	if !cgMemoryController {
 		shared.Log.Warn("Couldn't find the CGroup memory controller, memory limits will be ignored.")
+	}
+
+	cgNetPrioController = shared.PathExists("/sys/fs/cgroup/net_prio/")
+	if !cgNetPrioController {
+		shared.Log.Warn("Couldn't find the CGroup network class controller, network limits will be ignored.")
 	}
 
 	cgSwapAccounting = shared.PathExists("/sys/fs/cgroup/memory/memory.memsw.limit_in_bytes")
@@ -844,7 +860,10 @@ func (d *Daemon) Init() error {
 		}()
 
 		/* Start the scheduler */
-		go deviceTaskScheduler(d)
+		go deviceEventListener(d)
+
+		/* Re-balance in case things changed while LXD was down */
+		deviceTaskBalance(d)
 
 		/* Setup the TLS authentication */
 		certf, keyf, err := readMyCert()
