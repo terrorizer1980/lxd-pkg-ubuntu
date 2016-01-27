@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,6 +26,13 @@ import (
 
 var deviceSchedRebalance = make(chan []string, 0)
 
+type deviceBlockLimit struct {
+	readBps   int64
+	readIops  int64
+	writeBps  int64
+	writeIops int64
+}
+
 type deviceTaskCPU struct {
 	id    int
 	strId string
@@ -36,7 +44,7 @@ func (c deviceTaskCPUs) Len() int           { return len(c) }
 func (c deviceTaskCPUs) Less(i, j int) bool { return *c[i].count < *c[j].count }
 func (c deviceTaskCPUs) Swap(i, j int)      { c[i], c[j] = c[j], c[i] }
 
-func deviceMonitorProcessors() (chan []string, error) {
+func deviceNetlinkListener() (chan []string, error) {
 	NETLINK_KOBJECT_UEVENT := 15
 	UEVENT_BUFFER_SIZE := 2048
 
@@ -89,15 +97,25 @@ func deviceMonitorProcessors() (chan []string, error) {
 				}
 			}
 
-			if props["SUBSYSTEM"] != "cpu" || props["DRIVER"] != "processor" {
-				continue
+			if props["SUBSYSTEM"] == "cpu" {
+				if props["DRIVER"] != "processor" {
+					continue
+				}
+
+				if props["ACTION"] != "offline" && props["ACTION"] != "online" {
+					continue
+				}
+
+				ch <- []string{"cpu", path.Base(props["DEVPATH"]), props["ACTION"]}
 			}
 
-			if props["ACTION"] != "offline" && props["ACTION"] != "online" {
-				continue
-			}
+			if props["SUBSYSTEM"] == "net" {
+				if props["ACTION"] != "add" && props["ACTION"] != "removed" {
+					continue
+				}
 
-			ch <- []string{path.Base(props["DEVPATH"]), props["ACTION"]}
+				ch <- []string{"net", props["INTERFACE"], props["ACTION"]}
+			}
 		}
 	}(ch)
 
@@ -332,32 +350,76 @@ func deviceGetCurrentCPUs() (string, error) {
 	return "", fmt.Errorf("Couldn't find cpus_allowed_list")
 }
 
-func deviceTaskScheduler(d *Daemon) {
-	chHotplug, err := deviceMonitorProcessors()
-	if err != nil {
-		shared.Log.Error("scheduler: couldn't setup uevent watcher, no automatic re-balance")
+func deviceNetworkPriority(d *Daemon, netif string) {
+	// Don't bother running when CGroup support isn't there
+	if !cgNetPrioController {
 		return
 	}
 
-	shared.Debugf("Scheduler: doing initial balance")
-	deviceTaskBalance(d)
+	containers, err := dbContainersList(d.db, cTypeRegular)
+	if err != nil {
+		return
+	}
+
+	for _, name := range containers {
+		// Get the container struct
+		c, err := containerLoadByName(d, name)
+		if err != nil {
+			continue
+		}
+
+		// Extract the current priority
+		networkPriority := c.ExpandedConfig()["limits.network.priority"]
+		if networkPriority == "" {
+			continue
+		}
+
+		networkInt, err := strconv.Atoi(networkPriority)
+		if err != nil {
+			continue
+		}
+
+		// Set the value for the new interface
+		c.CGroupSet("net_prio.ifpriomap", fmt.Sprintf("%s %d", netif, networkInt))
+	}
+
+	return
+}
+
+func deviceEventListener(d *Daemon) {
+	chNetlink, err := deviceNetlinkListener()
+	if err != nil {
+		shared.Log.Error("scheduler: couldn't setup netlink listener")
+		return
+	}
 
 	for {
 		select {
-		case e := <-chHotplug:
-			if len(e) != 2 {
+		case e := <-chNetlink:
+			if len(e) != 3 {
 				shared.Log.Error("Scheduler: received an invalid hotplug event")
 				continue
 			}
-			shared.Debugf("Scheduler: %s is now %s: re-balancing", e[0], e[1])
-			deviceTaskBalance(d)
+
+			if e[0] == "cpu" && cgCpusetController {
+				shared.Debugf("Scheduler: %s: %s is now %s: re-balancing", e[0], e[1], e[2])
+				deviceTaskBalance(d)
+			}
+
+			if e[0] == "net" && e[2] == "add" && cgNetPrioController {
+				shared.Debugf("Scheduler: %s: %s has been added: updating network priorities", e[0], e[1])
+				deviceNetworkPriority(d, e[1])
+			}
 		case e := <-deviceSchedRebalance:
 			if len(e) != 3 {
 				shared.Log.Error("Scheduler: received an invalid rebalance event")
 				continue
 			}
-			shared.Debugf("Scheduler: %s %s %s: re-balancing", e[0], e[1], e[2])
-			deviceTaskBalance(d)
+
+			if cgCpusetController {
+				shared.Debugf("Scheduler: %s %s %s: re-balancing", e[0], e[1], e[2])
+				deviceTaskBalance(d)
+			}
 		}
 	}
 }
@@ -549,6 +611,51 @@ func deviceParseCPU(cpuAllowance string, cpuPriority string) (string, string, st
 	return fmt.Sprintf("%d", cpuShares), cpuCfsQuota, cpuCfsPeriod, nil
 }
 
+func deviceParseBits(input string) (int64, error) {
+	if input == "" {
+		return 0, nil
+	}
+
+	if len(input) < 5 {
+		return -1, fmt.Errorf("Invalid value: %s", input)
+	}
+
+	// Extract the suffix
+	suffix := input[len(input)-4:]
+
+	// Extract the value
+	value := input[0 : len(input)-4]
+	valueInt, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return -1, fmt.Errorf("Invalid integer: %s", input)
+	}
+
+	if valueInt < 0 {
+		return -1, fmt.Errorf("Invalid value: %d", valueInt)
+	}
+
+	// Figure out the multiplicator
+	multiplicator := int64(0)
+	switch suffix {
+	case "kbit":
+		multiplicator = 1000
+	case "Mbit":
+		multiplicator = 1000 * 1000
+	case "Gbit":
+		multiplicator = 1000 * 1000 * 1000
+	case "Tbit":
+		multiplicator = 1000 * 1000 * 1000 * 1000
+	case "Pbit":
+		multiplicator = 1000 * 1000 * 1000 * 1000 * 1000
+	case "Ebit":
+		multiplicator = 1000 * 1000 * 1000 * 1000 * 1000 * 1000
+	default:
+		return -1, fmt.Errorf("Unsupported suffix: %s", suffix)
+	}
+
+	return valueInt * multiplicator, nil
+}
+
 func deviceParseBytes(input string) (int64, error) {
 	if input == "" {
 		return 0, nil
@@ -626,4 +733,161 @@ func deviceTotalMemory() (int64, error) {
 	}
 
 	return -1, fmt.Errorf("Couldn't find MemTotal")
+}
+
+func deviceGetParentBlocks(path string) ([]string, error) {
+	var devices []string
+
+	// Expand the mount path
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+
+	expPath, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		expPath = absPath
+	}
+
+	// Find the source mount of the path
+	file, err := os.Open("/proc/self/mountinfo")
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	device := ""
+	match := ""
+	for scanner.Scan() {
+		line := scanner.Text()
+		rows := strings.Fields(line)
+
+		if len(rows[4]) <= len(match) {
+			continue
+		}
+
+		if expPath != rows[4] && !strings.HasPrefix(expPath, rows[4]) {
+			continue
+		}
+
+		match = rows[4]
+
+		// Go backward to avoid problems with optional fields
+		device = rows[len(rows)-2]
+	}
+
+	if device == "" {
+		return nil, fmt.Errorf("Couldn't find a match /proc/self/mountinfo entry")
+	}
+
+	// Deal with per-filesystem oddities. We don't care about failures here
+	// because any non-special filesystem => directory backend.
+	fs, _ := filesystemDetect(expPath)
+
+	if fs == "zfs" && shared.PathExists("/dev/zfs") {
+		poolName := strings.Split(device, "/")[0]
+
+		output, err := exec.Command("zpool", "status", poolName).CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("Failed to query zfs filesystem information for %s: %s", device, output)
+		}
+
+		for _, line := range strings.Split(string(output), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 5 {
+				continue
+			}
+
+			if fields[1] != "ONLINE" {
+				continue
+			}
+
+			if shared.PathExists(fields[0]) {
+				if shared.IsBlockdevPath(fields[0]) {
+					devices = append(devices, fields[0])
+				} else {
+					subDevices, err := deviceGetParentBlocks(fields[0])
+					if err != nil {
+						return nil, err
+					}
+
+					for _, dev := range subDevices {
+						devices = append(devices, dev)
+					}
+				}
+			} else if shared.PathExists(fmt.Sprintf("/dev/%s", fields[0])) {
+				devices = append(devices, fmt.Sprintf("/dev/%s", fields[0]))
+			} else if shared.PathExists(fmt.Sprintf("/dev/disk/by-id/%s", fields[0])) {
+				devices = append(devices, fmt.Sprintf("/dev/disk/by-id/%s", fields[0]))
+			} else {
+				continue
+			}
+		}
+	} else if fs == "btrfs" && shared.PathExists(device) {
+		output, err := exec.Command("btrfs", "filesystem", "show", device).CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("Failed to query btrfs filesystem information for %s: %s", device, output)
+		}
+
+		for _, line := range strings.Split(string(output), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) == 0 || fields[0] != "devid" {
+				continue
+			}
+
+			devices = append(devices, fields[len(fields)-1])
+		}
+	} else if shared.PathExists(device) {
+		devices = append(devices, device)
+	}
+
+	// Expand the device paths
+	for i, dev := range devices {
+		target, err := filepath.EvalSymlinks(dev)
+		if err == nil {
+			devices[i] = target
+		}
+	}
+
+	return devices, nil
+}
+
+func deviceParseDiskLimit(readSpeed string, writeSpeed string) (int64, int64, int64, int64, error) {
+	parseValue := func(value string) (int64, int64, error) {
+		var err error
+
+		bps := int64(0)
+		iops := int64(0)
+
+		if readSpeed == "" {
+			return bps, iops, nil
+		}
+
+		if strings.HasSuffix(value, "iops") {
+			iops, err = strconv.ParseInt(strings.TrimSuffix(value, "iops"), 10, 64)
+			if err != nil {
+				return -1, -1, err
+			}
+		} else {
+			bps, err = deviceParseBytes(value)
+			if err != nil {
+				return -1, -1, err
+			}
+		}
+
+		return bps, iops, nil
+	}
+
+	readBps, readIops, err := parseValue(readSpeed)
+	if err != nil {
+		return -1, -1, -1, -1, err
+	}
+
+	writeBps, writeIops, err := parseValue(writeSpeed)
+	if err != nil {
+		return -1, -1, -1, -1, err
+	}
+
+	return readBps, readIops, writeBps, writeIops, nil
 }

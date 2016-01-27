@@ -64,10 +64,12 @@ environment.\*              | string    | -             | yes (exec)    | key/va
 limits.cpu                  | string    | - (all)       | yes           | Number or range of CPUs to expose to the container
 limits.cpu.allowance        | string    | 100%          | yes           | How much of the CPU can be used. Can be a percentage (e.g. 50%) for a soft limit or hard a chunk of time (25ms/100ms)
 limits.cpu.priority         | integer   | 10 (maximum)  | yes           | CPU scheduling priority compared to other containers sharing the same CPUs (overcommit)
+limits.disk.priority        | integer   | 5 (medium)    | yes           | When under load, how much priority to give to the container's I/O requests
 limits.memory               | string    | - (all)       | yes           | Percentage of the host's memory or fixed value in bytes (supports kB, MB, GB, TB, PB and EB suffixes)
 limits.memory.enforce       | string    | hard          | yes           | If hard, container can't exceed its memory limit. If soft, the container can exceed its memory limit when extra host memory is available.
 limits.memory.swap          | boolean   | true          | yes           | Whether to allow some of the container's memory to be swapped out to disk
 limits.memory.swap.priority | integer   | 10 (maximum)  | yes           | The higher this is set, the least likely the container is to be swapped to disk
+limits.network.priority     | integer   | 0 (minimum)   | yes           | When under load, how much priority to give to the container's network requests
 linux.kernel\_modules       | string    | -             | yes           | Comma separated list of kernel modules to load before starting the container
 raw.apparmor                | blob      | -             | yes           | Apparmor profile entries to be appended to the generated profile
 raw.lxc                     | blob      | -             | no            | Raw LXC configuration to be appended to the generated one
@@ -105,6 +107,10 @@ Those keys can be set using the lxc tool with:
     lxc config set <container> <key> <value>
 
 Volatile keys can't be set by the user and can only be set directly against a container.
+
+The raw keys allow direct interaction with the backend features that LXD
+itself uses, setting those may very well break LXD in non-obvious ways
+and should whenever possible be avoided.
 
 
 ## Devices configuration
@@ -167,14 +173,17 @@ LXD supports different kind of network devices:
 
 Different network interface types have different additional properties, the current list is:
 
-Key        | Type      | Default           | Required  | Used by                       | Description
-:--        | :--       | :--               | :--       | :--                           | :--
-nictype    | string    | -                 | yes       | all                           | The device type, one of "physical", "bridged", "macvlan" or "p2p"
-name       | string    | kernel assigned   | no        | all                           | The name of the interface inside the container
-host\_name | string    | randomly assigned | no        | bridged, p2p, macvlan         | The name of the interface inside the host
-hwaddr     | string    | randomly assigned | no        | all                           | The MAC address of the new interface
-mtu        | integer   | parent MTU        | no        | all                           | The MTU of the new interface
-parent     | string    | -                 | yes       | physical, bridged, macvlan    | The name of the host device or bridge
+Key             | Type      | Default           | Required  | Used by                       | Description
+:--             | :--       | :--               | :--       | :--                           | :--
+nictype         | string    | -                 | yes       | all                           | The device type, one of "physical", "bridged", "macvlan" or "p2p"
+limits.ingress  | string    | -                 | no        | bridged, p2p                  | I/O limit in bit/s (supports kbit, Mbit, Gbit suffixes)
+limits.egress   | string    | -                 | no        | bridged, p2p                  | I/O limit in bit/s (supports kbit, Mbit, Gbit suffixes)
+limits.max      | string    | -                 | no        | bridged, p2p                  | Same as modifying both limits.read and limits.write
+name            | string    | kernel assigned   | no        | all                           | The name of the interface inside the container
+host\_name      | string    | randomly assigned | no        | bridged, p2p, macvlan         | The name of the interface inside the host
+hwaddr          | string    | randomly assigned | no        | all                           | The MAC address of the new interface
+mtu             | integer   | parent MTU        | no        | all                           | The MTU of the new interface
+parent          | string    | -                 | yes       | physical, bridged, macvlan    | The name of the host device or bridge
 
 ### Type: disk
 Disk entries are essentially mountpoints inside the container. They can
@@ -183,13 +192,19 @@ if the source is a block device, a regular mount.
 
 The following properties exist:
 
-Key         | Type      | Default           | Required  | Description
-:--         | :--       | :--               | :--       | :--
-path        | string    | -                 | yes       | Path inside the container where the disk will be mounted
-source      | string    | -                 | yes       | Path on the host, either to a file/directory or to a block device
-optional    | boolean   | false             | no        | Controls whether to fail if the source doesn't exist
-readonly    | boolean   | false             | no        | Controls whether to make the mount read-only
-size        | string    | -                 | no        | Disk size in bytes (supports kB, MB, GB, TB, PB and EB suffixes). This is only supported for the rootfs (/).
+Key             | Type      | Default           | Required  | Description
+:--             | :--       | :--               | :--       | :--
+limits.read     | string    | -                 | no        | I/O limit in byte/s (supports kB, MB, GB, TB, PB and EB suffixes) or in iops (must be suffixed with "iops")
+limits.write    | string    | -                 | no        | I/O limit in byte/s (supports kB, MB, GB, TB, PB and EB suffixes) or in iops (must be suffixed with "iops")
+limits.max      | string    | -                 | no        | Same as modifying both limits.read and limits.write
+path            | string    | -                 | yes       | Path inside the container where the disk will be mounted
+source          | string    | -                 | yes       | Path on the host, either to a file/directory or to a block device
+optional        | boolean   | false             | no        | Controls whether to fail if the source doesn't exist
+readonly        | boolean   | false             | no        | Controls whether to make the mount read-only
+size            | string    | -                 | no        | Disk size in bytes (supports kB, MB, GB, TB, PB and EB suffixes). This is only supported for the rootfs (/).
+
+If multiple disks, backed by the same block device, have I/O limits set,
+the average of the limits will be used.
 
 ### Type: unix-char
 Unix character device entries simply make the requested character device

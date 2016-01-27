@@ -318,7 +318,7 @@ func (c *containerLXC) initLXC() error {
 			return err
 		}
 
-		for _, dev := range []string{"c *:* m", "b *:* m", "c 5:1 rwm", "c 1:7 rwm", "c 1:3 rwm", "c 1:8 rwm", "c 1:9 rwm", "c 5:2 rwm", "c 136:* rwm"} {
+		for _, dev := range []string{"c *:* m", "b *:* m", "c 5:0 rwm", "c 5:1 rwm", "c 1:7 rwm", "c 1:3 rwm", "c 1:8 rwm", "c 1:9 rwm", "c 5:2 rwm", "c 136:* rwm"} {
 			err = lxcSetConfigItem(cc, "lxc.cgroup.devices.allow", dev)
 			if err != nil {
 				return err
@@ -438,7 +438,7 @@ func (c *containerLXC) initLXC() error {
 	if c.idmapset != nil {
 		lines := c.idmapset.ToLxcString()
 		for _, line := range lines {
-			err := lxcSetConfigItem(cc, "lxc.id_map", line+"\n")
+			err := lxcSetConfigItem(cc, "lxc.id_map", strings.TrimSuffix(line, "\n"))
 			if err != nil {
 				return err
 			}
@@ -559,6 +559,57 @@ func (c *containerLXC) initLXC() error {
 		}
 	}
 
+	// Disk limits
+	if cgBlkioController {
+		diskPriority := c.expandedConfig["limits.disk.priority"]
+		if diskPriority != "" {
+			priorityInt, err := strconv.Atoi(diskPriority)
+			if err != nil {
+				return err
+			}
+
+			err = lxcSetConfigItem(cc, "lxc.cgroup.blkio.weight", fmt.Sprintf("%d", priorityInt*100))
+			if err != nil {
+				return err
+			}
+		}
+
+		diskLimits, err := c.getDiskLimits()
+		if err != nil {
+			return err
+		}
+
+		for block, limit := range diskLimits {
+			if limit.readBps > 0 {
+				err = lxcSetConfigItem(cc, "lxc.cgroup.blkio.throttle.read_bps_device", fmt.Sprintf("%s %d", block, limit.readBps))
+				if err != nil {
+					return err
+				}
+			}
+
+			if limit.readIops > 0 {
+				err = lxcSetConfigItem(cc, "lxc.cgroup.blkio.throttle.read_iops_device", fmt.Sprintf("%s %d", block, limit.readIops))
+				if err != nil {
+					return err
+				}
+			}
+
+			if limit.writeBps > 0 {
+				err = lxcSetConfigItem(cc, "lxc.cgroup.blkio.throttle.write_bps_device", fmt.Sprintf("%s %d", block, limit.writeBps))
+				if err != nil {
+					return err
+				}
+			}
+
+			if limit.writeIops > 0 {
+				err = lxcSetConfigItem(cc, "lxc.cgroup.blkio.throttle.write_iops_device", fmt.Sprintf("%s %d", block, limit.writeIops))
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+
 	// Setup devices
 	for k, m := range c.expandedDevices {
 		if shared.StringInSlice(m["type"], []string{"unix-char", "unix-block"}) {
@@ -576,6 +627,9 @@ func (c *containerLXC) initLXC() error {
 		} else if m["type"] == "nic" {
 			// Fill in some fields from volatile
 			m, err = c.fillNetworkDevice(k, m)
+			if err != nil {
+				return err
+			}
 
 			// Interface type specific configuration
 			if shared.StringInSlice(m["nictype"], []string{"bridged", "p2p"}) {
@@ -1064,6 +1118,36 @@ func (c *containerLXC) OnStart() error {
 	// Trigger a rebalance
 	deviceTaskSchedulerTrigger("container", c.name, "started")
 
+	// Apply network priority
+	if c.expandedConfig["limits.network.priority"] != "" {
+		go func(c *containerLXC) {
+			c.fromHook = false
+			err := c.setNetworkPriority()
+			if err != nil {
+				shared.Log.Error("Failed to apply network priority", log.Ctx{"container": c.name, "err": err})
+			}
+		}(c)
+	}
+
+	// Apply network limits
+	for name, m := range c.expandedDevices {
+		if m["type"] != "nic" {
+			continue
+		}
+
+		if m["limits.max"] == "" && m["limits.ingress"] == "" && m["limits.egress"] == "" {
+			continue
+		}
+
+		go func(c *containerLXC, name string, m shared.Device) {
+			c.fromHook = false
+			err = c.setNetworkLimits(name, m)
+			if err != nil {
+				shared.Log.Error("Failed to apply network limits", log.Ctx{"container": c.name, "err": err})
+			}
+		}(c, name, m)
+	}
+
 	return nil
 }
 
@@ -1356,9 +1440,27 @@ func (c *containerLXC) Restore(sourceContainer container) error {
 		return err
 	}
 
+	// If the container wasn't running but was stateful, should we restore
+	// it as running?
+	if shared.PathExists(c.StatePath()) {
+		err := c.c.Restore(lxc.RestoreOptions{
+			Directory: c.StatePath(),
+			Verbose:   true,
+		})
+
+		// Remove the state from the parent container; we only keep
+		// this in snapshots.
+		err2 := os.RemoveAll(c.StatePath())
+		if err2 != nil {
+			shared.Log.Error("failed to delete snapshot state", "path", c.StatePath(), "err", err2)
+		}
+
+		return err
+	}
+
 	// Restart the container
 	if wasRunning {
-		c.Start()
+		return c.Start()
 	}
 
 	return nil
@@ -1384,12 +1486,12 @@ func (c *containerLXC) Delete() error {
 	if c.IsSnapshot() {
 		// Remove the snapshot
 		if err := c.storage.ContainerSnapshotDelete(c); err != nil {
-			return err
+			shared.Log.Warn("failed to delete snapshot", "name", c.Name(), "err", err)
 		}
 	} else {
 		// Remove all snapshot
 		if err := containerDeleteSnapshots(c.daemon, c.Name()); err != nil {
-			return err
+			shared.Log.Warn("failed to delete snapshots", "name", c.Name(), "err", err)
 		}
 
 		// Clean things up
@@ -1675,7 +1777,7 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 	}
 
 	// Diff the devices
-	removeDevices, addDevices := oldExpandedDevices.Update(c.expandedDevices)
+	removeDevices, addDevices, updateDevices := oldExpandedDevices.Update(c.expandedDevices)
 
 	// Do some validation of the config diff
 	err = containerValidConfig(c.expandedConfig, false, true)
@@ -1770,6 +1872,24 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 						undoChanges()
 						return fmt.Errorf("Failed to load kernel module '%s': %s", module, out)
 					}
+				}
+			} else if key == "limits.disk.priority" {
+				if !cgBlkioController {
+					continue
+				}
+
+				priorityInt := 5
+				diskPriority := c.expandedConfig["limits.disk.priority"]
+				if diskPriority != "" {
+					priorityInt, err = strconv.Atoi(diskPriority)
+					if err != nil {
+						return err
+					}
+				}
+
+				err = c.CGroupSet("blkio.weight", fmt.Sprintf("%d", priorityInt*100))
+				if err != nil {
+					return err
 				}
 			} else if key == "limits.memory" || strings.HasPrefix(key, "limits.memory.") {
 				// Skip if no memory CGroup
@@ -1883,6 +2003,11 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 						}
 					}
 				}
+			} else if key == "limits.network.priority" {
+				err := c.setNetworkPriority()
+				if err != nil {
+					return err
+				}
 			} else if key == "limits.cpu" {
 				// Trigger a scheduler re-run
 				deviceTaskSchedulerTrigger("container", c.name, "changed")
@@ -1957,6 +2082,54 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 				}
 			} else if m["type"] == "nic" {
 				err = c.insertNetworkDevice(k, m)
+				if err != nil {
+					undoChanges()
+					return err
+				}
+			}
+		}
+
+		updateDiskLimit := false
+		for k, m := range updateDevices {
+			if m["type"] == "disk" {
+				updateDiskLimit = true
+			} else if m["type"] == "nic" {
+				err = c.setNetworkLimits(k, m)
+				if err != nil {
+					undoChanges()
+					return err
+				}
+			}
+		}
+
+		// Disk limits parse all devices, so just apply them once
+		if updateDiskLimit && cgBlkioController {
+			diskLimits, err := c.getDiskLimits()
+			if err != nil {
+				undoChanges()
+				return err
+			}
+
+			for block, limit := range diskLimits {
+				err = c.CGroupSet("blkio.throttle.read_bps_device", fmt.Sprintf("%s %d", block, limit.readBps))
+				if err != nil {
+					undoChanges()
+					return err
+				}
+
+				err = c.CGroupSet("blkio.throttle.read_iops_device", fmt.Sprintf("%s %d", block, limit.readIops))
+				if err != nil {
+					undoChanges()
+					return err
+				}
+
+				err = c.CGroupSet("blkio.throttle.write_bps_device", fmt.Sprintf("%s %d", block, limit.writeBps))
+				if err != nil {
+					undoChanges()
+					return err
+				}
+
+				err = c.CGroupSet("blkio.throttle.write_iops_device", fmt.Sprintf("%s %d", block, limit.writeIops))
 				if err != nil {
 					undoChanges()
 					return err
@@ -3313,6 +3486,265 @@ func (c *containerLXC) removeDiskDevices() error {
 	return nil
 }
 
+// Block I/O limits
+func (c *containerLXC) getDiskLimits() (map[string]deviceBlockLimit, error) {
+	result := map[string]deviceBlockLimit{}
+
+	blockLimits := map[string][]deviceBlockLimit{}
+	for _, m := range c.expandedDevices {
+		if m["type"] != "disk" {
+			continue
+		}
+
+		// Apply max limit
+		if m["limits.max"] != "" {
+			m["limits.read"] = m["limits.max"]
+			m["limits.write"] = m["limits.max"]
+		}
+
+		source := m["source"]
+		if m["path"] == "" {
+			source = c.RootfsPath()
+		}
+
+		blocks, err := deviceGetParentBlocks(source)
+		if err != nil {
+			return nil, err
+		}
+
+		readBps, readIops, writeBps, writeIops, err := deviceParseDiskLimit(m["limits.read"], m["limits.write"])
+		if err != nil {
+			return nil, err
+		}
+		device := deviceBlockLimit{readBps: readBps, readIops: readIops, writeBps: writeBps, writeIops: writeIops}
+
+		for _, block := range blocks {
+			dev := strings.TrimPrefix(block, "/dev/")
+			if !shared.PathExists(fmt.Sprintf("/sys/class/block/%s/dev", dev)) {
+				return nil, fmt.Errorf("Disk is missing /sys/class/block entry")
+			}
+
+			block, err := ioutil.ReadFile(fmt.Sprintf("/sys/class/block/%s/dev", dev))
+			if err != nil {
+				return nil, err
+			}
+
+			fields := strings.SplitN(strings.TrimSuffix(string(block), "\n"), ":", 2)
+			if len(fields) != 2 {
+				return nil, fmt.Errorf("Invalid major:minor: %s", block)
+			}
+
+			if shared.PathExists(fmt.Sprintf("/sys/class/block/%s/partition", dev)) {
+				fields[1] = "0"
+			}
+
+			blockStr := fmt.Sprintf("%s:%s", fields[0], fields[1])
+			if blockLimits[blockStr] == nil {
+				blockLimits[blockStr] = []deviceBlockLimit{}
+			}
+			blockLimits[blockStr] = append(blockLimits[blockStr], device)
+		}
+	}
+
+	for block, limits := range blockLimits {
+		var readBpsCount, readBpsTotal, readIopsCount, readIopsTotal, writeBpsCount, writeBpsTotal, writeIopsCount, writeIopsTotal int64
+
+		for _, limit := range limits {
+			if limit.readBps > 0 {
+				readBpsCount += 1
+				readBpsTotal += limit.readBps
+			}
+
+			if limit.readIops > 0 {
+				readIopsCount += 1
+				readIopsTotal += limit.readIops
+			}
+
+			if limit.writeBps > 0 {
+				writeBpsCount += 1
+				writeBpsTotal += limit.writeBps
+			}
+
+			if limit.writeIops > 0 {
+				writeIopsCount += 1
+				writeIopsTotal += limit.writeIops
+			}
+		}
+
+		device := deviceBlockLimit{}
+
+		if readBpsCount > 0 {
+			device.readBps = readBpsTotal / readBpsCount
+		}
+
+		if readIopsCount > 0 {
+			device.readIops = readIopsTotal / readIopsCount
+		}
+
+		if writeBpsCount > 0 {
+			device.writeBps = writeBpsTotal / writeBpsCount
+		}
+
+		if writeIopsCount > 0 {
+			device.writeIops = writeIopsTotal / writeIopsCount
+		}
+
+		result[block] = device
+	}
+
+	return result, nil
+}
+
+// Network I/O limits
+func (c *containerLXC) setNetworkPriority() error {
+	// Check that the container is running
+	if !c.IsRunning() {
+		return fmt.Errorf("Can't set network priority on stopped container")
+	}
+
+	// Don't bother if the cgroup controller doesn't exist
+	if !cgNetPrioController {
+		return nil
+	}
+
+	// Extract the current priority
+	networkPriority := c.expandedConfig["limits.network.priority"]
+	if networkPriority == "" {
+		networkPriority = "0"
+	}
+
+	networkInt, err := strconv.Atoi(networkPriority)
+	if err != nil {
+		return err
+	}
+
+	// Get all the interfaces
+	netifs, err := net.Interfaces()
+	if err != nil {
+		return err
+	}
+
+	// Check that we at least succeeded to set an entry
+	success := false
+	var last_error error
+	for _, netif := range netifs {
+		err = c.CGroupSet("net_prio.ifpriomap", fmt.Sprintf("%s %d", netif.Name, networkInt))
+		if err == nil {
+			success = true
+		} else {
+			last_error = err
+		}
+	}
+
+	if !success {
+		return fmt.Errorf("Failed to set network device priority: %s", last_error)
+	}
+
+	return nil
+}
+
+func (c *containerLXC) setNetworkLimits(name string, m shared.Device) error {
+	// We can only do limits on some network type
+	if m["nictype"] != "bridged" && m["nictype"] != "p2p" {
+		return fmt.Errorf("Network limits are only supported on bridged and p2p interfaces")
+	}
+
+	// Load the go-lxc struct
+	err := c.initLXC()
+	if err != nil {
+		return err
+	}
+
+	// Check that the container is running
+	if !c.IsRunning() {
+		return fmt.Errorf("Can't set network limits on stopped container")
+	}
+
+	// Fill in some fields from volatile
+	m, err = c.fillNetworkDevice(name, m)
+	if err != nil {
+		return nil
+	}
+
+	// Look for the host side interface name
+	veth := m["host_name"]
+
+	if veth == "" {
+		for i := 0; i < len(c.c.ConfigItem("lxc.network")); i++ {
+			nicName := c.c.RunningConfigItem(fmt.Sprintf("lxc.network.%d.name", i))[0]
+			if nicName != m["name"] {
+				continue
+			}
+
+			veth = c.c.RunningConfigItem(fmt.Sprintf("lxc.network.%d.veth.pair", i))[0]
+			break
+		}
+	}
+
+	if veth == "" {
+		return fmt.Errorf("LXC doesn't now about this device and the host_name property isn't set, can't find host side veth name")
+	}
+
+	// Apply max limit
+	if m["limits.max"] != "" {
+		m["limits.ingress"] = m["limits.max"]
+		m["limits.egress"] = m["limits.max"]
+	}
+
+	// Parse the values
+	var ingressInt int64
+	if m["limits.ingress"] != "" {
+		ingressInt, err = deviceParseBits(m["limits.ingress"])
+		if err != nil {
+			return err
+		}
+	}
+
+	var egressInt int64
+	if m["limits.egress"] != "" {
+		egressInt, err = deviceParseBits(m["limits.egress"])
+		if err != nil {
+			return err
+		}
+	}
+
+	// Clean any existing entry
+	_, _ = exec.Command("tc", "qdisc", "del", "dev", veth, "root").CombinedOutput()
+	_, _ = exec.Command("tc", "qdisc", "del", "dev", veth, "ingress").CombinedOutput()
+
+	// Apply new limits
+	if m["limits.ingress"] != "" {
+		out, err := exec.Command("tc", "qdisc", "add", "dev", veth, "root", "handle", "1:0", "htb", "default", "10").CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("Failed to create root tc qdisc: %s", out)
+		}
+
+		out, err = exec.Command("tc", "class", "add", "dev", veth, "parent", "1:0", "classid", "1:10", "htb", "rate", fmt.Sprintf("%dbit", ingressInt)).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("Failed to create limit tc class: %s", out)
+		}
+
+		out, err = exec.Command("tc", "filter", "add", "dev", veth, "parent", "1:0", "protocol", "all", "u32", "match", "u32", "0", "0", "flowid", "1:1").CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("Failed to create tc filter: %s", out)
+		}
+	}
+
+	if m["limits.egress"] != "" {
+		out, err := exec.Command("tc", "qdisc", "add", "dev", veth, "handle", "ffff:0", "ingress").CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("Failed to create ingress tc qdisc: %s", out)
+		}
+
+		out, err = exec.Command("tc", "filter", "add", "dev", veth, "parent", "ffff:0", "protocol", "all", "u32", "match", "u32", "0", "0", "police", "rate", fmt.Sprintf("%dbit", egressInt), "burst", "1024k", "mtu", "64kb", "drop", "flowid", ":1").CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("Failed to create ingress tc qdisc: %s", out)
+		}
+	}
+
+	return nil
+}
+
 // Various state query functions
 func (c *containerLXC) IsEphemeral() bool {
 	return c.ephemeral
@@ -3343,7 +3775,8 @@ func (c *containerLXC) IsPrivileged() bool {
 }
 
 func (c *containerLXC) IsRunning() bool {
-	return c.State() != "STOPPED"
+	state := c.State()
+	return state != "BROKEN" && state != "STOPPED"
 }
 
 func (c *containerLXC) IsSnapshot() bool {
@@ -3438,7 +3871,7 @@ func (c *containerLXC) State() string {
 	// Load the go-lxc struct
 	err := c.initLXC()
 	if err != nil {
-		return ""
+		return "BROKEN"
 	}
 
 	return c.c.State().String()
@@ -3470,5 +3903,5 @@ func (c *containerLXC) TemplatesPath() string {
 }
 
 func (c *containerLXC) StatePath() string {
-	return filepath.Join(c.Path(), "state")
+	return filepath.Join(c.RootfsPath(), "state")
 }
