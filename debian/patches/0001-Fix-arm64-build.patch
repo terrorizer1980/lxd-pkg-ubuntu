@@ -1,0 +1,30 @@
+From f61f404bacc20a2a93852095b8490b1332ceedb9 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Wed, 27 Jan 2016 08:30:15 +0000
+Subject: Fix arm64 build
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+dup2 doesn't exist on arm64, we've got to use dup3 instead.
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ lxd/containers.go | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/lxd/containers.go b/lxd/containers.go
+index 838a458..aa1b2ed 100644
+--- a/lxd/containers.go
++++ b/lxd/containers.go
+@@ -209,8 +209,8 @@ func startContainer(args []string) error {
+ 
+ 	logFile, err := os.OpenFile(logPath, os.O_WRONLY|os.O_CREATE|os.O_SYNC, 0644)
+ 	if err == nil {
+-		syscall.Dup2(int(logFile.Fd()), 1)
+-		syscall.Dup2(int(logFile.Fd()), 2)
++		syscall.Dup3(int(logFile.Fd()), 1, 0)
++		syscall.Dup3(int(logFile.Fd()), 2, 0)
+ 	}
+ 
+ 	// Move the config so we can inspect it on failure
