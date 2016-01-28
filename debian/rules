@@ -32,92 +32,32 @@ endif
 
 ifeq ($(USE_EMBEDDED), false)
 	# Packaged dependencies
-	## gosexy/gettext-go
-#	mkdir -p ${GOPATH}/src/github.com/gosexy/
-#	ln -s /usr/share/gocode/src/github.com/gosexy/gettext ${GOPATH}/src/github.com/gosexy/
+	debian/helpers/link-from-installed github.com/coreos/go-systemd
+	debian/helpers/link-from-installed github.com/dustinkirkland/golang-petname
+	debian/helpers/link-from-installed github.com/golang/protobuf
+	debian/helpers/link-from-installed github.com/gorilla/context
+	debian/helpers/link-from-installed github.com/gorilla/mux
+	debian/helpers/link-from-installed github.com/mattn/go-sqlite3
+	debian/helpers/link-from-installed github.com/olekukonko/tablewriter
+	debian/helpers/link-from-installed github.com/pborman/uuid
+	debian/helpers/link-from-installed github.com/syndtr/gocapability
+	debian/helpers/link-from-installed golang.org/x/crypto
+	debian/helpers/link-from-installed gopkg.in/tomb.v2
+	debian/helpers/link-from-installed gopkg.in/yaml.v2
 
-	## gorilla/websocket
-#	mkdir -p ${GOPATH}/src/github.com/gorilla/
-#	ln -s /usr/share/gocode/src/github.com/gorilla/websocket ${GOPATH}/src/github.com/gorilla/
-
-	## olekukonko/tablewriter
-	mkdir -p ${GOPATH}/src/github.com/olekukonko/
-	ln -s /usr/share/gocode/src/github.com/olekukonko/tablewriter ${GOPATH}/src/github.com/olekukonko/
-
-	## x/crypto
-	mkdir -p ${GOPATH}/src/golang.org/x
-	ln -s /usr/share/gocode/src/golang.org/x/crypto ${GOPATH}/src/golang.org/x/
-
-	## yaml.v2
-	mkdir -p ${GOPATH}/src/gopkg.in/
-	ln -s /usr/share/gocode/src/gopkg.in/yaml.v2 ${GOPATH}/src/gopkg.in/
-
-	## dustinkirkland/golang-petname
-	mkdir -p ${GOPATH}/src/github.com/dustinkirkland/
-	ln -s /usr/share/gocode/src/github.com/dustinkirkland/golang-petname ${GOPATH}/src/github.com/dustinkirkland/golang-petname
-
-	## golang/protobuf
-	mkdir -p ${GOPATH}/src/github.com/golang/
-	ln -s /usr/share/gocode/src/github.com/golang/protobuf ${GOPATH}/src/github.com/golang/
-
-	## gorilla/context
-	mkdir -p ${GOPATH}/src/github.com/gorilla/
-	ln -s /usr/share/gocode/src/github.com/gorilla/context ${GOPATH}/src/github.com/gorilla/
-
-	## gorilla/mux
-	mkdir -p ${GOPATH}/src/github.com/gorilla/
-	ln -s /usr/share/gocode/src/github.com/gorilla/mux ${GOPATH}/src/github.com/gorilla/
-
-	## mattn/go-sqlite3
-	mkdir -p ${GOPATH}/src/github.com/mattn/
-	ln -s /usr/share/gocode/src/github.com/mattn/go-sqlite3 ${GOPATH}/src/github.com/mattn/
-
-	## pborman/uuid
-	mkdir -p ${GOPATH}/src/github.com/pborman/
-	ln -s /usr/share/gocode/src/github.com/pborman/uuid ${GOPATH}/src/github.com/pborman/
-
-	## coreos/go-systemd
-	mkdir -p ${GOPATH}/src/github.com/coreos/
-	ln -s /usr/share/gocode/src/github.com/coreos/go-systemd ${GOPATH}/src/github.com/coreos/
-
-	## syndtr/gocapability
-	mkdir -p ${GOPATH}/src/github.com/syndtr/
-	ln -s /usr/share/gocode/src/github.com/syndtr/gocapability ${GOPATH}/src/github.com/syndtr/
-
-	## tomb.v2
-	mkdir -p ${GOPATH}/src/gopkg.in/
-	ln -s /usr/share/gocode/src/gopkg.in/tomb.v2 ${GOPATH}/src/gopkg.in/
-
-	# Alternative packages
-	## stgraber/go-systemd
+	# Alternative package path: github.com/stgraber/lxd-go-systemd -> github.com/coreos/go-systemd
 	mkdir -p ${GOPATH}/src/github.com/stgraber/
 	ln -s ${GOPATH}/src/github.com/coreos/go-systemd ${GOPATH}/src/github.com/stgraber/lxd-go-systemd
 
 	# Packages that aren't in the archive
-	## inconshreveable/log15.v2
-	mkdir -p ${GOPATH}/src/gopkg.in/inconshreveable/
-	ln -s $(realpath dist/src/gopkg.in/inconshreveable/log15.v2) ${GOPATH}/src/gopkg.in/inconshreveable/log15.v2
-
-	## mattn/go-colorable
-	mkdir -p ${GOPATH}/src/github.com/mattn/
-	ln -s $(realpath dist/src/github.com/mattn/go-colorable) ${GOPATH}/src/github.com/mattn/
-
-	## flosch/pongo2.v3
-	mkdir -p ${GOPATH}/src/gopkg.in/flosch/
-	ln -s $(realpath dist/src/gopkg.in/flosch/pongo2.v3) ${GOPATH}/src/gopkg.in/flosch/
-
-	## lxc/go-lxc.v2
-	mkdir -p ${GOPATH}/src/gopkg.in/lxc/
-	ln -s $(realpath dist/src/gopkg.in/lxc/go-lxc.v2) ${GOPATH}/src/gopkg.in/lxc/
+	debian/helpers/link-from-bundled github.com/mattn/go-colorable
+	debian/helpers/link-from-bundled gopkg.in/flosch/pongo2.v3
+	debian/helpers/link-from-bundled gopkg.in/inconshreveable/log15.v2
+	debian/helpers/link-from-bundled gopkg.in/lxc/go-lxc.v2
 
 	# Packages that aren't in main yet
-	## gosexy/gettext-go
-	mkdir -p ${GOPATH}/src/github.com/gosexy/
-	ln -s $(realpath dist/src/github.com/gosexy/gettext) ${GOPATH}/src/github.com/gosexy/
-
-	## gorilla/websocket
-	mkdir -p ${GOPATH}/src/github.com/gorilla/
-	ln -s $(realpath dist/src/github.com/gorilla/websocket) ${GOPATH}/src/github.com/gorilla/
+	debian/helpers/link-from-bundled github.com/gorilla/websocket
+	debian/helpers/link-from-bundled github.com/gosexy/gettext
 endif
 
 	go install -v github.com/lxc/lxd/lxc
