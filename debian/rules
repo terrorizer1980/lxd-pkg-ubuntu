@@ -16,21 +16,35 @@ export USE_EMBEDDED := false
 	dh $@ --with systemd --buildsystem=golang --with=golang
 
 # Ugly workaround for bundled dependencies
-override_dh_auto_build:
-	# Get a clean GOPATH
+override_dh_auto_configure:
+	dh_auto_configure
+
+	# dh-golang's configure has copied the source tree into GOPATH. But
+	# because lxd gets some dependencies from the archive and some from
+	# the copies bundled in dist, we have to unpick a bunch of what it has
+	# done and set it up again.
+
+	# Remove the extra copy of dist dh-golang has copied onto GOPATH (or
+	# when dh-golang tries to run go install github.com/lxc/lxd/... things
+	# get very confused).
+	rm -Rf ${GOPATH}/src/github.com/lxc/lxd/dist
+
+	# Move the lxd source aside while we do this.
 	mv ${GOPATH}/src/github.com/lxc/lxd ${GOPATH}/lxd.tmp
+
+	# Clean GOPATH.
 	rm -Rf ${GOPATH}/src
 
 ifeq ($(USE_EMBEDDED), true)
+	# If we get all dependencies from dist, just copy it onto GOPATH.
 	cp -R dist/src ${GOPATH}
-	rm ${GOPATH}/src/github.com/lxc/lxd
-endif
 
-	# Setup the build environment
-	mkdir -p ${GOPATH}/src/github.com/lxc/
-	mv ${GOPATH}/lxd.tmp ${GOPATH}/src/github.com/lxc/lxd
+	# But not the symlink for lxd.
+	rm -f ${GOPATH}/src/github.com/lxc/lxd
+else
+	# If not, link depedencies from dist or from where the distro package
+	# has installed it, as appropriate.
 
-ifeq ($(USE_EMBEDDED), false)
 	# Packaged dependencies
 	debian/helpers/link-from-installed github.com/coreos/go-systemd
 	debian/helpers/link-from-installed github.com/dustinkirkland/golang-petname
@@ -60,10 +74,9 @@ ifeq ($(USE_EMBEDDED), false)
 	debian/helpers/link-from-bundled github.com/gosexy/gettext
 endif
 
-	go install -v github.com/lxc/lxd/lxc
-	go install -v github.com/lxc/lxd/lxd
-	go install -v github.com/lxc/lxd/fuidshift
-	go install -v github.com/lxc/lxd/lxd-bridge/lxd-bridge-proxy
+	# And put the lxd source back again.
+	mkdir -p ${GOPATH}/src/github.com/lxc/
+	mv ${GOPATH}/lxd.tmp ${GOPATH}/src/github.com/lxc/lxd
 
 override_dh_install:
 	# Install the manpages
