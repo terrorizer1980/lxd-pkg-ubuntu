@@ -1,3 +1,13 @@
+lxd (2.0.0~beta1-0ubuntu4) xenial; urgency=medium
+
+  [ Stéphane Graber ]
+  * Cherry-pick zfs storage fix (copy non-zfs to zfs)
+
+  [ Michael Hudson-Doyle ]
+  * Simpify debian/rules logic
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Thu, 04 Feb 2016 01:14:09 +0100
+
 lxd (2.0.0~beta1-0ubuntu3) xenial; urgency=medium
 
   * Cherry-pick fix for arm64 build.
