@@ -1,0 +1,72 @@
+From 06b5026a9b24faf6d42c124f213e3767e5e4ac5f Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Wed, 3 Feb 2016 22:42:02 +0100
+Subject: zfs: Fix cross-backend copies
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Without this change, copying a non-zfs container to a new container
+that's backed by zfs was failing due to ContainerCreate already creating
+the symlink and setting the permissions on the new path.
+
+Reported-by: Brad Figg
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ lxd/storage_zfs.go | 36 ++++++++++++++++++------------------
+ 1 file changed, 18 insertions(+), 18 deletions(-)
+
+diff --git a/lxd/storage_zfs.go b/lxd/storage_zfs.go
+index 9f50082..61a92ed 100644
+--- a/lxd/storage_zfs.go
++++ b/lxd/storage_zfs.go
+@@ -286,6 +286,24 @@ func (s *storageZfs) ContainerCopy(container container, sourceContainer containe
+ 		if err != nil {
+ 			return err
+ 		}
++
++		cPath := container.Path()
++		err = os.Symlink(cPath+".zfs", cPath)
++		if err != nil {
++			return err
++		}
++
++		var mode os.FileMode
++		if container.IsPrivileged() {
++			mode = 0700
++		} else {
++			mode = 0755
++		}
++
++		err = os.Chmod(cPath, mode)
++		if err != nil {
++			return err
++		}
+ 	} else {
+ 		err := s.ContainerCreate(container)
+ 		if err != nil {
+@@ -298,24 +316,6 @@ func (s *storageZfs) ContainerCopy(container container, sourceContainer containe
+ 		}
+ 	}
+ 
+-	cPath := container.Path()
+-	err := os.Symlink(cPath+".zfs", cPath)
+-	if err != nil {
+-		return err
+-	}
+-
+-	var mode os.FileMode
+-	if container.IsPrivileged() {
+-		mode = 0700
+-	} else {
+-		mode = 0755
+-	}
+-
+-	err = os.Chmod(cPath, mode)
+-	if err != nil {
+-		return err
+-	}
+-
+ 	return container.TemplateApply("copy")
+ }
+ 
