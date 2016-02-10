@@ -46,10 +46,13 @@ Architecture: any
 Depends: acl,
          adduser,
          gnupg,
+         liblxc1 (>= 1.1.0~),
          lxc,
+         lxcfs,
          netcat-openbsd,
          python3,
          rsync,
+         uidmap,
          xz-utils,
          ${misc:Depends},
          ${shlibs:Depends}
