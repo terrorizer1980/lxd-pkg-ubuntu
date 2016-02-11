@@ -86,6 +86,7 @@ func containerLXCCreate(d *Daemon, args containerArgs) (container, error) {
 		ephemeral:    args.Ephemeral,
 		architecture: args.Architecture,
 		cType:        args.Ctype,
+		creationDate: args.CreationDate,
 		profiles:     args.Profiles,
 		localConfig:  args.Config,
 		localDevices: args.Devices}
@@ -181,6 +182,7 @@ func containerLXCLoad(d *Daemon, args containerArgs) (container, error) {
 		ephemeral:    args.Ephemeral,
 		architecture: args.Architecture,
 		cType:        args.Ctype,
+		creationDate: args.CreationDate,
 		profiles:     args.Profiles,
 		localConfig:  args.Config,
 		localDevices: args.Devices}
@@ -206,6 +208,7 @@ type containerLXC struct {
 	// Properties
 	architecture int
 	cType        containerType
+	creationDate *time.Time
 	ephemeral    bool
 	id           int
 	name         string
@@ -382,17 +385,6 @@ func (c *containerLXC) initLXC() error {
 
 	// Setup the console
 	err = lxcSetConfigItem(cc, "lxc.tty", "0")
-	if err != nil {
-		return err
-	}
-
-	// FIXME: Should go away once CRIU supports checkpoint/restore of /dev/console
-	err = lxcSetConfigItem(cc, "lxc.console", "none")
-	if err != nil {
-		return err
-	}
-
-	err = lxcSetConfigItem(cc, "lxc.cgroup.devices.deny", "c 5:1 rwm")
 	if err != nil {
 		return err
 	}
@@ -574,37 +566,51 @@ func (c *containerLXC) initLXC() error {
 			}
 		}
 
-		diskLimits, err := c.getDiskLimits()
-		if err != nil {
-			return err
+		hasDiskLimits := false
+		for _, m := range c.expandedDevices {
+			if m["type"] != "disk" {
+				continue
+			}
+
+			if m["limits.read"] != "" || m["limits.write"] != "" || m["limits.max"] != "" {
+				hasDiskLimits = true
+				break
+			}
 		}
 
-		for block, limit := range diskLimits {
-			if limit.readBps > 0 {
-				err = lxcSetConfigItem(cc, "lxc.cgroup.blkio.throttle.read_bps_device", fmt.Sprintf("%s %d", block, limit.readBps))
-				if err != nil {
-					return err
-				}
+		if hasDiskLimits {
+			diskLimits, err := c.getDiskLimits()
+			if err != nil {
+				return err
 			}
 
-			if limit.readIops > 0 {
-				err = lxcSetConfigItem(cc, "lxc.cgroup.blkio.throttle.read_iops_device", fmt.Sprintf("%s %d", block, limit.readIops))
-				if err != nil {
-					return err
+			for block, limit := range diskLimits {
+				if limit.readBps > 0 {
+					err = lxcSetConfigItem(cc, "lxc.cgroup.blkio.throttle.read_bps_device", fmt.Sprintf("%s %d", block, limit.readBps))
+					if err != nil {
+						return err
+					}
 				}
-			}
 
-			if limit.writeBps > 0 {
-				err = lxcSetConfigItem(cc, "lxc.cgroup.blkio.throttle.write_bps_device", fmt.Sprintf("%s %d", block, limit.writeBps))
-				if err != nil {
-					return err
+				if limit.readIops > 0 {
+					err = lxcSetConfigItem(cc, "lxc.cgroup.blkio.throttle.read_iops_device", fmt.Sprintf("%s %d", block, limit.readIops))
+					if err != nil {
+						return err
+					}
 				}
-			}
 
-			if limit.writeIops > 0 {
-				err = lxcSetConfigItem(cc, "lxc.cgroup.blkio.throttle.write_iops_device", fmt.Sprintf("%s %d", block, limit.writeIops))
-				if err != nil {
-					return err
+				if limit.writeBps > 0 {
+					err = lxcSetConfigItem(cc, "lxc.cgroup.blkio.throttle.write_bps_device", fmt.Sprintf("%s %d", block, limit.writeBps))
+					if err != nil {
+						return err
+					}
+				}
+
+				if limit.writeIops > 0 {
+					err = lxcSetConfigItem(cc, "lxc.cgroup.blkio.throttle.write_iops_device", fmt.Sprintf("%s %d", block, limit.writeIops))
+					if err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -1359,6 +1365,7 @@ func (c *containerLXC) RenderState() (*shared.ContainerState, error) {
 	return &shared.ContainerState{
 		Architecture:    c.architecture,
 		Config:          c.localConfig,
+		CreationDate:    c.creationDate.Unix(),
 		Devices:         c.localDevices,
 		Ephemeral:       c.ephemeral,
 		ExpandedConfig:  c.expandedConfig,
@@ -3490,6 +3497,33 @@ func (c *containerLXC) removeDiskDevices() error {
 func (c *containerLXC) getDiskLimits() (map[string]deviceBlockLimit, error) {
 	result := map[string]deviceBlockLimit{}
 
+	// Build a list of all valid block devices
+	validBlocks := []string{}
+
+	dents, err := ioutil.ReadDir("/sys/class/block/")
+	if err != nil {
+		return nil, err
+	}
+
+	for _, f := range dents {
+		fPath := filepath.Join("/sys/class/block/", f.Name())
+		if shared.PathExists(fmt.Sprintf("%s/partition", fPath)) {
+			continue
+		}
+
+		if !shared.PathExists(fmt.Sprintf("%s/dev", fPath)) {
+			continue
+		}
+
+		block, err := ioutil.ReadFile(fmt.Sprintf("%s/dev", fPath))
+		if err != nil {
+			return nil, err
+		}
+
+		validBlocks = append(validBlocks, strings.TrimSuffix(string(block), "\n"))
+	}
+
+	// Process all the limits
 	blockLimits := map[string][]deviceBlockLimit{}
 	for _, m := range c.expandedDevices {
 		if m["type"] != "disk" {
@@ -3502,43 +3536,49 @@ func (c *containerLXC) getDiskLimits() (map[string]deviceBlockLimit, error) {
 			m["limits.write"] = m["limits.max"]
 		}
 
+		// Parse the user input
+		readBps, readIops, writeBps, writeIops, err := deviceParseDiskLimit(m["limits.read"], m["limits.write"])
+		if err != nil {
+			return nil, err
+		}
+
+		// Set the source path
 		source := m["source"]
 		if m["path"] == "" {
 			source = c.RootfsPath()
 		}
 
+		// Get the backing block devices (major:minor)
 		blocks, err := deviceGetParentBlocks(source)
 		if err != nil {
-			return nil, err
-		}
-
-		readBps, readIops, writeBps, writeIops, err := deviceParseDiskLimit(m["limits.read"], m["limits.write"])
-		if err != nil {
-			return nil, err
-		}
-		device := deviceBlockLimit{readBps: readBps, readIops: readIops, writeBps: writeBps, writeIops: writeIops}
-
-		for _, block := range blocks {
-			dev := strings.TrimPrefix(block, "/dev/")
-			if !shared.PathExists(fmt.Sprintf("/sys/class/block/%s/dev", dev)) {
-				return nil, fmt.Errorf("Disk is missing /sys/class/block entry")
-			}
-
-			block, err := ioutil.ReadFile(fmt.Sprintf("/sys/class/block/%s/dev", dev))
-			if err != nil {
+			if readBps == 0 && readIops == 0 && writeBps == 0 && writeIops == 0 {
+				// If the device doesn't exist, there is no limit to clear so ignore the failure
+				continue
+			} else {
 				return nil, err
 			}
+		}
 
-			fields := strings.SplitN(strings.TrimSuffix(string(block), "\n"), ":", 2)
-			if len(fields) != 2 {
-				return nil, fmt.Errorf("Invalid major:minor: %s", block)
-			}
+		device := deviceBlockLimit{readBps: readBps, readIops: readIops, writeBps: writeBps, writeIops: writeIops}
+		for _, block := range blocks {
+			blockStr := ""
 
-			if shared.PathExists(fmt.Sprintf("/sys/class/block/%s/partition", dev)) {
+			if shared.StringInSlice(block, validBlocks) {
+				// Straightforward entry (full block device)
+				blockStr = block
+			} else {
+				// Attempt to deal with a partition (guess its parent)
+				fields := strings.SplitN(block, ":", 2)
 				fields[1] = "0"
+				if shared.StringInSlice(fmt.Sprintf("%s:%s", fields[0], fields[1]), validBlocks) {
+					blockStr = fmt.Sprintf("%s:%s", fields[0], fields[1])
+				}
 			}
 
-			blockStr := fmt.Sprintf("%s:%s", fields[0], fields[1])
+			if blockStr == "" {
+				return nil, fmt.Errorf("Block device doesn't support quotas: %s", block)
+			}
+
 			if blockLimits[blockStr] == nil {
 				blockLimits[blockStr] = []deviceBlockLimit{}
 			}
@@ -3546,6 +3586,7 @@ func (c *containerLXC) getDiskLimits() (map[string]deviceBlockLimit, error) {
 		}
 	}
 
+	// Average duplicate limits
 	for block, limits := range blockLimits {
 		var readBpsCount, readBpsTotal, readIopsCount, readIopsTotal, writeBpsCount, writeBpsTotal, writeIopsCount, writeIopsTotal int64
 
@@ -3709,8 +3750,8 @@ func (c *containerLXC) setNetworkLimits(name string, m shared.Device) error {
 	}
 
 	// Clean any existing entry
-	_, _ = exec.Command("tc", "qdisc", "del", "dev", veth, "root").CombinedOutput()
-	_, _ = exec.Command("tc", "qdisc", "del", "dev", veth, "ingress").CombinedOutput()
+	_ = exec.Command("tc", "qdisc", "del", "dev", veth, "root").Run()
+	_ = exec.Command("tc", "qdisc", "del", "dev", veth, "ingress").Run()
 
 	// Apply new limits
 	if m["limits.ingress"] != "" {
@@ -3788,6 +3829,9 @@ func (c *containerLXC) Architecture() int {
 	return c.architecture
 }
 
+func (c *containerLXC) CreationDate() *time.Time {
+	return c.creationDate
+}
 func (c *containerLXC) ExpandedConfig() map[string]string {
 	return c.expandedConfig
 }

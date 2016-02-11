@@ -187,8 +187,6 @@ func NewMigrationSource(c container) (*migrationSourceWs, error) {
 		if err != nil {
 			return nil, err
 		}
-	} else {
-		c.StorageStart()
 	}
 
 	return &ret, nil
@@ -248,6 +246,12 @@ func (s *migrationSourceWs) Do(op *operation) error {
 	criuType := CRIUType_CRIU_RSYNC.Enum()
 	if !s.live {
 		criuType = nil
+
+		err := s.container.StorageStart()
+		if err != nil {
+			return err
+		}
+
 		defer s.container.StorageStop()
 	}
 
@@ -313,11 +317,11 @@ func (s *migrationSourceWs) Do(op *operation) error {
 		return err
 	}
 
-	// TODO: actually fall back on rsync.
 	if *header.Fs != myType {
-		err := fmt.Errorf("mismatched storage types not supported yet")
-		s.sendControl(err)
-		return err
+		myType = MigrationFSType_RSYNC
+		header.Fs = &myType
+
+		sources, _ = rsyncMigrationSource(s.container)
 	}
 
 	if s.live {
@@ -442,20 +446,9 @@ func (c *migrationSink) connectWithSecret(secret string) (*websocket.Conn, error
 	query := url.Values{"secret": []string{secret}}
 
 	// The URL is a https URL to the operation, mangle to be a wss URL to the secret
-	url := c.url
-	if strings.HasPrefix(url, "https://") {
-		url = fmt.Sprintf("wss://%s", strings.TrimPrefix(url, "https://"))
-	}
+	wsUrl := fmt.Sprintf("wss://%s/websocket?%s", strings.TrimPrefix(c.url, "https://"), query.Encode())
 
-	// FIXME: This is a backward compatibility codepath
-	if !strings.HasSuffix(url, "/websocket") {
-		url = fmt.Sprintf("%s/websocket", url)
-	}
-
-	// Append the secret suffix
-	url = fmt.Sprintf("%s?%s", url, query.Encode())
-
-	return lxd.WebsocketDial(c.dialer, url)
+	return lxd.WebsocketDial(c.dialer, wsUrl)
 }
 
 func (c *migrationSink) do() error {
@@ -490,15 +483,20 @@ func (c *migrationSink) do() error {
 	if !c.live {
 		criuType = nil
 	}
+
+	mySink := c.container.Storage().MigrationSink
 	myType := c.container.Storage().MigrationType()
 	resp := MigrationHeader{
 		Fs:   &myType,
 		Criu: criuType,
 	}
+
 	// If the storage type the source has doesn't match what we have, then
 	// we have to use rsync.
 	if *header.Fs != *resp.Fs {
-		resp.Fs = MigrationFSType_RSYNC.Enum()
+		mySink = rsyncMigrationSink
+		myType = MigrationFSType_RSYNC
+		resp.Fs = &myType
 	}
 
 	if err := c.send(&resp); err != nil {
@@ -593,7 +591,7 @@ func (c *migrationSink) do() error {
 			srcIdmap.Idmap = shared.Extend(srcIdmap.Idmap, e)
 		}
 
-		if err := c.container.Storage().MigrationSink(c.container, snapshots, c.fsConn); err != nil {
+		if err := mySink(c.container, snapshots, c.fsConn); err != nil {
 			restore <- err
 			c.sendControl(err)
 			return
