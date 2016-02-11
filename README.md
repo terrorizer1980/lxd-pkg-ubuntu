@@ -19,13 +19,20 @@ builds right now. They're available via:
     sudo add-apt-repository ppa:ubuntu-lxc/lxd-git-master && sudo apt-get update
     sudo apt-get install lxd
 
-After you've got LXD installed, you can take your [first steps](#first-steps).
+Because group membership is only applied at login, you then either need to
+close and re-open your user session or use the "newgrp lxd" command in the
+shell you're going to interact with lxd from.
+
+    newgrp lxd
+
+After you've got LXD installed and a session with the right permissions, you
+can take your [first steps](#first-steps).
 
 ## Building from source
 
 We recommend having the latest versions of liblxc (>= 1.1 required) and CRIU
 (>= 1.7 recommended) available for LXD development. Additionally, LXD requires
-Golang 1.3 or later to work. All the right verisons dependencies are available
+Golang 1.3 or later to work. All the right versions dependencies are available
 via the LXD PPA:
 
     sudo apt-get install software-properties-common

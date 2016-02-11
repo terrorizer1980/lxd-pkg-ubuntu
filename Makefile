@@ -7,7 +7,7 @@ POTFILE=po/$(DOMAIN).pot
 # dist is primarily for use when packaging; for development we still manage
 # dependencies via `go get` explicitly.
 # TODO: use git describe for versioning
-VERSION=$(shell grep "var Version" shared/flex.go | sed -r -e 's/.*"([0-9\.]*)"/\1/')
+VERSION=$(shell grep "var Version" shared/flex.go | cut -d'"' -f2)
 ARCHIVE=lxd-$(VERSION).tar
 
 .PHONY: default
@@ -15,7 +15,7 @@ default:
 	# Must run twice due to go get race
 	-go get -t -v -d ./...
 	-go get -t -v -d ./...
-	go install -v ./...
+	go install -v $(DEBUG) ./...
 	@echo "LXD built succesfuly"
 
 .PHONY: client
@@ -23,7 +23,7 @@ client:
 	# Must run twice due to go get race
 	-go get -t -v -d ./...
 	-go get -t -v -d ./...
-	go install -v ./lxc
+	go install -v $(DEBUG) ./lxc
 	@echo "LXD client built succesfuly"
 
 .PHONY: update

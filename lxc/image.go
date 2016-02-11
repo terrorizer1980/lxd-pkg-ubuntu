@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"syscall"
@@ -254,8 +255,7 @@ func (c *imageCmd) run(config *lxd.Config, args []string) error {
 		fmt.Printf(i18n.G("Fingerprint: %s")+"\n", info.Fingerprint)
 		public := i18n.G("no")
 
-		// FIXME: InterfaceToBool is there for backward compatibility
-		if shared.InterfaceToBool(info) {
+		if info.Public {
 			public = i18n.G("yes")
 		}
 
@@ -503,8 +503,7 @@ func showImages(images []shared.ImageInfo, filters []string) error {
 		public := i18n.G("no")
 		description := findDescription(image.Properties)
 
-		// FIXME: InterfaceToBool is there for backward compatibility
-		if shared.InterfaceToBool(image.Public) {
+		if image.Public {
 			public = i18n.G("yes")
 		}
 
@@ -634,7 +633,19 @@ func imageShouldShow(filters []string, state *shared.ImageInfo) bool {
 
 			for configKey, configValue := range state.Properties {
 				if dotPrefixMatch(key, configKey) {
-					if value == configValue {
+					//try to test filter value as a regexp
+					regexpValue := value
+					if !(strings.Contains(value, "^") || strings.Contains(value, "$")) {
+						regexpValue = "^" + regexpValue + "$"
+					}
+					r, err := regexp.Compile(regexpValue)
+					//if not regexp compatible use original value
+					if err != nil {
+						if value == configValue {
+							found = true
+							break
+						}
+					} else if r.MatchString(configValue) == true {
 						found = true
 						break
 					}
