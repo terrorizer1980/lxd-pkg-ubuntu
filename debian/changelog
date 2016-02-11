@@ -1,3 +1,27 @@
+lxd (2.0.0~beta2-0ubuntu1) xenial; urgency=medium
+
+  * New upstream release (2.0.0~beta2):
+    - /dev/console has been re-enabled
+    - The btrfs backend now supports optimized container transfer
+    - Source file ownership and permissions are conserved by default on
+      "lxc file push"
+    - Both "lxc list" and "lxc image list" now accept regular
+      expressions as filter
+    - lxc info now shows the container creation date (if known), the
+      list of profiles and detailed snapshot information
+    - Recursive aliases are now supported in the client
+      (e.g. "delete: delete -f")
+    - "lxc delete" now requires a "-f/--force" flag when run against a
+      running container
+    - "lxc delete" now has a -i option to always request user
+      confirmation on delete
+  * Add a direct dependency on liblxc1, lxcfs and uidmap.
+
+  [ Michael Hudson-Doyle ]
+  * Update debian/rules to follow dh-golang's expectations a little more
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 10 Feb 2016 22:45:46 -0500
+
 lxd (2.0.0~beta1-0ubuntu4) xenial; urgency=medium
 
   [ Stéphane Graber ]
