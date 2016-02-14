@@ -1,0 +1,182 @@
+From 2161eabf75949e199776ddbba0c5c91c0df14632 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Sat, 13 Feb 2016 14:22:22 -0500
+Subject: DB fixups
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This fixes a broken DB migration path when upgrading from pre-0.27 to
+current LXD.
+
+It also clarifies the DB spec a bit and remove duplicated data from the DB.
+
+Closes #1598
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ lxd/db.go         |  2 +-
+ lxd/db_devices.go |  5 ++++
+ lxd/db_update.go  | 73 ++++++++++++++++++-------------------------------------
+ specs/database.md |  4 +--
+ 4 files changed, 32 insertions(+), 52 deletions(-)
+
+diff --git a/lxd/db.go b/lxd/db.go
+index 646d076..c4f6cf5 100644
+--- a/lxd/db.go
++++ b/lxd/db.go
+@@ -34,7 +34,7 @@ type Profile struct {
+ // Profiles will contain a list of all Profiles.
+ type Profiles []Profile
+ 
+-const DB_CURRENT_VERSION int = 22
++const DB_CURRENT_VERSION int = 23
+ 
+ // CURRENT_SCHEMA contains the current SQLite SQL Schema.
+ const CURRENT_SCHEMA string = `
+diff --git a/lxd/db_devices.go b/lxd/db_devices.go
+index 912ecaf..6a8eea2 100644
+--- a/lxd/db_devices.go
++++ b/lxd/db_devices.go
+@@ -79,6 +79,11 @@ func dbDevicesAdd(tx *sql.Tx, w string, cID int64, devices shared.Devices) error
+ 		id := int(id64)
+ 
+ 		for ck, cv := range v {
++			// The type is stored as int in the parent entry
++			if ck == "type" {
++				continue
++			}
++
+ 			_, err = stmt2.Exec(id, ck, cv)
+ 			if err != nil {
+ 				return err
+diff --git a/lxd/db_update.go b/lxd/db_update.go
+index 0e39f84..579825c 100644
+--- a/lxd/db_update.go
++++ b/lxd/db_update.go
+@@ -15,6 +15,15 @@ import (
+ 	log "gopkg.in/inconshreveable/log15.v2"
+ )
+ 
++func dbUpdateFromV22(db *sql.DB) error {
++	stmt := `
++DELETE FROM containers_devices_config WHERE key='type';
++DELETE FROM profiles_devices_config WHERE key='type';
++INSERT INTO schema (version, updated_at) VALUES (?, strftime("%s"));`
++	_, err := db.Exec(stmt, 23)
++	return err
++}
++
+ func dbUpdateFromV21(db *sql.DB) error {
+ 	stmt := `
+ ALTER TABLE containers ADD COLUMN creation_date DATETIME NOT NULL DEFAULT 0;
+@@ -23,57 +32,17 @@ INSERT INTO schema (version, updated_at) VALUES (?, strftime("%s"));`
+ 	return err
+ }
+ 
+-func dbUpdateFromV20(d *Daemon) error {
+-	cNames, err := dbContainersList(d.db, cTypeRegular)
+-	if err != nil {
+-		return err
+-	}
+-
+-	for _, name := range cNames {
+-		c, err := containerLoadByName(d, name)
+-		if err != nil {
+-			return err
+-		}
+-
+-		rootfs := false
+-		for _, m := range c.ExpandedDevices() {
+-			if m["type"] == "disk" && m["path"] == "/" {
+-				rootfs = true
+-				break
+-			}
+-		}
+-
+-		if !rootfs {
+-			deviceName := "root"
+-			for {
+-				if c.ExpandedDevices()[deviceName] == nil {
+-					break
+-				}
+-
+-				deviceName += "_"
+-			}
+-
+-			newDevices := c.LocalDevices()
+-			newDevices[deviceName] = shared.Device{"type": "disk", "path": "/"}
++func dbUpdateFromV20(db *sql.DB) error {
++	stmt := `
++UPDATE containers_devices SET name='__lxd_upgrade_root' WHERE name='root';
++UPDATE profiles_devices SET name='__lxd_upgrade_root' WHERE name='root';
+ 
+-			updateArgs := containerArgs{
+-				Architecture: c.Architecture(),
+-				Config:       c.LocalConfig(),
+-				Devices:      newDevices,
+-				Ephemeral:    c.IsEphemeral(),
+-				Profiles:     c.Profiles(),
+-			}
++INSERT INTO containers_devices (container_id, name, type) SELECT id, "root", 2 FROM containers;
++INSERT INTO containers_devices_config (container_device_id, key, value) SELECT id, "path", "/" FROM containers_devices WHERE name='root';
+ 
+-			err = c.Update(updateArgs, false)
+-			if err != nil {
+-				return err
+-			}
+-		}
+-	}
+-
+-	stmt := `
+ INSERT INTO schema (version, updated_at) VALUES (?, strftime("%s"));`
+-	_, err = d.db.Exec(stmt, 21)
++	_, err := db.Exec(stmt, 21)
++
+ 	return err
+ }
+ 
+@@ -903,7 +872,7 @@ func dbUpdate(d *Daemon, prevVersion int) error {
+ 		}
+ 	}
+ 	if prevVersion < 21 {
+-		err = dbUpdateFromV20(d)
++		err = dbUpdateFromV20(db)
+ 		if err != nil {
+ 			return err
+ 		}
+@@ -914,6 +883,12 @@ func dbUpdate(d *Daemon, prevVersion int) error {
+ 			return err
+ 		}
+ 	}
++	if prevVersion < 23 {
++		err = dbUpdateFromV22(db)
++		if err != nil {
++			return err
++		}
++	}
+ 
+ 	return nil
+ }
+diff --git a/specs/database.md b/specs/database.md
+index 2632fd5..850d0d9 100644
+--- a/specs/database.md
++++ b/specs/database.md
+@@ -136,7 +136,7 @@ Column          | Type          | Default       | Constraint        | Descriptio
+ id              | INTEGER       | SERIAL        | NOT NULL          | SERIAL
+ container\_id   | INTEGER       | -             | NOT NULL          | containers.id FK
+ name            | VARCHAR(255)  | -             | NOT NULL          | Container name
+-type            | INTEGER       | 0             | NOT NULL          | Container type (see configuration.md)
++type            | INTEGER       | 0             | NOT NULL          | Device type (see configuration.md)
+ 
+ Index: UNIQUE ON id AND container\_id + name
+ 
+@@ -250,7 +250,7 @@ Column          | Type          | Default       | Constraint        | Descriptio
+ id              | INTEGER       | SERIAL        | NOT NULL          | SERIAL
+ profile\_id     | INTEGER       | -             | NOT NULL          | profiles.id FK
+ name            | VARCHAR(255)  | -             | NOT NULL          | Container name
+-type            | INTEGER       | 0             | NOT NULL          | Container type (see configuration.md)
++type            | INTEGER       | 0             | NOT NULL          | Device type (see configuration.md)
+ 
+ Index: UNIQUE ON id AND profile\_id + name
+ 
