@@ -21,20 +21,20 @@ import (
 
 type configCmd struct {
 	httpAddr string
+	expanded bool
 }
 
 func (c *configCmd) showByDefault() bool {
 	return true
 }
 
-var expanded bool
-
 func (c *configCmd) flags() {
-	gnuflag.BoolVar(&expanded, "expanded", false, i18n.G("Whether to show the expanded configuration"))
+	gnuflag.BoolVar(&c.expanded, "expanded", false, i18n.G("Whether to show the expanded configuration"))
 }
 
-var configEditHelp string = i18n.G(
-	`### This is a yaml representation of the configuration.
+func (c *configCmd) configEditHelp() string {
+	return i18n.G(
+		`### This is a yaml representation of the configuration.
 ### Any line starting with a '# will be ignored.
 ###
 ### A sample configuration looks like:
@@ -51,6 +51,7 @@ var configEditHelp string = i18n.G(
 ### ephemeral: false
 ###
 ### Note that the name is shown but cannot be changed`)
+}
 
 func (c *configCmd) usage() string {
 	return i18n.G(
@@ -90,7 +91,7 @@ To set the server trust password:
     lxc config set core.trust_password blah`)
 }
 
-func doSet(config *lxd.Config, args []string, unset bool) error {
+func (c *configCmd) doSet(config *lxd.Config, args []string, unset bool) error {
 	if len(args) != 4 {
 		return errArgs
 	}
@@ -114,7 +115,7 @@ func doSet(config *lxd.Config, args []string, unset bool) error {
 	}
 
 	if unset {
-		st, err := d.ContainerStatus(container)
+		st, err := d.ContainerInfo(container)
 		if err != nil {
 			return err
 		}
@@ -185,7 +186,7 @@ func (c *configCmd) run(config *lxd.Config, args []string) error {
 
 		// Deal with container
 		args = append(args, "")
-		return doSet(config, args, true)
+		return c.doSet(config, args, true)
 
 	case "set":
 		if len(args) < 3 {
@@ -216,7 +217,7 @@ func (c *configCmd) run(config *lxd.Config, args []string) error {
 		}
 
 		// Deal with container
-		return doSet(config, args, false)
+		return c.doSet(config, args, false)
 
 	case "trust":
 		if len(args) < 2 {
@@ -334,17 +335,17 @@ func (c *configCmd) run(config *lxd.Config, args []string) error {
 				return err
 			}
 
-			brief := config.BriefState()
+			brief := config.Brief()
 			data, err = yaml.Marshal(&brief)
 		} else {
-			config, err := d.ContainerStatus(container)
+			config, err := d.ContainerInfo(container)
 			if err != nil {
 				return err
 			}
 
-			brief := config.BriefState()
-			if expanded {
-				brief = config.BriefStateExpanded()
+			brief := config.Brief()
+			if c.expanded {
+				brief = config.BriefExpanded()
 			}
 			data, err = yaml.Marshal(&brief)
 		}
@@ -372,7 +373,7 @@ func (c *configCmd) run(config *lxd.Config, args []string) error {
 		}
 
 		if container != "" {
-			resp, err := d.ContainerStatus(container)
+			resp, err := d.ContainerInfo(container)
 			if err != nil {
 				return err
 			}
@@ -403,13 +404,13 @@ func (c *configCmd) run(config *lxd.Config, args []string) error {
 		}
 		switch args[1] {
 		case "list":
-			return deviceList(config, "container", args)
+			return c.deviceList(config, "container", args)
 		case "add":
-			return deviceAdd(config, "container", args)
+			return c.deviceAdd(config, "container", args)
 		case "remove":
-			return deviceRm(config, "container", args)
+			return c.deviceRm(config, "container", args)
 		case "show":
-			return deviceShow(config, "container", args)
+			return c.deviceShow(config, "container", args)
 		default:
 			return errArgs
 		}
@@ -431,10 +432,10 @@ func (c *configCmd) run(config *lxd.Config, args []string) error {
 		}
 
 		if len(args) == 1 || container == "" {
-			return doDaemonConfigEdit(d)
+			return c.doDaemonConfigEdit(d)
 		}
 
-		return doContainerConfigEdit(d, container)
+		return c.doContainerConfigEdit(d, container)
 
 	default:
 		return errArgs
@@ -443,7 +444,7 @@ func (c *configCmd) run(config *lxd.Config, args []string) error {
 	return errArgs
 }
 
-func doContainerConfigEdit(client *lxd.Client, cont string) error {
+func (c *configCmd) doContainerConfigEdit(client *lxd.Client, cont string) error {
 	// If stdin isn't a terminal, read text from it
 	if !terminal.IsTerminal(int(syscall.Stdin)) {
 		contents, err := ioutil.ReadAll(os.Stdin)
@@ -451,7 +452,7 @@ func doContainerConfigEdit(client *lxd.Client, cont string) error {
 			return err
 		}
 
-		newdata := shared.BriefContainerState{}
+		newdata := shared.BriefContainerInfo{}
 		err = yaml.Unmarshal(contents, &newdata)
 		if err != nil {
 			return err
@@ -460,26 +461,26 @@ func doContainerConfigEdit(client *lxd.Client, cont string) error {
 	}
 
 	// Extract the current value
-	config, err := client.ContainerStatus(cont)
+	config, err := client.ContainerInfo(cont)
 	if err != nil {
 		return err
 	}
 
-	brief := config.BriefState()
+	brief := config.Brief()
 	data, err := yaml.Marshal(&brief)
 	if err != nil {
 		return err
 	}
 
 	// Spawn the editor
-	content, err := shared.TextEditor("", []byte(configEditHelp+"\n\n"+string(data)))
+	content, err := shared.TextEditor("", []byte(c.configEditHelp()+"\n\n"+string(data)))
 	if err != nil {
 		return err
 	}
 
 	for {
 		// Parse the text received from the editor
-		newdata := shared.BriefContainerState{}
+		newdata := shared.BriefContainerInfo{}
 		err = yaml.Unmarshal(content, &newdata)
 		if err == nil {
 			err = client.UpdateContainerConfig(cont, newdata)
@@ -506,7 +507,7 @@ func doContainerConfigEdit(client *lxd.Client, cont string) error {
 	return nil
 }
 
-func doDaemonConfigEdit(client *lxd.Client) error {
+func (c *configCmd) doDaemonConfigEdit(client *lxd.Client) error {
 	// If stdin isn't a terminal, read text from it
 	if !terminal.IsTerminal(int(syscall.Stdin)) {
 		contents, err := ioutil.ReadAll(os.Stdin)
@@ -530,14 +531,14 @@ func doDaemonConfigEdit(client *lxd.Client) error {
 		return err
 	}
 
-	brief := config.BriefState()
+	brief := config.Brief()
 	data, err := yaml.Marshal(&brief)
 	if err != nil {
 		return err
 	}
 
 	// Spawn the editor
-	content, err := shared.TextEditor("", []byte(configEditHelp+"\n\n"+string(data)))
+	content, err := shared.TextEditor("", []byte(c.configEditHelp()+"\n\n"+string(data)))
 	if err != nil {
 		return err
 	}
@@ -571,7 +572,7 @@ func doDaemonConfigEdit(client *lxd.Client) error {
 	return nil
 }
 
-func deviceAdd(config *lxd.Config, which string, args []string) error {
+func (c *configCmd) deviceAdd(config *lxd.Config, which string, args []string) error {
 	if len(args) < 5 {
 		return errArgs
 	}
@@ -607,7 +608,7 @@ func deviceAdd(config *lxd.Config, which string, args []string) error {
 	return client.WaitForSuccess(resp.Operation)
 }
 
-func deviceRm(config *lxd.Config, which string, args []string) error {
+func (c *configCmd) deviceRm(config *lxd.Config, which string, args []string) error {
 	if len(args) < 4 {
 		return errArgs
 	}
@@ -635,7 +636,7 @@ func deviceRm(config *lxd.Config, which string, args []string) error {
 	return client.WaitForSuccess(resp.Operation)
 }
 
-func deviceList(config *lxd.Config, which string, args []string) error {
+func (c *configCmd) deviceList(config *lxd.Config, which string, args []string) error {
 	if len(args) < 3 {
 		return errArgs
 	}
@@ -660,7 +661,7 @@ func deviceList(config *lxd.Config, which string, args []string) error {
 	return nil
 }
 
-func deviceShow(config *lxd.Config, which string, args []string) error {
+func (c *configCmd) deviceShow(config *lxd.Config, which string, args []string) error {
 	if len(args) < 3 {
 		return errArgs
 	}
@@ -680,7 +681,7 @@ func deviceShow(config *lxd.Config, which string, args []string) error {
 
 		devices = resp.Devices
 	} else {
-		resp, err := client.ContainerStatus(name)
+		resp, err := client.ContainerInfo(name)
 		if err != nil {
 			return err
 		}

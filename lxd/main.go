@@ -440,15 +440,20 @@ func activateIfNeeded() error {
 		return err
 	}
 
-	containers, err := doContainersGet(d, true)
+	result, err := dbContainersList(d.db, cTypeRegular)
 	if err != nil {
 		return err
 	}
 
-	containerInfo := containers.(shared.ContainerInfoList)
-	for _, container := range containerInfo {
-		lastState := container.State.Config["volatile.last_state.power"]
-		autoStart := container.State.ExpandedConfig["boot.autostart"]
+	for _, name := range result {
+		c, err := containerLoadByName(d, name)
+		if err != nil {
+			return err
+		}
+
+		config := c.ExpandedConfig()
+		lastState := config["volatile.last_state.power"]
+		autoStart := config["boot.autostart"]
 
 		if lastState == "RUNNING" || lastState == "Running" || autoStart == "true" {
 			shared.Debugf("Daemon has auto-started containers, activating...")
@@ -473,13 +478,7 @@ func waitReady() error {
 	finger := make(chan error, 1)
 	go func() {
 		for {
-			c, err := lxd.NewClient(&lxd.DefaultConfig, "local")
-			if err != nil {
-				time.Sleep(500 * time.Millisecond)
-				continue
-			}
-
-			err = c.Finger()
+			_, err := lxd.NewClient(&lxd.DefaultConfig, "local")
 			if err != nil {
 				time.Sleep(500 * time.Millisecond)
 				continue
@@ -774,6 +773,6 @@ func setupLXD() error {
 		}
 	}
 
-	fmt.Printf("LXD has been succesfuly configured.\n")
+	fmt.Printf("LXD has been successfully configured.\n")
 	return nil
 }

@@ -2,7 +2,6 @@ package lxd
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -28,24 +27,16 @@ import (
 
 // Client can talk to a LXD daemon.
 type Client struct {
-	BaseURL   string
-	BaseWSURL string
-	Config    Config
-	Http      http.Client
-	Name      string
-	Remote    *RemoteConfig
-	Transport string
+	BaseURL     string
+	BaseWSURL   string
+	Config      Config
+	Name        string
+	Remote      *RemoteConfig
+	Transport   string
+	Certificate string
 
-	certf           string
-	keyf            string
+	Http            http.Client
 	websocketDialer websocket.Dialer
-
-	scert *x509.Certificate // the cert stored on disk
-
-	scertWire          *x509.Certificate // the cert from the tls connection
-	scertIntermediates *x509.CertPool
-	scertDigest        [sha256.Size]byte // fingerprint of server cert from connection
-	scertDigestSet     bool              // whether we've stored the fingerprint
 }
 
 type ResponseType string
@@ -160,19 +151,6 @@ func readMyCert(configDir string) (string, string, error) {
 	return certf, keyf, err
 }
 
-/*
- * load the server cert from disk
- */
-func (c *Client) loadServerCert() {
-	cert, err := shared.ReadCert(c.Config.ServerCertPath(c.Name))
-	if err != nil {
-		shared.Debugf("Error reading the server certificate for %s: %v", c.Name, err)
-		return
-	}
-
-	c.scert = cert
-}
-
 // NewClient returns a new LXD client.
 func NewClient(config *Config, remote string) (*Client, error) {
 	c := Client{
@@ -211,13 +189,29 @@ func NewClient(config *Config, remote string) (*Client, error) {
 			c.Http.Transport = &http.Transport{Dial: uDial}
 			c.websocketDialer.NetDial = uDial
 			c.Remote = &r
+
+			st, err := c.ServerStatus()
+			if err != nil {
+				return nil, err
+			}
+			c.Certificate = st.Environment.Certificate
 		} else {
 			certf, keyf, err := readMyCert(config.ConfigDir)
 			if err != nil {
 				return nil, err
 			}
 
-			tlsconfig, err := shared.GetTLSConfig(certf, keyf)
+			var cert *x509.Certificate
+			if shared.PathExists(c.Config.ServerCertPath(c.Name)) {
+				cert, err = shared.ReadCert(c.Config.ServerCertPath(c.Name))
+				if err != nil {
+					return nil, err
+				}
+
+				c.Certificate = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}))
+			}
+
+			tlsconfig, err := shared.GetTLSConfig(certf, keyf, cert)
 			if err != nil {
 				return nil, err
 			}
@@ -228,13 +222,8 @@ func NewClient(config *Config, remote string) (*Client, error) {
 				Proxy:           http.ProxyFromEnvironment,
 			}
 
-			c.websocketDialer = websocket.Dialer{
-				NetDial:         shared.RFC3493Dialer,
-				TLSClientConfig: tlsconfig,
-			}
-
-			c.certf = certf
-			c.keyf = keyf
+			c.websocketDialer.NetDial = shared.RFC3493Dialer
+			c.websocketDialer.TLSClientConfig = tlsconfig
 
 			if r.Addr[0:8] == "https://" {
 				c.BaseURL = "https://" + r.Addr[8:]
@@ -245,7 +234,6 @@ func NewClient(config *Config, remote string) (*Client, error) {
 			}
 			c.Transport = "https"
 			c.Http.Transport = tr
-			c.loadServerCert()
 			c.Remote = &r
 		}
 	} else {
@@ -294,23 +282,6 @@ func (c *Client) baseGet(getUrl string) (*Response, error) {
 	resp, err := c.Http.Do(req)
 	if err != nil {
 		return nil, err
-	}
-
-	if c.scert != nil && resp.TLS != nil {
-		if !bytes.Equal(resp.TLS.PeerCertificates[0].Raw, c.scert.Raw) {
-			pUrl, _ := url.Parse(getUrl)
-			return nil, fmt.Errorf("Server certificate for host %s has changed. Add correct certificate or remove certificate in %s", pUrl.Host, c.Config.ConfigPath("servercerts"))
-		}
-	}
-
-	if c.scertDigestSet == false && resp.TLS != nil {
-		c.scertWire = resp.TLS.PeerCertificates[0]
-		c.scertIntermediates = x509.NewCertPool()
-		for _, cert := range resp.TLS.PeerCertificates {
-			c.scertIntermediates.AddCert(cert)
-		}
-		c.scertDigest = sha256.Sum256(resp.TLS.PeerCertificates[0].Raw)
-		c.scertDigestSet = true
 	}
 
 	return HoistResponse(resp, Sync)
@@ -425,7 +396,18 @@ func (c *Client) websocket(operation string, secret string) (*websocket.Conn, er
 }
 
 func (c *Client) url(elem ...string) string {
-	return c.BaseURL + "/" + path.Join(elem...)
+	path := strings.Join(elem, "/")
+	uri := c.BaseURL + "/" + path
+
+	if strings.HasPrefix(path, "1.0/images/aliases") {
+		return uri
+	}
+
+	if strings.Contains(path, "?") {
+		return uri
+	}
+
+	return strings.TrimSuffix(uri, "/")
 }
 
 func (c *Client) GetServerConfig() (*Response, error) {
@@ -528,6 +510,7 @@ func (c *Client) CopyImage(image string, dest *Client, copy_aliases bool, aliase
 		"type":        "image",
 		"mode":        "pull",
 		"server":      c.BaseURL,
+		"certificate": c.Certificate,
 		"fingerprint": fingerprint}
 
 	if !info.Public {
@@ -988,66 +971,19 @@ func (c *Client) DeleteAlias(alias string) error {
 	return err
 }
 
-func (c *Client) ListAliases() ([]shared.ImageAlias, error) {
+func (c *Client) ListAliases() (shared.ImageAliases, error) {
 	resp, err := c.get("images/aliases?recursion=1")
 	if err != nil {
 		return nil, err
 	}
 
-	var result []shared.ImageAlias
+	var result shared.ImageAliases
 
 	if err := json.Unmarshal(resp.Metadata, &result); err != nil {
 		return nil, err
 	}
 
 	return result, nil
-}
-
-// Try to verify the server's cert with the current host's CA list.
-func (c *Client) TryVerifyServerCert(name string) (string, error) {
-	digest := fmt.Sprintf("%x", c.scertDigest)
-	if !c.scertDigestSet {
-		if err := c.Finger(); err != nil {
-			return digest, err
-		}
-
-		if !c.scertDigestSet {
-			return digest, fmt.Errorf("No certificate on this connection")
-		}
-	}
-
-	if c.scert != nil {
-		return digest, nil
-	}
-
-	_, err := c.scertWire.Verify(x509.VerifyOptions{
-		DNSName:       name,
-		Intermediates: c.scertIntermediates,
-	})
-	return digest, err
-}
-
-func (c *Client) SaveCert(name string) error {
-	if c.scertWire == nil {
-		return fmt.Errorf("can't save empty server cert")
-	}
-
-	// User acked the cert, now add it to our store
-	dnam := c.Config.ConfigPath("servercerts")
-	err := os.MkdirAll(dnam, 0750)
-	if err != nil {
-		return fmt.Errorf("Could not create server cert dir")
-	}
-	certf := fmt.Sprintf("%s/%s.crt", dnam, c.Name)
-	certOut, err := os.Create(certf)
-	if err != nil {
-		return err
-	}
-
-	pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: c.scertWire.Raw})
-
-	certOut.Close()
-	return err
 }
 
 func (c *Client) CertificateList() ([]shared.CertInfo, error) {
@@ -1104,11 +1040,11 @@ func (c *Client) GetAlias(alias string) string {
 		return ""
 	}
 
-	var result shared.ImageAlias
+	var result shared.ImageAliasesEntry
 	if err := json.Unmarshal(resp.Metadata, &result); err != nil {
 		return ""
 	}
-	return result.Name
+	return result.Target
 }
 
 // Init creates a container from either a fingerprint or an alias; you must
@@ -1173,6 +1109,7 @@ func (c *Client) Init(name string, imgremote string, image string, profiles *[]s
 		}
 
 		source["server"] = tmpremote.BaseURL
+		source["certificate"] = tmpremote.Certificate
 		source["fingerprint"] = fingerprint
 	} else {
 		fingerprint := c.GetAlias(image)
@@ -1406,8 +1343,8 @@ func (c *Client) Exec(name string, cmd []string, env map[string]string,
 
 func (c *Client) Action(name string, action shared.ContainerAction, timeout int, force bool) (*Response, error) {
 	if action == "start" {
-		current, err := c.ContainerStatus(name)
-		if err == nil && current.Status.StatusCode == shared.Frozen {
+		current, err := c.ContainerState(name)
+		if err == nil && current.StatusCode == shared.Frozen {
 			action = "unfreeze"
 		}
 	}
@@ -1443,10 +1380,25 @@ func (c *Client) ServerStatus() (*shared.ServerState, error) {
 	return &ss, nil
 }
 
-func (c *Client) ContainerStatus(name string) (*shared.ContainerState, error) {
-	ct := shared.ContainerState{}
+func (c *Client) ContainerInfo(name string) (*shared.ContainerInfo, error) {
+	ct := shared.ContainerInfo{}
 
 	resp, err := c.get(fmt.Sprintf("containers/%s", name))
+	if err != nil {
+		return nil, err
+	}
+
+	if err := json.Unmarshal(resp.Metadata, &ct); err != nil {
+		return nil, err
+	}
+
+	return &ct, nil
+}
+
+func (c *Client) ContainerState(name string) (*shared.ContainerState, error) {
+	ct := shared.ContainerState{}
+
+	resp, err := c.get(fmt.Sprintf("containers/%s/state", name))
 	if err != nil {
 		return nil, err
 	}
@@ -1535,13 +1487,14 @@ func (c *Client) GetMigrationSourceWS(container string) (*Response, error) {
 	return c.post(url, body, Async)
 }
 
-func (c *Client) MigrateFrom(name string, operation string, secrets map[string]string, architecture int, config map[string]string, devices shared.Devices, profiles []string, baseImage string, ephemeral bool) (*Response, error) {
+func (c *Client) MigrateFrom(name string, operation string, certificate string, secrets map[string]string, architecture int, config map[string]string, devices shared.Devices, profiles []string, baseImage string, ephemeral bool) (*Response, error) {
 	source := shared.Jmap{
-		"type":       "migration",
-		"mode":       "pull",
-		"operation":  operation,
-		"secrets":    secrets,
-		"base-image": baseImage,
+		"type":        "migration",
+		"mode":        "pull",
+		"operation":   operation,
+		"certificate": certificate,
+		"secrets":     secrets,
+		"base-image":  baseImage,
 	}
 	body := shared.Jmap{
 		"architecture": architecture,
@@ -1616,14 +1569,14 @@ func (c *Client) Snapshot(container string, snapshotName string, stateful bool) 
 	return c.post(fmt.Sprintf("containers/%s/snapshots", container), body, Async)
 }
 
-func (c *Client) ListSnapshots(container string) ([]shared.SnapshotState, error) {
+func (c *Client) ListSnapshots(container string) ([]shared.SnapshotInfo, error) {
 	qUrl := fmt.Sprintf("containers/%s/snapshots?recursion=1", container)
 	resp, err := c.get(qUrl)
 	if err != nil {
 		return nil, err
 	}
 
-	var result []shared.SnapshotState
+	var result []shared.SnapshotInfo
 
 	if err := json.Unmarshal(resp.Metadata, &result); err != nil {
 		return nil, err
@@ -1684,7 +1637,7 @@ func (c *Client) UpdateServerConfig(ss shared.BriefServerState) (*Response, erro
 func (c *Client) GetContainerConfig(container string) ([]string, error) {
 	var resp []string
 
-	st, err := c.ContainerStatus(container)
+	st, err := c.ContainerInfo(container)
 	if err != nil {
 		return resp, err
 	}
@@ -1702,7 +1655,7 @@ func (c *Client) GetContainerConfig(container string) ([]string, error) {
 }
 
 func (c *Client) SetContainerConfig(container, key, value string) error {
-	st, err := c.ContainerStatus(container)
+	st, err := c.ContainerInfo(container)
 	if err != nil {
 		return err
 	}
@@ -1727,7 +1680,7 @@ func (c *Client) SetContainerConfig(container, key, value string) error {
 	return c.WaitForSuccess(resp.Operation)
 }
 
-func (c *Client) UpdateContainerConfig(container string, st shared.BriefContainerState) error {
+func (c *Client) UpdateContainerConfig(container string, st shared.BriefContainerInfo) error {
 	body := shared.Jmap{"name": container,
 		"profiles":  st.Profiles,
 		"config":    st.Config,
@@ -1827,7 +1780,7 @@ func (c *Client) ListProfiles() ([]string, error) {
 }
 
 func (c *Client) ApplyProfile(container, profile string) (*Response, error) {
-	st, err := c.ContainerStatus(container)
+	st, err := c.ContainerInfo(container)
 	if err != nil {
 		return nil, err
 	}
@@ -1838,7 +1791,7 @@ func (c *Client) ApplyProfile(container, profile string) (*Response, error) {
 }
 
 func (c *Client) ContainerDeviceDelete(container, devname string) (*Response, error) {
-	st, err := c.ContainerStatus(container)
+	st, err := c.ContainerInfo(container)
 	if err != nil {
 		return nil, err
 	}
@@ -1850,7 +1803,7 @@ func (c *Client) ContainerDeviceDelete(container, devname string) (*Response, er
 }
 
 func (c *Client) ContainerDeviceAdd(container, devname, devtype string, props []string) (*Response, error) {
-	st, err := c.ContainerStatus(container)
+	st, err := c.ContainerInfo(container)
 	if err != nil {
 		return nil, err
 	}
@@ -1879,7 +1832,7 @@ func (c *Client) ContainerDeviceAdd(container, devname, devtype string, props []
 }
 
 func (c *Client) ContainerListDevices(container string) ([]string, error) {
-	st, err := c.ContainerStatus(container)
+	st, err := c.ContainerInfo(container)
 	if err != nil {
 		return nil, err
 	}
