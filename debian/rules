@@ -59,10 +59,6 @@ else
 	debian/helpers/link-from-installed gopkg.in/tomb.v2
 	debian/helpers/link-from-installed gopkg.in/yaml.v2
 
-	# Alternative package path: github.com/stgraber/lxd-go-systemd -> github.com/coreos/go-systemd
-	mkdir -p ${GOPATH}/src/github.com/stgraber/
-	ln -s ${GOPATH}/src/github.com/coreos/go-systemd ${GOPATH}/src/github.com/stgraber/lxd-go-systemd
-
 	# Packages that aren't in the archive
 	debian/helpers/link-from-bundled github.com/mattn/go-colorable
 	debian/helpers/link-from-bundled gopkg.in/flosch/pongo2.v3
@@ -86,8 +82,8 @@ override_dh_install:
 	help2man $(PKGDIR)/usr/bin/lxd -n "The container hypervisor - daemon" --no-info > $(PKGDIR)/usr/share/man/man1/lxd.1
 	help2man scripts/lxd-images -n "The container hypervisor - image importer" --version-string=$(VERSION) --no-info > $(PKGDIR)/usr/share/man/man1/lxd-images.1
 
-	mkdir -p $(PKGDIR)/etc/bash_completion.d/
-	cp config/bash/lxd-client $(PKGDIR)/etc/bash_completion.d
+	mkdir -p $(PKGDIR)/usr/share/bash-completion/completions/
+	cp config/bash/lxd-client $(PKGDIR)/usr/share/bash-completion/completions
 
 	# Prepare dev package
 	rm -Rf $(PKGDIR)/usr/share/gocode/src/github.com/lxc/

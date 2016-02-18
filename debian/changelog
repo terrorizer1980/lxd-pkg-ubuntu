@@ -1,3 +1,33 @@
+lxd (2.0.0~beta3-0ubuntu1) xenial; urgency=medium
+
+  * New upstream release (2.0.0~beta3):
+    - "lxc publish" can now be forced to publish running containers (it
+      will temporarily stop them)
+    - "lxc image list" now shows images sorted by description
+    - Complete review of the REST API and update to make it all match
+      the specification.
+    - Extra security now applies for cross-server communication:
+    - Fix invalid container name in lxc file
+    - tests: Add test for aliases with slashes
+    - Fix updating ephemeral and architecture flags
+    - Clarify publish error message a bit
+    - Fix interacting with aliases with a trailing slash
+    - Don't move the image into place until it's been parsed
+    - Make sure we always use the right dialer and proxy
+    - specs: Fix wrong key name
+    - Fix lxc file on Windows
+    - Fix broken DB migration when upgrading from LXD 0.27 or older
+    - Avoid global variables in client tool
+    - Fix errors due to early failure to connect
+    - Always export the file size on transfer
+    - Fixed some typos
+    - lxd-images: Register atexit at init time
+    - specs: Update storage spec for btrfs send/receive
+    - Use upstream go-systemd (this breaks backward compatibility with Go 1.3)
+  * Move bash completion profile to /usr/share/bash-completion
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Thu, 18 Feb 2016 00:34:35 -0500
+
 lxd (2.0.0~beta2-0ubuntu2) xenial; urgency=medium
 
   * Cherry-pick upstream bugfix:
