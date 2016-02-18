@@ -7,9 +7,15 @@ import (
 	"github.com/lxc/lxd"
 	"github.com/lxc/lxd/i18n"
 	"github.com/lxc/lxd/shared/gnuflag"
+
+	"github.com/lxc/lxd/shared"
 )
 
-type publishCmd struct{}
+type publishCmd struct {
+	pAliases   aliasList // aliasList defined in lxc/image.go
+	makePublic bool
+	Force      bool
+}
 
 func (c *publishCmd) showByDefault() bool {
 	return true
@@ -22,12 +28,11 @@ func (c *publishCmd) usage() string {
 lxc publish [remote:]container [remote:] [--alias=ALIAS]... [prop-key=prop-value]...`)
 }
 
-var pAliases aliasList // aliasList defined in lxc/image.go
-var makePublic bool
-
 func (c *publishCmd) flags() {
-	gnuflag.BoolVar(&makePublic, "public", false, i18n.G("Make the image public"))
-	gnuflag.Var(&pAliases, "alias", i18n.G("New alias to define at target"))
+	gnuflag.BoolVar(&c.makePublic, "public", false, i18n.G("Make the image public"))
+	gnuflag.Var(&c.pAliases, "alias", i18n.G("New alias to define at target"))
+	gnuflag.BoolVar(&c.Force, "force", false, i18n.G("Stop the container if currently running"))
+	gnuflag.BoolVar(&c.Force, "f", false, i18n.G("Stop the container if currently running"))
 }
 
 func (c *publishCmd) run(config *lxd.Config, args []string) error {
@@ -62,6 +67,61 @@ func (c *publishCmd) run(config *lxd.Config, args []string) error {
 		return err
 	}
 
+	s := d
+	if cRemote != iRemote {
+		s, err = lxd.NewClient(config, cRemote)
+		if err != nil {
+			return err
+		}
+	}
+
+	if !shared.IsSnapshot(cName) {
+		ct, err := s.ContainerInfo(cName)
+		if err != nil {
+			return err
+		}
+
+		wasRunning := ct.StatusCode != 0 && ct.StatusCode != shared.Stopped
+		wasEphemeral := ct.Ephemeral
+
+		if wasRunning {
+			if !c.Force {
+				return fmt.Errorf(i18n.G("The container is currently running. Use --force to have it stopped and restarted."))
+			}
+
+			if ct.Ephemeral {
+				ct.Ephemeral = false
+				err := s.UpdateContainerConfig(cName, ct.Brief())
+				if err != nil {
+					return err
+				}
+			}
+
+			resp, err := s.Action(cName, shared.Stop, -1, true)
+			if err != nil {
+				return err
+			}
+
+			op, err := s.WaitFor(resp.Operation)
+			if err != nil {
+				return err
+			}
+
+			if op.StatusCode == shared.Failure {
+				return fmt.Errorf(i18n.G("Stopping container failed!"))
+			}
+			defer s.Action(cName, shared.Start, -1, true)
+
+			if wasEphemeral {
+				ct.Ephemeral = true
+				err := s.UpdateContainerConfig(cName, ct.Brief())
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+
 	for i := firstprop; i < len(args); i++ {
 		entry := strings.SplitN(args[i], "=", 2)
 		if len(entry) < 2 {
@@ -74,17 +134,12 @@ func (c *publishCmd) run(config *lxd.Config, args []string) error {
 
 	// Optimized local publish
 	if cRemote == iRemote {
-		fp, err = d.ImageFromContainer(cName, makePublic, pAliases, properties)
+		fp, err = d.ImageFromContainer(cName, c.makePublic, c.pAliases, properties)
 		if err != nil {
 			return err
 		}
 		fmt.Printf(i18n.G("Container published with fingerprint: %s")+"\n", fp)
 		return nil
-	}
-
-	s, err := lxd.NewClient(config, cRemote)
-	if err != nil {
-		return err
 	}
 
 	fp, err = s.ImageFromContainer(cName, false, nil, properties)
@@ -93,7 +148,7 @@ func (c *publishCmd) run(config *lxd.Config, args []string) error {
 	}
 	defer s.DeleteImage(fp)
 
-	err = s.CopyImage(fp, d, false, pAliases, makePublic, nil)
+	err = s.CopyImage(fp, d, false, c.pAliases, c.makePublic, nil)
 	if err != nil {
 		return err
 	}

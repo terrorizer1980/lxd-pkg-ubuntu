@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"net/http"
 	"strings"
@@ -14,7 +16,8 @@ import (
 )
 
 type containerImageSource struct {
-	Type string `json:"type"`
+	Type        string `json:"type"`
+	Certificate string `json:"certificate"`
 
 	/* for "image" type */
 	Alias       string `json:"alias"`
@@ -56,16 +59,18 @@ func createFromImage(d *Daemon, req *containerPostReq) Response {
 
 	if req.Source.Alias != "" {
 		if req.Source.Mode == "pull" && req.Source.Server != "" {
-			hash, err = remoteGetImageFingerprint(d, req.Source.Server, req.Source.Alias)
+			hash, err = remoteGetImageFingerprint(d, req.Source.Server, req.Source.Certificate, req.Source.Alias)
 			if err != nil {
 				return InternalError(err)
 			}
 		} else {
 
-			hash, err = dbImageAliasGet(d.db, req.Source.Alias)
+			_, alias, err := dbImageAliasGet(d.db, req.Source.Alias, true)
 			if err != nil {
 				return InternalError(err)
 			}
+
+			hash = alias.Target
 		}
 	} else if req.Source.Fingerprint != "" {
 		hash = req.Source.Fingerprint
@@ -75,13 +80,13 @@ func createFromImage(d *Daemon, req *containerPostReq) Response {
 
 	run := func(op *operation) error {
 		if req.Source.Server != "" {
-			err := d.ImageDownload(op, req.Source.Server, hash, req.Source.Secret, true, false)
+			err := d.ImageDownload(op, req.Source.Server, req.Source.Certificate, req.Source.Secret, hash, true, false)
 			if err != nil {
 				return err
 			}
 		}
 
-		imgInfo, err := dbImageGet(d.db, hash, false, false)
+		_, imgInfo, err := dbImageGet(d.db, hash, false, false)
 		if err != nil {
 			return err
 		}
@@ -159,7 +164,7 @@ func createFromMigration(d *Daemon, req *containerPostReq) Response {
 		}
 
 		var c container
-		_, err := dbImageGet(d.db, req.Source.BaseImage, false, true)
+		_, _, err := dbImageGet(d.db, req.Source.BaseImage, false, true)
 
 		/* Only create a container from an image if we're going to
 		 * rsync over the top of it. In the case of a better file
@@ -186,7 +191,17 @@ func createFromMigration(d *Daemon, req *containerPostReq) Response {
 			}
 		}
 
-		config, err := shared.GetTLSConfig(d.certf, d.keyf)
+		var cert *x509.Certificate
+		if req.Source.Certificate != "" {
+			certBlock, _ := pem.Decode([]byte(req.Source.Certificate))
+
+			cert, err = x509.ParseCertificate(certBlock.Bytes)
+			if err != nil {
+				return err
+			}
+		}
+
+		config, err := shared.GetTLSConfig("", "", cert)
 		if err != nil {
 			c.Delete()
 			return err
@@ -345,5 +360,4 @@ func containersPost(d *Daemon, r *http.Request) Response {
 	default:
 		return BadRequest(fmt.Errorf("unknown source type %s", req.Source.Type))
 	}
-
 }

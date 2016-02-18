@@ -16,7 +16,14 @@ import (
 	"github.com/lxc/lxd/shared"
 )
 
-type resp struct {
+type syncResp struct {
+	Type       lxd.ResponseType  `json:"type"`
+	Status     string            `json:"status"`
+	StatusCode shared.StatusCode `json:"status_code"`
+	Metadata   interface{}       `json:"metadata"`
+}
+
+type asyncResp struct {
 	Type       lxd.ResponseType  `json:"type"`
 	Status     string            `json:"status"`
 	StatusCode shared.StatusCode `json:"status_code"`
@@ -40,7 +47,7 @@ func (r *syncResponse) Render(w http.ResponseWriter) error {
 		status = shared.Failure
 	}
 
-	resp := resp{Type: lxd.Sync, Status: status.String(), StatusCode: status, Metadata: r.metadata}
+	resp := syncResp{Type: lxd.Sync, Status: status.String(), StatusCode: status, Metadata: r.metadata}
 	return WriteJSON(w, resp)
 }
 
@@ -78,9 +85,6 @@ func (r *fileResponse) Render(w http.ResponseWriter) error {
 
 	// For a single file, return it inline
 	if len(r.files) == 1 {
-		w.Header().Set("Content-Type", "application/octet-stream")
-		w.Header().Set("Content-Disposition", fmt.Sprintf("inline;filename=%s", r.files[0].filename))
-
 		f, err := os.Open(r.files[0].path)
 		if err != nil {
 			return err
@@ -91,6 +95,10 @@ func (r *fileResponse) Render(w http.ResponseWriter) error {
 		if err != nil {
 			return err
 		}
+
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", fi.Size()))
+		w.Header().Set("Content-Disposition", fmt.Sprintf("inline;filename=%s", r.files[0].filename))
 
 		http.ServeContent(w, r.req, r.files[0].filename, fi.ModTime(), f)
 		if r.removeAfterServe {
@@ -124,9 +132,11 @@ func (r *fileResponse) Render(w http.ResponseWriter) error {
 			return err
 		}
 	}
-
 	mw.Close()
+
 	w.Header().Set("Content-Type", mw.FormDataContentType())
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", body.Len()))
+
 	_, err := io.Copy(w, body)
 	return err
 }
@@ -151,7 +161,7 @@ func (r *operationResponse) Render(w http.ResponseWriter) error {
 		return err
 	}
 
-	body := resp{
+	body := asyncResp{
 		Type:       lxd.Async,
 		Status:     shared.OperationCreated.String(),
 		StatusCode: shared.OperationCreated,
