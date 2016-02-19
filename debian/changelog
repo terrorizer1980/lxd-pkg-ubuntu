@@ -1,3 +1,15 @@
+lxd (2.0.0~beta3-0ubuntu2) xenial; urgency=medium
+
+  * Cherry-pick fixes from upstream:
+    - Fix static analysis tests
+    - Re-implement terminal functions through cgo (LP: #1547190)
+    - Move i18n under shared
+    - Don't stop containers before asking the user
+    - Fix Content-Type value for errors
+    - Fix container creation from remote image alias
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Fri, 19 Feb 2016 16:31:32 -0500
+
 lxd (2.0.0~beta3-0ubuntu1) xenial; urgency=medium
 
   * New upstream release (2.0.0~beta3):
