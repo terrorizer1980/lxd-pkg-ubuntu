@@ -1,0 +1,26 @@
+From c3c10921b94f0fd39a340e12589f4e39e4c8fc29 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Fri, 19 Feb 2016 15:41:31 -0500
+Subject: Fix static analysis tests
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ test/suites/static_analysis.sh | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/test/suites/static_analysis.sh b/test/suites/static_analysis.sh
+index 31919f5..04b55a2 100644
+--- a/test/suites/static_analysis.sh
++++ b/test/suites/static_analysis.sh
+@@ -38,7 +38,7 @@ test_static_analysis() {
+ 
+     ## deadcode
+     if which deadcode >/dev/null 2>&1; then
+-      for path in . lxc/ lxd/ shared/ i18n/ fuidshift/ lxd-bridge/lxd-bridge-proxy/; do
++      for path in . lxc/ lxd/ shared/ shared/i18n shared/termios fuidshift/ lxd-bridge/lxd-bridge-proxy/; do
+         OUT=$(deadcode ${path} 2>&1 | grep -v lxd/migrate.pb.go || true)
+         if [ -n "${OUT}" ]; then
+           echo "${OUT}" >&2
