@@ -1,7 +1,7 @@
 description "Container hypervisor based on LXC"
 author "Stéphane Graber <stgraber@ubuntu.com>"
 
-start on started lxc
+start on started lxcfs
 stop on runlevel [06]
 limit nofile 65536 65536
 kill signal SIGPWR

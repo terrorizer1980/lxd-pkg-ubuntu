@@ -1,7 +1,7 @@
 [Unit]
 Description=Container hypervisor based on LXC
-After=cgmanager.service lxc.service lxd-unix.socket
-Requires=cgmanager.service lxc.service lxd-unix.socket
+After=lxcfs.service lxd-unix.socket
+Requires=lxcfs.service lxd-unix.socket
 
 [Service]
 ExecStart=/usr/bin/lxd --group lxd --logfile=/var/log/lxd/lxd.log
