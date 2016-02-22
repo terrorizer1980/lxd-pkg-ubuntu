@@ -1,0 +1,26 @@
+From 872344c716d74872a44c8bca45b2536a4cee0d7a Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Sun, 21 Feb 2016 16:48:48 -0500
+Subject: lxd-images: Fix sync
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ scripts/lxd-images | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/scripts/lxd-images b/scripts/lxd-images
+index 56d445c..a880070 100755
+--- a/scripts/lxd-images
++++ b/scripts/lxd-images
+@@ -623,7 +623,7 @@ to import and launch images"""))
+             image_hash = image['fingerprint']
+             image_public = image['public']
+             image_source = image['properties']['lxd-images.sync']
+-            image_aliases = [alias['target'] for alias in image['aliases']]
++            image_aliases = [alias['name'] for alias in image['aliases']]
+ 
+             # Extract the serialized lxd-images config
+             source_parts = image_source.split(":")

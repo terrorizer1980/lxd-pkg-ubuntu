@@ -1,0 +1,33 @@
+From 52ce62affce55b79b09798e72d3f913eb9725d62 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Fri, 19 Feb 2016 20:25:02 -0500
+Subject: tests: Keep pprof self-contained
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ test/suites/profiling.sh | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/test/suites/profiling.sh b/test/suites/profiling.sh
+index 9d1870d..519d5fe 100644
+--- a/test/suites/profiling.sh
++++ b/test/suites/profiling.sh
+@@ -7,6 +7,7 @@ test_cpu_profiling() {
+   lxdpid=$(cat "${LXD3_DIR}/lxd.pid")
+   kill -TERM "${lxdpid}"
+   wait "${lxdpid}" || true
++  export PPROF_TMPDIR="${TEST_DIR}/pprof"
+   echo top5 | go tool pprof "$(which lxd)" "${LXD3_DIR}/cpu.out"
+   echo ""
+ 
+@@ -32,6 +33,7 @@ test_mem_profiling() {
+     timeout=$((timeout-1))
+   done
+ 
++  export PPROF_TMPDIR="${TEST_DIR}/pprof"
+   echo top5 | go tool pprof "$(which lxd)" "${LXD4_DIR}/mem"
+   echo ""
+ 

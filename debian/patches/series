@@ -4,3 +4,8 @@
 0004-Move-i18n-under-shared.patch
 0005-Re-implement-terminal-functions-through-cgo.patch
 0006-Fix-static-analysis-tests.patch
+0007-Allow-acces-to-dev-zero.patch
+0008-tests-Keep-pprof-self-contained.patch
+0009-Use-iproute2-instead-of-bridge-utils.patch
+0010-lxd-images-Fix-sync.patch
+0011-allow-cgroupfs-mounting-on-cgns-kernels.patch

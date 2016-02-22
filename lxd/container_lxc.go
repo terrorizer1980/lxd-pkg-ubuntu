@@ -321,7 +321,7 @@ func (c *containerLXC) initLXC() error {
 			return err
 		}
 
-		for _, dev := range []string{"c *:* m", "b *:* m", "c 5:0 rwm", "c 5:1 rwm", "c 1:7 rwm", "c 1:3 rwm", "c 1:8 rwm", "c 1:9 rwm", "c 5:2 rwm", "c 136:* rwm"} {
+		for _, dev := range []string{"c *:* m", "b *:* m", "c 5:0 rwm", "c 5:1 rwm", "c 1:5 rwm", "c 1:7 rwm", "c 1:3 rwm", "c 1:8 rwm", "c 1:9 rwm", "c 5:2 rwm", "c 136:* rwm"} {
 			err = lxcSetConfigItem(cc, "lxc.cgroup.devices.allow", dev)
 			if err != nil {
 				return err
@@ -3100,7 +3100,7 @@ func (c *containerLXC) createNetworkDevice(name string, m shared.Device) (string
 		}
 
 		if m["nictype"] == "bridged" {
-			err = exec.Command("brctl", "addif", m["parent"], n1).Run()
+			err = exec.Command("ip", "link", "set", n1, "master", m["parent"]).Run()
 			if err != nil {
 				deviceRemoveInterface(n2)
 				return "", fmt.Errorf("Failed to add interface to bridge: %s", err)
