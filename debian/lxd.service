@@ -1,9 +1,10 @@
 [Unit]
 Description=Container hypervisor based on LXC
-After=lxcfs.service lxd-unix.socket
-Requires=lxcfs.service lxd-unix.socket
+After=lxcfs.service lxd.socket
+Requires=lxcfs.service lxd.socket
 
 [Service]
+ExecStartPre=@LIBEXECDIR@/lxc/lxc-apparmor-load
 ExecStart=/usr/bin/lxd --group lxd --logfile=/var/log/lxd/lxd.log
 ExecStartPost=/usr/bin/lxd waitready --timeout=600
 KillMode=process
@@ -14,4 +15,4 @@ LimitNOFILE=infinity
 LimitNPROC=infinity
 
 [Install]
-Also=lxd-startup.service lxd-unix.socket
+Also=lxd-startup.service lxd.socket

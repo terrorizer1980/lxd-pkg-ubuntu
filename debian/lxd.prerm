@@ -1,0 +1,13 @@
+#!/bin/sh
+set -e
+
+#DEBHELPER#
+
+# Manual init script handling
+if [ -d /run/systemd/system ]; then
+	deb-systemd-invoke stop lxd.service >/dev/null || true
+elif [ -x "/etc/init.d/lxd" ] || [ -e "/etc/init/lxd.conf" ]; then
+	invoke-rc.d lxd stop || true
+fi
+
+exit 0

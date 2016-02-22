@@ -65,6 +65,17 @@ Description: Container hypervisor based on LXC - daemon
  .
  This package contains the LXD daemon.
 
+Package: lxc2
+Architecture: all
+Depends: lxd, lxd-client, ${misc:Depends}
+Priority: extra
+Section: metapackages
+Description: Container hypervisor based on LXC - metapackage
+ LXD offers a REST API to remotely manage containers over the network,
+ using an image based workflow and with support for live migration.
+ .
+ This is a dummy metapackage to install LXD and its client.
+
 Package: lxd-tools
 Architecture: any
 Depends: ${misc:Depends}, ${shlibs:Depends}

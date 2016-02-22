@@ -1,7 +1,7 @@
 [Unit]
 Description=Container hypervisor based on LXC - boot time check
-After=lxd-unix.socket
-Requires=lxd-unix.socket
+After=lxd.socket
+Requires=lxd.socket
 
 [Service]
 Type=oneshot

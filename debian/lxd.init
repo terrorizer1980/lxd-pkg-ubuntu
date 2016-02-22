@@ -28,6 +28,8 @@ case "$1" in
             exit 1
         fi
 
+        @LIBEXECDIR@/lxc/lxc-apparmor-load
+
         echo -n "Starting $DESC: "
         ulimit -n 65536
         if start-stop-daemon ${START} -- --group lxd --logfile=/var/log/lxd/lxd.log >/dev/null 2>&1 ; then
