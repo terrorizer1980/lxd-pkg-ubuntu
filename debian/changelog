@@ -1,3 +1,13 @@
+lxd (2.0.0~beta3-0ubuntu3) xenial; urgency=medium
+
+  * Introduce a new lxc2 metapackage.
+  * Update init scripts not to depend on the lxc ones.
+  * Call lxc-apparmor-load at startup time.
+  * Update maintainer scripts not to start lxd when system-activation is
+    available (LP: #1545017)
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Fri, 19 Feb 2016 23:57:44 -0500
+
 lxd (2.0.0~beta3-0ubuntu2) xenial; urgency=medium
 
   * Cherry-pick fixes from upstream:
