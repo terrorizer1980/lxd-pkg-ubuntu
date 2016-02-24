@@ -1,10 +1,10 @@
 [Unit]
-Description=Container hypervisor based on LXC
+Description=LXD - main daemon
 After=lxcfs.service lxd.socket
 Requires=lxcfs.service lxd.socket
 
 [Service]
-ExecStartPre=@LIBEXECDIR@/lxc/lxc-apparmor-load
+ExecStartPre=/usr/lib/x86_64-linux-gnu/lxc/lxc-apparmor-load
 ExecStart=/usr/bin/lxd --group lxd --logfile=/var/log/lxd/lxd.log
 ExecStartPost=/usr/bin/lxd waitready --timeout=600
 KillMode=process

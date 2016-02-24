@@ -1,3 +1,6 @@
+[Unit]
+Description=LXD - unix socket
+
 [Socket]
 ListenStream=/var/lib/lxd/unix.socket
 SocketGroup=lxd

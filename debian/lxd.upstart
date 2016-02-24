@@ -1,11 +1,10 @@
-description "Container hypervisor based on LXC"
+description "LXD - main daemon"
 author "Stéphane Graber <stgraber@ubuntu.com>"
 
-start on started lxcfs
-stop on runlevel [06]
+start on runlevel [2345]
+stop on starting rc RUNLEVEL=[016]
 limit nofile 65536 65536
-kill signal SIGPWR
-kill timeout 40
+kill timeout 60
 
 respawn
 
@@ -13,4 +12,8 @@ pre-start exec @LIBEXECDIR@/lxc/lxc-apparmor-load
 
 exec /usr/bin/lxd --group lxd --logfile=/var/log/lxd/lxd.log
 
-post-start exec /usr/bin/lxd waitready --timeout=600
+post-start exec /usr/bin/lxd waitready
+
+pre-stop script
+    [ -n "${UPSTART_STOP_EVENTS:-}" ] && exec /usr/bin/lxd shutdown
+end script

@@ -1,6 +1,6 @@
 [Unit]
-Description=Container hypervisor based on LXC - container startup/shutdown
-After=lxd.socket
+Description=LXD - container startup/shutdown
+After=lxd.socket lxd.service
 Requires=lxd.socket
 
 [Service]
