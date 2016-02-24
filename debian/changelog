@@ -1,3 +1,12 @@
+lxd (2.0.0~beta4-0ubuntu3) xenial; urgency=medium
+
+  * Rename lxd-startup.service to lxd-containers.service
+  * Have lxd-containers.service handle clean shutdowns of LXD by calling
+    "lxd shutdown" on host shutdown.
+  * Do a standard daemon restart (SIGTERM) on restart of lxc.service
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 24 Feb 2016 14:32:07 -0500
+
 lxd (2.0.0~beta4-0ubuntu2) xenial; urgency=medium
 
   * debian/lxd.preinst: Add missing check for $1 == "upgrade".
