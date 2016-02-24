@@ -1,3 +1,12 @@
+lxd (2.0.0~beta4-0ubuntu4) xenial; urgency=medium
+
+  * Fix race condition between systemd units at shutdown.
+  * Update the description of all systemd units to be easier to grep.
+  * Update upstart job to also do proper shutdown/restart of containers
+    on host reboot and a quick daemon restart the rest of the time.
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 24 Feb 2016 17:44:22 -0500
+
 lxd (2.0.0~beta4-0ubuntu3) xenial; urgency=medium
 
   * Rename lxd-startup.service to lxd-containers.service
