@@ -1,3 +1,9 @@
+lxd (2.0.0~beta3-0ubuntu5) UNRELEASED; urgency=medium
+
+  * Move adduser logic to preinst.
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Tue, 23 Feb 2016 19:10:13 -0500
+
 lxd (2.0.0~beta3-0ubuntu4) xenial; urgency=medium
 
   * Chery-pick fixes from upstream:
