@@ -1,3 +1,10 @@
+lxd (2.0.0~beta4-0ubuntu2) xenial; urgency=medium
+
+  * debian/lxd.preinst: Add missing check for $1 == "upgrade".
+    (LP: #1549133)
+
+ -- Martin Pitt <martin.pitt@ubuntu.com>  Wed, 24 Feb 2016 07:52:22 +0100
+
 lxd (2.0.0~beta4-0ubuntu1) xenial; urgency=medium
 
   * New upstream release (2.0.0~beta4):
