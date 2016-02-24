@@ -1,8 +1,33 @@
-lxd (2.0.0~beta3-0ubuntu5) UNRELEASED; urgency=medium
+lxd (2.0.0~beta4-0ubuntu1) xenial; urgency=medium
 
+  * New upstream release (2.0.0~beta4):
+    - The API versioning data at /1.0 has changed, now includes,
+      api_status, api_version and api_extensions
+    - Architecture fields are now returned as strings instead of obscure
+      integer
+    - GET /1.0/containers/NAME/state has been reworked, now includes
+      more detailed network information, disk usage information as well as
+      memory consumption data.
+    - New --fast mode for "lxc list" which only lists "cheap" fields
+    - The container architecture is now listed in "lxc info"
+    - Add process count limit (pids cgroup)
+    - Fix container creation from remote image alias
+    - Fix Content-Type value for errors
+    - Don't stop containers before asking the user
+    - Re-implement terminal functions through cgo (fixes ppc64el)
+    - Allow access to /dev/zero
+    - tests: Keep pprof self-contained
+    - Use iproute2 instead of bridge-utils
+    - lxd-images: Fix sync
+    - allow cgroupfs mounting on cgns kernels
+    - Optimize container process count (use pid cgroup)
+    - Fix file push permissions (LP: #1548878)
+    - list: Query containers by batch of 10
+    - Only re-balance on host network changes
+    - list: Attempt to optimize the go routines slightly
   * Move adduser logic to preinst.
 
- -- Stéphane Graber <stgraber@ubuntu.com>  Tue, 23 Feb 2016 19:10:13 -0500
+ -- Stéphane Graber <stgraber@ubuntu.com>  Tue, 23 Feb 2016 19:59:21 -0500
 
 lxd (2.0.0~beta3-0ubuntu4) xenial; urgency=medium
 
