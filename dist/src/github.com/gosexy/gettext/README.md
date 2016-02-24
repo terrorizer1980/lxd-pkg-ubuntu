@@ -5,10 +5,26 @@ library for writing multilingual systems.
 
 ## Requeriments
 
-The GNU C library. If you're using GNU/Linux, FreeBSD or OSX you probably
-already have it.
+* [GNU gettext][1]
 
-## Installation
+### Linux
+
+Installation should be straightforward on Linux.
+
+### OSX
+
+Installing gettext on a Mac is a bit awkward:
+
+```
+brew install gettext
+
+export CGO_LDFLAGS=-L/usr/local/opt/gettext/lib
+export CGO_CPPFLAGS=-I/usr/local/opt/gettext/include
+
+go get github.com/gosexy/gettext
+```
+
+## Getting the library
 
 Use `go get` to download and install the binding:
 
@@ -25,18 +41,18 @@ This is an example program showing the `BindTextdomain`, `Textdomain` and
 package main
 
 import (
-	"github.com/gosexy/gettext"
 	"fmt"
-	"os"
+
+	"github.com/gosexy/gettext"
 )
 
 func main() {
-	gettext.BindTextdomain("example", ".")
-	gettext.Textdomain("example")
+	textDomain := "default"
 
-	os.Setenv("LANGUAGE", "es_MX.utf8")
+	gettext.BindTextdomain(textDomain, "path/to/domains")
+	gettext.Textdomain(textDomain)
 
-	gettext.SetLocale(gettext.LC_ALL, "")
+	gettext.SetLocale(gettext.LcAll, "es_MX.utf8")
 
 	fmt.Println(gettext.Gettext("Hello, world!"))
 }
@@ -56,7 +72,7 @@ Go program:
 ```
 go get github.com/gosexy/gettext/go-xgettext
 
-xgettext -o outfile.pot --keyword=Gettext --keyword-plural=NGettext -i infile.go
+go-xgettext -o outfile.pot --keyword=Gettext --keyword-plural=NGettext infile.go
 ```
 
 This will generate a `example.pot` file.
