@@ -97,10 +97,10 @@ override_dh_install:
 
 override_dh_installinit:
 	# We handle starting and restarting things ourselves
-	dh_systemd_enable -plxd --name=lxd-startup lxd-startup.service
+	dh_systemd_enable -plxd --name=lxd-containers lxd-containers.service
 	dh_installinit -plxd --no-start
-	dh_installinit -plxd --name=lxd-startup --no-start --noscripts
-	dh_systemd_start -plxd lxd-startup.service
+	dh_installinit -plxd --name=lxd-containers --no-start --noscripts
+	dh_systemd_start -plxd lxd-containers.service --no-restart-on-upgrade
 
 	# Update arch-specific paths
 	sed -i "s#@LIBEXECDIR@#/usr/lib/${DEB_HOST_MULTIARCH}#g" debian/lxd/lib/systemd/system/lxd.service

@@ -9,10 +9,9 @@ ExecStart=/usr/bin/lxd --group lxd --logfile=/var/log/lxd/lxd.log
 ExecStartPost=/usr/bin/lxd waitready --timeout=600
 KillMode=process
 TimeoutStopSec=40
-KillSignal=SIGPWR
 Restart=on-failure
 LimitNOFILE=infinity
 LimitNPROC=infinity
 
 [Install]
-Also=lxd-startup.service lxd.socket
+Also=lxd-containers.service lxd.socket
