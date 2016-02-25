@@ -1,8 +1,15 @@
+lxd (2.0.0~beta4-0ubuntu6) xenial; urgency=medium
+
+  * Drop the trailing newline patch as it was causing regressions in
+    interactive mode.
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Thu, 25 Feb 2016 16:13:03 -0500
+
 lxd (2.0.0~beta4-0ubuntu5) xenial; urgency=medium
 
   * Cherry-pick upstream bugfixes:
     - Don't allow the state functions to fail
-    - exec: don't s/\\n/\\r\\n/g when interactive
+    - exec: remove trailing newlines
     - websocket: fix panic() on concurrent writes
     - Don't list link local addresses in list
     - Detect and support the cgroup namespace
