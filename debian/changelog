@@ -1,3 +1,14 @@
+lxd (2.0.0~beta4-0ubuntu5) xenial; urgency=medium
+
+  * Cherry-pick upstream bugfixes:
+    - Don't allow the state functions to fail
+    - exec: don't s/\\n/\\r\\n/g when interactive
+    - websocket: fix panic() on concurrent writes
+    - Don't list link local addresses in list
+    - Detect and support the cgroup namespace
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Thu, 25 Feb 2016 12:43:46 -0500
+
 lxd (2.0.0~beta4-0ubuntu4) xenial; urgency=medium
 
   * Fix race condition between systemd units at shutdown.
