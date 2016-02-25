@@ -1,4 +1,4 @@
-From 538b526741521bcd05cd7805d1834f8fd987820d Mon Sep 17 00:00:00 2001
+From d15bfa056a5323964b111611d103da8efcaed76e Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
 Date: Thu, 25 Feb 2016 11:33:31 -0500
 Subject: Don't allow the state functions to fail
