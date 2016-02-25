@@ -1,0 +1,106 @@
+From 7140c408234e503c8ea9efbf5ec57366c93d6804 Mon Sep 17 00:00:00 2001
+From: Tycho Andersen <tycho.andersen@canonical.com>
+Date: Wed, 24 Feb 2016 16:18:15 -0700
+Subject: websocket: fix panic() on concurrent writes
+
+We were panic()ing sometimes (see below) on current writes. Let's not do
+that.
+
+panic: concurrent write to websocket connection
+
+goroutine 429 [running]:
+github.com/gorilla/websocket.(*Conn).flushFrame(0x504d5a70, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0)
+  /lxd/build/tmp.39Rjv1YQMz/go/src/github.com/gorilla/websocket/conn.go:450 +0x516
+github.com/gorilla/websocket.(*Conn).NextWriter(0x504d5a70, 0x8, 0x0, 0x0, 0x0, 0x0)
+  /lxd/build/tmp.39Rjv1YQMz/go/src/github.com/gorilla/websocket/conn.go:378 +0x7c
+github.com/gorilla/websocket.(*Conn).WriteMessage(0x504d5a70, 0x8, 0x509ac9e0, 0x2, 0x2, 0x0, 0x0)
+  /lxd/build/tmp.39Rjv1YQMz/go/src/github.com/gorilla/websocket/conn.go:585 +0x37
+main.(*migrationFields).disconnect(0x505755c0)
+  /lxd/build/tmp.39Rjv1YQMz/go/src/github.com/lxc/lxd/lxd/migrate.go:93 +0x1ba
+main.(*migrationSink).do(0x505755c0, 0x0, 0x0)
+  /lxd/build/tmp.39Rjv1YQMz/go/src/github.com/lxc/lxd/lxd/migrate.go:638 +0x6ae
+main.(*migrationSink).(main.do)-fm(0x0, 0x0)
+  /lxd/build/tmp.39Rjv1YQMz/go/src/github.com/lxc/lxd/lxd/migrate.go:442 +0x2c
+main.createFromMigration.func1(0x50890070, 0x0, 0x0)
+  /lxd/build/tmp.39Rjv1YQMz/go/src/github.com/lxc/lxd/lxd/containers_post.go:244 +0x3e3
+main.(*operation).Run.func1(0x50890070, 0x50650300)
+  /lxd/build/tmp.39Rjv1YQMz/go/src/github.com/lxc/lxd/lxd/operations.go:110 +0x31
+created by main.(*operation).Run
+  /lxd/build/tmp.39Rjv1YQMz/go/src/github.com/lxc/lxd/lxd/operations.go:135 +0xe2
+
+Signed-off-by: Tycho Andersen <tycho.andersen@canonical.com>
+---
+ lxd/migrate.go | 31 +++++++++++++++++++++++++++++--
+ 1 file changed, 29 insertions(+), 2 deletions(-)
+
+diff --git a/lxd/migrate.go b/lxd/migrate.go
+index 254ad4d..e6ec1a1 100644
+--- a/lxd/migrate.go
++++ b/lxd/migrate.go
+@@ -16,6 +16,7 @@ import (
+ 	"path"
+ 	"path/filepath"
+ 	"strings"
++	"sync"
+ 	"time"
+ 
+ 	"github.com/golang/protobuf/proto"
+@@ -31,6 +32,7 @@ type migrationFields struct {
+ 
+ 	controlSecret string
+ 	controlConn   *websocket.Conn
++	controlLock   sync.Mutex
+ 
+ 	criuSecret string
+ 	criuConn   *websocket.Conn
+@@ -42,6 +44,19 @@ type migrationFields struct {
+ }
+ 
+ func (c *migrationFields) send(m proto.Message) error {
++	/* gorilla websocket doesn't allow concurrent writes, and
++	 * panic()s if it sees them (which is reasonable). If e.g. we
++	 * happen to fail, get scheduled, start our write, then get
++	 * unscheduled before the write is bit to a new thread which is
++	 * receiving an error from the other side (due to our previous
++	 * close), we can engage in these concurrent writes, which
++	 * casuses the whole daemon to panic.
++	 *
++	 * Instead, let's lock sends to the controlConn so that we only ever
++	 * write one message at the time.
++	 */
++	c.controlLock.Lock()
++	defer c.controlLock.Unlock()
+ 	w, err := c.controlConn.NextWriter(websocket.BinaryMessage)
+ 	if err != nil {
+ 		return err
+@@ -85,16 +100,28 @@ func (c *migrationFields) recv(m proto.Message) error {
+ 
+ func (c *migrationFields) disconnect() {
+ 	closeMsg := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")
++
++	c.controlLock.Lock()
+ 	if c.controlConn != nil {
+ 		c.controlConn.WriteMessage(websocket.CloseMessage, closeMsg)
++		c.controlConn = nil /* don't close twice */
+ 	}
++	c.controlLock.Unlock()
+ 
++	/* Below we just Close(), which doesn't actually write to the
++	 * websocket, it just closes the underlying connection. If e.g. there
++	 * is still a filesystem transfer going on, but the other side has run
++	 * out of disk space, writing an actual CloseMessage here will cause
++	 * gorilla websocket to panic. Instead, we just force close this
++	 * connection, since we report the error over the control channel
++	 * anyway.
++	 */
+ 	if c.fsConn != nil {
+-		c.fsConn.WriteMessage(websocket.CloseMessage, closeMsg)
++		c.fsConn.Close()
+ 	}
+ 
+ 	if c.criuConn != nil {
+-		c.criuConn.WriteMessage(websocket.CloseMessage, closeMsg)
++		c.criuConn.Close()
+ 	}
+ }
+ 
