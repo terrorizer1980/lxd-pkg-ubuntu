@@ -2,3 +2,4 @@
 0002-Export-and-use-the-address-scope.patch
 0003-websocket-fix-panic-on-concurrent-writes.patch
 0004-Don-t-allow-the-state-functions-to-fail.patch
+0005-Fix-hardcoded-architecture-path-in-apparmor-profile.patch

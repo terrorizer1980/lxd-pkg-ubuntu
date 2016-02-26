@@ -1,0 +1,28 @@
+From 4e7ae66e5f0389beb1adc10ce6d0404d21ec67ba Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Fri, 26 Feb 2016 12:43:44 -0500
+Subject: Fix hardcoded architecture path in apparmor profile
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ lxd/apparmor.go | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/lxd/apparmor.go b/lxd/apparmor.go
+index b983834..45fe566 100644
+--- a/lxd/apparmor.go
++++ b/lxd/apparmor.go
+@@ -27,8 +27,8 @@ const NESTING_AA_PROFILE = `
+   pivot_root,
+   mount /var/lib/lxd/shmounts/ -> /var/lib/lxd/shmounts/,
+   mount none -> /var/lib/lxd/shmounts/,
+-  mount fstype=proc -> /usr/lib/x86_64-linux-gnu/lxc/**,
+-  mount fstype=sysfs -> /usr/lib/x86_64-linux-gnu/lxc/**,
++  mount fstype=proc -> /usr/lib/*/lxc/**,
++  mount fstype=sysfs -> /usr/lib/*/lxc/**,
+   mount options=(rw,bind),
+   mount options=(rw,rbind),
+   deny /dev/.lxd/proc/** rw,
