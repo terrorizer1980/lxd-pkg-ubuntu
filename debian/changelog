@@ -1,3 +1,9 @@
+lxd (2.0.0~beta4-0ubuntu7) xenial; urgency=medium
+
+  * Don't hardcode the library path in the systemd unit.
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Fri, 26 Feb 2016 12:40:28 -0500
+
 lxd (2.0.0~beta4-0ubuntu6) xenial; urgency=medium
 
   * Drop the trailing newline patch as it was causing regressions in
