@@ -1,6 +1,8 @@
 lxd (2.0.0~beta4-0ubuntu7) xenial; urgency=medium
 
   * Don't hardcode the library path in the systemd unit.
+  * Cherry-pick upstream bugfix:
+    - Don't hardcode architecture in apparmor profile
 
  -- Stéphane Graber <stgraber@ubuntu.com>  Fri, 26 Feb 2016 12:40:28 -0500
 
