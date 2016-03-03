@@ -70,6 +70,7 @@ type ContainerInfo struct {
 	ExpandedDevices Devices           `json:"expanded_devices"`
 	Name            string            `json:"name"`
 	Profiles        []string          `json:"profiles"`
+	Stateful        bool              `json:"stateful"`
 	Status          string            `json:"status"`
 	StatusCode      StatusCode        `json:"status_code"`
 }
@@ -115,7 +116,8 @@ const (
 )
 
 type ProfileConfig struct {
-	Name    string            `json:"name"`
-	Config  map[string]string `json:"config"`
-	Devices Devices           `json:"devices"`
+	Name        string            `json:"name"`
+	Config      map[string]string `json:"config"`
+	Description string            `json:"description"`
+	Devices     Devices           `json:"devices"`
 }

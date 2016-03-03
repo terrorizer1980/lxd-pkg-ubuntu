@@ -95,16 +95,6 @@ func run() error {
 		if err != nil {
 			return err
 		}
-
-		// One time migration from old config
-		if config.DefaultRemote == "" {
-			_, ok := config.Remotes["local"]
-			if !ok {
-				config.Remotes["local"] = lxd.LocalRemote
-			}
-			config.DefaultRemote = "local"
-			lxd.SaveConfig(config, configPath)
-		}
 	}
 
 	// This is quite impolite, but it seems gnuflag needs us to shift our
@@ -151,9 +141,6 @@ func run() error {
 		if err != nil {
 			return err
 		}
-
-		fmt.Fprintf(os.Stderr, i18n.G("If this is your first run, you will need to import images using the 'lxd-images' script.")+"\n")
-		fmt.Fprintf(os.Stderr, i18n.G("For example: 'lxd-images import ubuntu --alias ubuntu'.")+"\n")
 	}
 
 	err = cmd.run(config, gnuflag.Args())
@@ -192,15 +179,15 @@ var commands = map[string]command{
 	"list":     &listCmd{},
 	"monitor":  &monitorCmd{},
 	"move":     &moveCmd{},
-	"pause":    &actionCmd{shared.Freeze, false, false, "pause", -1, false},
+	"pause":    &actionCmd{shared.Freeze, false, false, "pause", -1, false, false, false},
 	"profile":  &profileCmd{},
 	"publish":  &publishCmd{},
 	"remote":   &remoteCmd{},
-	"restart":  &actionCmd{shared.Restart, true, true, "restart", -1, false},
+	"restart":  &actionCmd{shared.Restart, true, true, "restart", -1, false, false, false},
 	"restore":  &restoreCmd{},
 	"snapshot": &snapshotCmd{},
-	"start":    &actionCmd{shared.Start, false, true, "start", -1, false},
-	"stop":     &actionCmd{shared.Stop, true, true, "stop", -1, false},
+	"start":    &actionCmd{shared.Start, false, true, "start", -1, false, false, false},
+	"stop":     &actionCmd{shared.Stop, true, true, "stop", -1, false, false, false},
 	"version":  &versionCmd{},
 }
 

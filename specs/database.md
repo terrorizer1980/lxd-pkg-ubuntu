@@ -57,6 +57,7 @@ The list of tables is:
  * images
  * images\_properties
  * images\_aliases
+ * images\_source
  * profiles
  * profiles\_config
  * profiles\_devices
@@ -110,6 +111,7 @@ name            | VARCHAR(255)  | -             | NOT NULL          | Container 
 architecture    | INTEGER       | -             | NOT NULL          | Container architecture
 type            | INTEGER       | 0             | NOT NULL          | Container type (0 = container, 1 = container snapshot)
 ephemeral       | INTEGER       | 0             | NOT NULL          | Whether the container is ephemeral (0 = persistent, 1 = ephemeral)
+stateful        | INTEGER       | 0             | NOT NULL          | Whether the snapshot contains state (snapshot only)
 creation\_date  | DATETIME      | -             |                   | Image creation date (user supplied, 0 = unknown)
 
 Index: UNIQUE ON id AND name
@@ -181,6 +183,7 @@ fingerprint     | VARCHAR(255)  | -             | NOT NULL          | Tarball fi
 filename        | VARCHAR(255)  | -             | NOT NULL          | Tarball filename
 size            | INTEGER       | -             | NOT NULL          | Tarball size
 public          | INTEGER       | 0             | NOT NULL          | Whether the image is public or not
+auto\_update    | INTEGER       | 0             | NOT NULL          | Whether to update from the source of this image
 architecture    | INTEGER       | -             | NOT NULL          | Image architecture
 creation\_date  | DATETIME      | -             |                   | Image creation date (user supplied, 0 = unknown)
 expiry\_date    | DATETIME      | -             |                   | Image expiry (user supplied, 0 = never)
@@ -218,6 +221,20 @@ Index: UNIQUE ON id
 
 Foreign keys: image\_id REFERENCES images(id)
 
+## images\_source
+
+Column          | Type          | Default       | Constraint        | Description
+:-----          | :---          | :------       | :---------        | :----------
+id              | INTEGER       | SERIAL        | NOT NULL          | SERIAL
+image\_id       | INTEGER       | -             | NOT NULL          | images.id FK
+server          | TEXT          | -             | NOT NULL          | Server URL
+protocol        | INTEGER       | 0             | NOT NULL          | Protocol to access the remote (0 = lxd, 1 = direct, 2 = simplestreams)
+alias           | VARCHAR(255)  | -             | NOT NULL          | What remote alias to use as the source
+certificate     | TEXT          | -             |                   | PEM encoded certificate of the server
+
+Index: UNIQUE ON id
+
+Foreign keys: image\_id REFERENCES images(id)
 
 ## profiles
 
@@ -225,6 +242,7 @@ Column          | Type          | Default       | Constraint        | Descriptio
 :-----          | :---          | :------       | :---------        | :----------
 id              | INTEGER       | SERIAL        | NOT NULL          | SERIAL
 name            | VARCHAR(255)  | -             | NOT NULL          | Profile name
+description     | TEXT          | -             |                   | Description of the profile
 
 Index: UNIQUE on id AND name
 

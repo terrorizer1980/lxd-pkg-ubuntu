@@ -304,6 +304,7 @@ type containerArgs struct {
 	Ephemeral    bool
 	Name         string
 	Profiles     []string
+	Stateful     bool
 }
 
 // The container interface
@@ -311,8 +312,8 @@ type container interface {
 	// Container actions
 	Freeze() error
 	Shutdown(timeout time.Duration) error
-	Start() error
-	Stop() error
+	Start(stateful bool) error
+	Stop(stateful bool) error
 	Unfreeze() error
 
 	// Snapshots & migration
@@ -345,6 +346,7 @@ type container interface {
 	IsFrozen() bool
 	IsEphemeral() bool
 	IsSnapshot() bool
+	IsStateful() bool
 	IsNesting() bool
 
 	// Hooks
@@ -430,7 +432,7 @@ func containerCreateFromImage(d *Daemon, args containerArgs, hash string) (conta
 		return nil, err
 	}
 
-	if err := dbImageLastAccessUpdate(d.db, hash); err != nil {
+	if err := dbImageLastAccessUpdate(d.db, hash, time.Now().UTC()); err != nil {
 		return nil, fmt.Errorf("Error updating image last use date: %s", err)
 	}
 
@@ -473,7 +475,7 @@ func containerCreateAsCopy(d *Daemon, args containerArgs, sourceContainer contai
 	return c, nil
 }
 
-func containerCreateAsSnapshot(d *Daemon, args containerArgs, sourceContainer container, stateful bool) (container, error) {
+func containerCreateAsSnapshot(d *Daemon, args containerArgs, sourceContainer container) (container, error) {
 	// Create the snapshot
 	c, err := containerCreateInternal(d, args)
 	if err != nil {
@@ -481,7 +483,7 @@ func containerCreateAsSnapshot(d *Daemon, args containerArgs, sourceContainer co
 	}
 
 	// Deal with state
-	if stateful {
+	if args.Stateful {
 		stateDir := sourceContainer.StatePath()
 		err = os.MkdirAll(stateDir, 0700)
 		if err != nil {
@@ -510,6 +512,10 @@ func containerCreateAsSnapshot(d *Daemon, args containerArgs, sourceContainer co
 		if err2 != nil {
 			shared.Log.Warn("failed to collect criu log file", log.Ctx{"error": err2})
 		}
+
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Clone the container
@@ -519,7 +525,7 @@ func containerCreateAsSnapshot(d *Daemon, args containerArgs, sourceContainer co
 	}
 
 	// Once we're done, remove the state directory
-	if stateful {
+	if args.Stateful {
 		os.RemoveAll(sourceContainer.StatePath())
 	}
 
@@ -618,7 +624,7 @@ func containerConfigureInternal(c container) error {
 			continue
 		}
 
-		size, err := deviceParseBytes(m["size"])
+		size, err := shared.ParseByteSizeString(m["size"])
 		if err != nil {
 			return err
 		}

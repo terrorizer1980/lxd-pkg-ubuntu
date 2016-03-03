@@ -136,24 +136,6 @@ Code  | Meaning
 401   | Cancelled
 
 
-# Safety for concurrent updates
-The API uses the HTTP ETAG to prevent potential problems when a resource
-changes on the server between the time it was accessed by the client and
-the time it is sent back for update.
-
-All GET queries come with an Etag HTTP header which is a short hash of
-the content that is relevant for an update. Any information which is
-read-only, shouldn't be included in the hash.
-
-On update (PUT), the same Etag field can be set by the client in its
-request alongside a If-Match header.. If it's set, the server will
-then compute the current Etag for the resource and compare the two.
-The update will then only be done if the two match.
-If they don't, an error will be returned instead using HTTP error code
-412 (Precondition failed).
-
-For consistency in LXD's use of hashes, the Etag hash should be a SHA-256.
-
 # Recursion
 To optimize queries of large lists, recursion is implemented for collections.
 A "recursion" argument can be passed to a GET query against a collection.
@@ -164,6 +146,21 @@ they point to (typically a dict).
 
 Recursion is implemented by simply replacing any pointer to an job (URL)
 by the object itself.
+
+# Async operations
+Any operation which may take more than a second to be done must be done
+in the background, returning a background operation ID to the client.
+
+The client will then be able to either poll for a status update or wait
+for a notification using the long-poll API.
+
+# Notifications
+A websocket based API is available for notifications, different notification
+types exist to limit the traffic going to the client.
+
+It's recommended that the client always subscribes to the operations
+notification type before triggering remote operations so that it doesn't
+have to then poll for their status.
 
 # API structure
  * /
@@ -298,7 +295,7 @@ Input:
 
     {
         "type": "client",                       # Certificate type (keyring), currently only client
-        "certificate": "BASE64",                # If provided, a valid x509 certificate. If not, the client certificate of the connection will be used
+        "certificate": "PEM certificate",       # If provided, a valid x509 certificate. If not, the client certificate of the connection will be used
         "name": "foo"                           # An optional name for the certificate. If nothing is provided, the host in the TLS header for the request is used.
         "password": "server-trust-password"     # The trust password for that server (only required if untrusted)
     }
@@ -331,20 +328,6 @@ Input (none at present):
 
 HTTP code for this should be 202 (Accepted).
 
-# Async operations
-Any operation which may take more than a second to be done must be done
-in the background, returning a background operation ID to the client.
-
-The client will then be able to either poll for a status update or wait
-for a notification using the long-poll API.
-
-# Notifications
-A long-poll API is available for notifications, different notification
-types exist to limit the traffic going to the client.
-
-It's recommend that the client always subscribes to the operations
-notification type before triggering remote operations so that it doesn't
-have to then poll for their status.
 ## /1.0/containers
 ### GET
  * Description: List of containers
@@ -427,6 +410,7 @@ Input (using a public remote image):
         "source": {"type": "image",                                         # Can be: "image", "migration", "copy" or "none"
                    "mode": "pull",                                          # One of "local" (default) or "pull"
                    "server": "https://10.0.2.3:8443",                       # Remote server (pull mode only)
+                   "protocol": "lxd",                                       # Protocol (one of lxd or simplestreams, defaults to lxd)
                    "certificate": "PEM certificate",                        # Optional PEM certificate. If not mentioned, system CA is used.
                    "alias": "ubuntu/devel"},                                # Name of the alias
     }
@@ -459,8 +443,8 @@ Input (using a remote container, sent over the migration websocket):
         "source": {"type": "migration",                                                 # Can be: "image", "migration", "copy" or "none"
                    "mode": "pull",                                                      # Only "pull" is supported for now
                    "operation": "https://10.0.2.3:8443/1.0/operations/<UUID>",          # Full URL to the remote operation (pull mode only)
-                   "certificate": "PEM certificate",                        # Optional PEM certificate. If not mentioned, system CA is used.
-                   "base-image": "<some hash>"                                          # Optional, the base image the container was created from
+                   "certificate": "PEM certificate",                                    # Optional PEM certificate. If not mentioned, system CA is used.
+                   "base-image": "<fingerprint>",                                       # Optional, the base image the container was created from
                    "secrets": {"control": "my-secret-string",                           # Secrets to use when talking to the migration source
                                "criu":    "my-other-secret",
                                "fs":      "my third secret"},
@@ -524,6 +508,7 @@ Output:
         "profiles": [
             "default"
         ],
+        "stateful": false,      # If true, indicates that the container has some stored state that can be restored on startup
         "status": "Running",
         "status_code": 103
     }
@@ -770,7 +755,8 @@ Input:
     {
         "action": "stop",       # State change action (stop, start, restart, freeze or unfreeze)
         "timeout": 30,          # A timeout after which the state change is considered as failed
-        "force": true           # Force the state change (currently only valid for stop and restart where it means killing the container)
+        "force": true,          # Force the state change (currently only valid for stop and restart where it means killing the container)
+        "stateful": true        # Whether to store or restore runtime state before stopping or startiong (only valid for stop and start, defaults to false)
     }
 
 ## /1.0/containers/\<name\>/files
@@ -1061,6 +1047,7 @@ In the source image case, the following dict must be used:
             "type": "image",
             "mode": "pull",                     # Only pull is supported for now
             "server": "https://10.0.2.3:8443",  # Remote server (pull mode only)
+            "protocol": "lxd",                  # Protocol (one of lxd or simplestreams, defaults to lxd)
             "secret": "my-secret-string",       # Secret (pull mode only, private images only)
             "certificate": "PEM certificate",   # Optional PEM certificate. If not mentioned, system CA is used.
             "fingerprint": "SHA256",            # Fingerprint of the image (must be set if alias isn't)
@@ -1118,6 +1105,8 @@ Output:
             }
         ],
         "architecture": "x86_64",
+        "auto_update": true,
+        "cached": false,
         "fingerprint": "54c8caac1f61901ed86c68f24af5f5d3672bdc62c71d04f06df3a59e95684473",
         "filename": "ubuntu-trusty-14.04-amd64-server-20160201.tar.xz",
         "properties": {
@@ -1126,10 +1115,17 @@ Output:
             "os": "ubuntu",
             "release": "trusty"
         },
+        "update_source": {
+            "server": "https://10.1.2.4:8443",
+            "protocol": "lxd",
+            "certificate": "PEM certificate",
+            "alias": "ubuntu/trusty/amd64"
+        },
         "public": false,
         "size": 123792592,
         "created_at": "2016-02-01T21:07:41Z",
         "expires_at": "1970-01-01T00:00:00Z",
+        "last_used_at": "1970-01-01T00:00:00Z",
         "uploaded_at": "2016-02-16T00:44:47Z"
     }
 
@@ -1155,6 +1151,7 @@ HTTP code for this should be 202 (Accepted).
 Input:
 
     {
+        "auto_update": true,
         "properties": {
             "architecture": "x86_64",
             "description": "Ubuntu 14.04 LTS server (20160201)",
@@ -1415,6 +1412,7 @@ Input:
 
     {
         "name": "my-profilename",
+        "description": "Some description string",
         "config": {
             "limits.memory": "2GB"
         },
@@ -1437,6 +1435,7 @@ Output:
 
     {
         "name": "test",
+        "description": "Some description string",
         "config": {
             "limits.memory": "2GB"
         },
@@ -1460,6 +1459,7 @@ Input:
         "config": {
             "limits.memory": "4GB"
         },
+        "description": "Some description string",
         "devices": {
             "kvm": {
                 "path": "/dev/kvm",
