@@ -205,7 +205,8 @@ func (c *initCmd) run(config *lxd.Config, args []string) error {
 		}
 
 		if len(containers) == 1 && name == "" {
-			fmt.Printf(i18n.G("Container name is: %s"), name)
+			fields := strings.Split(containers[0], "/")
+			fmt.Printf(i18n.G("Container name is: %s")+"\n", fields[len(fields)-1])
 		}
 	}
 	return nil
@@ -236,7 +237,6 @@ func (c *initCmd) initProgressTracker(d *lxd.Client, operation string) {
 		}
 
 		if shared.StatusCode(md["status_code"].(float64)).IsFinal() {
-			fmt.Printf("\n")
 			return
 		}
 
@@ -244,6 +244,10 @@ func (c *initCmd) initProgressTracker(d *lxd.Client, operation string) {
 		_, ok := opMd["download_progress"]
 		if ok {
 			fmt.Printf(i18n.G("Retrieving image: %s")+"\r", opMd["download_progress"].(string))
+		}
+
+		if opMd["download_progress"].(string) == "100%" {
+			fmt.Printf("\n")
 		}
 	}
 	go d.Monitor([]string{"operation"}, handler)

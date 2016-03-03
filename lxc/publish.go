@@ -97,7 +97,7 @@ func (c *publishCmd) run(config *lxd.Config, args []string) error {
 				}
 			}
 
-			resp, err := s.Action(cName, shared.Stop, -1, true)
+			resp, err := s.Action(cName, shared.Stop, -1, true, false)
 			if err != nil {
 				return err
 			}
@@ -110,7 +110,7 @@ func (c *publishCmd) run(config *lxd.Config, args []string) error {
 			if op.StatusCode == shared.Failure {
 				return fmt.Errorf(i18n.G("Stopping container failed!"))
 			}
-			defer s.Action(cName, shared.Start, -1, true)
+			defer s.Action(cName, shared.Start, -1, true, false)
 
 			if wasEphemeral {
 				ct.Ephemeral = true
@@ -148,7 +148,7 @@ func (c *publishCmd) run(config *lxd.Config, args []string) error {
 	}
 	defer s.DeleteImage(fp)
 
-	err = s.CopyImage(fp, d, false, c.pAliases, c.makePublic, nil)
+	err = s.CopyImage(fp, d, false, c.pAliases, c.makePublic, false, nil)
 	if err != nil {
 		return err
 	}

@@ -27,6 +27,7 @@ type remoteCmd struct {
 	acceptCert bool
 	password   string
 	public     bool
+	protocol   string
 }
 
 func (c *remoteCmd) showByDefault() bool {
@@ -37,93 +38,102 @@ func (c *remoteCmd) usage() string {
 	return i18n.G(
 		`Manage remote LXD servers.
 
-lxc remote add <name> <url> [--accept-certificate] [--password=PASSWORD] [--public]    Add the remote <name> at <url>.
-lxc remote remove <name>                                                               Remove the remote <name>.
-lxc remote list                                                                        List all remotes.
-lxc remote rename <old> <new>                                                          Rename remote <old> to <new>.
-lxc remote set-url <name> <url>                                                        Update <name>'s url to <url>.
-lxc remote set-default <name>                                                          Set the default remote.
-lxc remote get-default                                                                 Print the default remote.`)
+lxc remote add <name> <url> [--accept-certificate] [--password=PASSWORD]
+                            [--public] [--protocol=PROTOCOL]                Add the remote <name> at <url>.
+lxc remote remove <name>                                                    Remove the remote <name>.
+lxc remote list                                                             List all remotes.
+lxc remote rename <old> <new>                                               Rename remote <old> to <new>.
+lxc remote set-url <name> <url>                                             Update <name>'s url to <url>.
+lxc remote set-default <name>                                               Set the default remote.
+lxc remote get-default                                                      Print the default remote.`)
 }
 
 func (c *remoteCmd) flags() {
 	gnuflag.BoolVar(&c.acceptCert, "accept-certificate", false, i18n.G("Accept certificate"))
 	gnuflag.StringVar(&c.password, "password", "", i18n.G("Remote admin password"))
+	gnuflag.StringVar(&c.protocol, "protocol", "", i18n.G("Server protocol (lxd or simplestreams)"))
 	gnuflag.BoolVar(&c.public, "public", false, i18n.G("Public image server"))
 }
 
-func (c *remoteCmd) addServer(config *lxd.Config, server string, addr string, acceptCert bool, password string, public bool) error {
-	var r_scheme string
-	var r_host string
-	var r_port string
+func (c *remoteCmd) addServer(config *lxd.Config, server string, addr string, acceptCert bool, password string, public bool, protocol string) error {
+	var rScheme string
+	var rHost string
+	var rPort string
 
-	/* Complex remote URL parsing */
-	remote_url, err := url.Parse(addr)
-	if err != nil {
-		return err
-	}
-
-	if remote_url.Scheme != "" {
-		if remote_url.Scheme != "unix" && remote_url.Scheme != "https" {
-			r_scheme = "https"
-		} else {
-			r_scheme = remote_url.Scheme
-		}
-	} else if addr[0] == '/' {
-		r_scheme = "unix"
-	} else {
-		if !shared.PathExists(addr) {
-			r_scheme = "https"
-		} else {
-			r_scheme = "unix"
-		}
-	}
-
-	if remote_url.Host != "" {
-		r_host = remote_url.Host
-	} else {
-		r_host = addr
-	}
-
-	host, port, err := net.SplitHostPort(r_host)
-	if err == nil {
-		r_host = host
-		r_port = port
-	} else {
-		r_port = shared.DefaultPort
-	}
-
-	if r_scheme == "unix" {
-		if addr[0:5] == "unix:" {
-			if addr[0:7] == "unix://" {
-				if len(addr) > 8 {
-					r_host = addr[8:]
-				} else {
-					r_host = ""
-				}
-			} else {
-				r_host = addr[6:]
-			}
-		}
-		r_port = ""
-	}
-
-	if strings.Contains(r_host, ":") && !strings.HasPrefix(r_host, "[") {
-		r_host = fmt.Sprintf("[%s]", r_host)
-	}
-
-	if r_port != "" {
-		addr = r_scheme + "://" + r_host + ":" + r_port
-	} else {
-		addr = r_scheme + "://" + r_host
-	}
-
+	// Setup the remotes list
 	if config.Remotes == nil {
 		config.Remotes = make(map[string]lxd.RemoteConfig)
 	}
 
+	// Fast track simplestreams
+	if protocol == "simplestreams" {
+		config.Remotes[server] = lxd.RemoteConfig{Addr: addr, Public: true, Protocol: protocol}
+		return nil
+	}
+
+	/* Complex remote URL parsing */
+	remoteURL, err := url.Parse(addr)
+	if err != nil {
+		return err
+	}
+
+	if remoteURL.Scheme != "" {
+		if remoteURL.Scheme != "unix" && remoteURL.Scheme != "https" {
+			rScheme = "https"
+		} else {
+			rScheme = remoteURL.Scheme
+		}
+	} else if addr[0] == '/' {
+		rScheme = "unix"
+	} else {
+		if !shared.PathExists(addr) {
+			rScheme = "https"
+		} else {
+			rScheme = "unix"
+		}
+	}
+
+	if remoteURL.Host != "" {
+		rHost = remoteURL.Host
+	} else {
+		rHost = addr
+	}
+
+	host, port, err := net.SplitHostPort(rHost)
+	if err == nil {
+		rHost = host
+		rPort = port
+	} else {
+		rPort = shared.DefaultPort
+	}
+
+	if rScheme == "unix" {
+		if addr[0:5] == "unix:" {
+			if addr[0:7] == "unix://" {
+				if len(addr) > 8 {
+					rHost = addr[8:]
+				} else {
+					rHost = ""
+				}
+			} else {
+				rHost = addr[6:]
+			}
+		}
+		rPort = ""
+	}
+
+	if strings.Contains(rHost, ":") && !strings.HasPrefix(rHost, "[") {
+		rHost = fmt.Sprintf("[%s]", rHost)
+	}
+
+	if rPort != "" {
+		addr = rScheme + "://" + rHost + ":" + rPort
+	} else {
+		addr = rScheme + "://" + rHost
+	}
+
 	/* Actually add the remote */
-	config.Remotes[server] = lxd.RemoteConfig{Addr: addr}
+	config.Remotes[server] = lxd.RemoteConfig{Addr: addr, Protocol: protocol}
 
 	remote := config.ParseRemote(server)
 	d, err := lxd.NewClient(config, remote)
@@ -252,7 +262,7 @@ func (c *remoteCmd) run(config *lxd.Config, args []string) error {
 			return fmt.Errorf(i18n.G("remote %s exists as <%s>"), args[1], rc.Addr)
 		}
 
-		err := c.addServer(config, args[1], args[2], c.acceptCert, c.password, c.public)
+		err := c.addServer(config, args[1], args[2], c.acceptCert, c.password, c.public, c.protocol)
 		if err != nil {
 			delete(config.Remotes, args[1])
 			c.removeCertificate(config, args[1])
@@ -264,8 +274,13 @@ func (c *remoteCmd) run(config *lxd.Config, args []string) error {
 			return errArgs
 		}
 
-		if _, ok := config.Remotes[args[1]]; !ok {
+		rc, ok := config.Remotes[args[1]]
+		if !ok {
 			return fmt.Errorf(i18n.G("remote %s doesn't exist"), args[1])
+		}
+
+		if rc.Static {
+			return fmt.Errorf(i18n.G("remote %s is static and cannot be modified"), args[1])
 		}
 
 		if config.DefaultRemote == args[1] {
@@ -284,19 +299,33 @@ func (c *remoteCmd) run(config *lxd.Config, args []string) error {
 				strPublic = i18n.G("YES")
 			}
 
+			strStatic := i18n.G("NO")
+			if rc.Static {
+				strStatic = i18n.G("YES")
+			}
+
+			if rc.Protocol == "" {
+				rc.Protocol = "lxd"
+			}
+
 			strName := name
 			if name == config.DefaultRemote {
 				strName = fmt.Sprintf("%s (%s)", name, i18n.G("default"))
 			}
-			data = append(data, []string{strName, rc.Addr, strPublic})
+			data = append(data, []string{strName, rc.Addr, rc.Protocol, strPublic, strStatic})
 		}
 
 		table := tablewriter.NewWriter(os.Stdout)
+		table.SetAutoWrapText(false)
+		table.SetAlignment(tablewriter.ALIGN_LEFT)
+		table.SetRowLine(true)
 		table.SetHeader([]string{
 			i18n.G("NAME"),
 			i18n.G("URL"),
-			i18n.G("PUBLIC")})
-		sort.Sort(ByName(data))
+			i18n.G("PROTOCOL"),
+			i18n.G("PUBLIC"),
+			i18n.G("STATIC")})
+		sort.Sort(byName(data))
 		table.AppendBulk(data)
 		table.Render()
 
@@ -310,6 +339,10 @@ func (c *remoteCmd) run(config *lxd.Config, args []string) error {
 		rc, ok := config.Remotes[args[1]]
 		if !ok {
 			return fmt.Errorf(i18n.G("remote %s doesn't exist"), args[1])
+		}
+
+		if rc.Static {
+			return fmt.Errorf(i18n.G("remote %s is static and cannot be modified"), args[1])
 		}
 
 		if _, ok := config.Remotes[args[2]]; ok {
@@ -337,10 +370,16 @@ func (c *remoteCmd) run(config *lxd.Config, args []string) error {
 		if len(args) != 3 {
 			return errArgs
 		}
-		_, ok := config.Remotes[args[1]]
+
+		rc, ok := config.Remotes[args[1]]
 		if !ok {
 			return fmt.Errorf(i18n.G("remote %s doesn't exist"), args[1])
 		}
+
+		if rc.Static {
+			return fmt.Errorf(i18n.G("remote %s is static and cannot be modified"), args[1])
+		}
+
 		config.Remotes[args[1]] = lxd.RemoteConfig{Addr: args[2]}
 
 	case "set-default":

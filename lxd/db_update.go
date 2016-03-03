@@ -15,6 +15,53 @@ import (
 	log "gopkg.in/inconshreveable/log15.v2"
 )
 
+func dbUpdateFromV26(db *sql.DB) error {
+	stmt := `
+ALTER TABLE images ADD COLUMN auto_update INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS images_source (
+    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+    image_id INTEGER NOT NULL,
+    server TEXT NOT NULL,
+    protocol INTEGER NOT NULL,
+    certificate TEXT NOT NULL,
+    alias VARCHAR(255) NOT NULL,
+    FOREIGN KEY (image_id) REFERENCES images (id) ON DELETE CASCADE
+);
+INSERT INTO schema (version, updated_at) VALUES (?, strftime("%s"));`
+	_, err := db.Exec(stmt, 27)
+	return err
+}
+
+func dbUpdateFromV25(db *sql.DB) error {
+	stmt := `
+INSERT INTO profiles (name, description) VALUES ("docker", "Profile supporting docker in containers");
+INSERT INTO profiles_config (profile_id, key, value) SELECT id, "security.nesting", "true" FROM profiles WHERE name="docker";
+INSERT INTO profiles_config (profile_id, key, value) SELECT id, "linux.kernel_modules", "overlay, nf_nat" FROM profiles WHERE name="docker";
+INSERT INTO profiles_devices (profile_id, name, type) SELECT id, "fuse", "unix-char" FROM profiles WHERE name="docker";
+INSERT INTO profiles_devices_config (profile_device_id, key, value) SELECT profiles_devices.id, "path", "/dev/fuse" FROM profiles_devices LEFT JOIN profiles WHERE profiles_devices.profile_id = profiles.id AND profiles.name = "docker";`
+	db.Exec(stmt)
+
+	stmt = `INSERT INTO schema (version, updated_at) VALUES (?, strftime("%s"));`
+	_, err := db.Exec(stmt, 26)
+	return err
+}
+
+func dbUpdateFromV24(db *sql.DB) error {
+	stmt := `
+ALTER TABLE containers ADD COLUMN stateful INTEGER NOT NULL DEFAULT 0;
+INSERT INTO schema (version, updated_at) VALUES (?, strftime("%s"));`
+	_, err := db.Exec(stmt, 25)
+	return err
+}
+
+func dbUpdateFromV23(db *sql.DB) error {
+	stmt := `
+ALTER TABLE profiles ADD COLUMN description TEXT;
+INSERT INTO schema (version, updated_at) VALUES (?, strftime("%s"));`
+	_, err := db.Exec(stmt, 24)
+	return err
+}
+
 func dbUpdateFromV22(db *sql.DB) error {
 	stmt := `
 DELETE FROM containers_devices_config WHERE key='type';
@@ -84,7 +131,7 @@ func dbUpdateFromV18(db *sql.DB) error {
 		value += "B"
 
 		// Deal with completely broken values
-		_, err = deviceParseBytes(value)
+		_, err = shared.ParseByteSizeString(value)
 		if err != nil {
 			shared.Debugf("Invalid container memory limit, id=%d value=%s, removing.", id, value)
 			_, err = db.Exec("DELETE FROM containers_config WHERE id=?;", id)
@@ -121,7 +168,7 @@ func dbUpdateFromV18(db *sql.DB) error {
 		value += "B"
 
 		// Deal with completely broken values
-		_, err = deviceParseBytes(value)
+		_, err = shared.ParseByteSizeString(value)
 		if err != nil {
 			shared.Debugf("Invalid profile memory limit, id=%d value=%s, removing.", id, value)
 			_, err = db.Exec("DELETE FROM profiles_config WHERE id=?;", id)
@@ -641,11 +688,16 @@ INSERT INTO schema (version, updated_at) VALUES (?, strftime("%s"));`
 }
 
 func dbUpdateFromV3(db *sql.DB) error {
-	err := dbProfileCreateDefault(db)
-	if err != nil {
-		return err
-	}
-	_, err = db.Exec(`INSERT INTO schema (version, updated_at) values (?, strftime("%s"));`, 4)
+	// Attempt to create a default profile (but don't fail if already there)
+	stmt := `INSERT INTO profiles (name) VALUES ("default");
+INSERT INTO profiles_devices (profile_id, name, type) SELECT id, "eth0", "nic" FROM profiles WHERE profiles.name="default";
+INSERT INTO profiles_devices_config (profile_device_id, key, value) SELECT profiles_devices.id, "nictype", "bridged" FROM profiles_devices LEFT JOIN profiles ON profiles.id=profiles_devices.profile_id WHERE profiles.name == "default";
+INSERT INTO profiles_devices_config (profile_device_id, key, value) SELECT profiles_devices.id, 'name', "eth0" FROM profiles_devices LEFT JOIN profiles ON profiles.id=profiles_devices.profile_id WHERE profiles.name == "default";
+INSERT INTO profiles_devices_config (profile_device_id, key, value) SELECT profiles_devices.id, "parent", "lxcbr0" FROM profiles_devices LEFT JOIN profiles ON profiles.id=profiles_devices.profile_id WHERE profiles.name == "default";`
+	db.Exec(stmt)
+
+	stmt = `INSERT INTO schema (version, updated_at) VALUES (?, strftime("%s"));`
+	_, err := db.Exec(stmt, 4)
 	return err
 }
 
@@ -705,7 +757,7 @@ CREATE TABLE IF NOT EXISTS profiles_devices_config (
     UNIQUE (profile_device_id, key),
     FOREIGN KEY (profile_device_id) REFERENCES profiles_devices (id)
 );
-INSERT INTO schema (version, updated_at) values (?, strftime("%s"));`
+INSERT INTO schema (version, updated_at) VALUES (?, strftime("%s"));`
 	_, err := db.Exec(stmt, 3)
 	return err
 }
@@ -722,7 +774,7 @@ CREATE TABLE IF NOT EXISTS images_aliases (
     FOREIGN KEY (image_id) REFERENCES images (id) ON DELETE CASCADE,
     UNIQUE (name)
 );
-INSERT INTO schema (version, updated_at) values (?, strftime("%s"));`
+INSERT INTO schema (version, updated_at) VALUES (?, strftime("%s"));`
 	_, err := db.Exec(stmt, 2)
 	return err
 }
@@ -736,7 +788,7 @@ CREATE TABLE IF NOT EXISTS schema (
     updated_at DATETIME NOT NULL,
     UNIQUE (version)
 );
-INSERT INTO schema (version, updated_at) values (?, strftime("%s"));`
+INSERT INTO schema (version, updated_at) VALUES (?, strftime("%s"));`
 	_, err := db.Exec(stmt, 1)
 	return err
 }
@@ -885,6 +937,30 @@ func dbUpdate(d *Daemon, prevVersion int) error {
 	}
 	if prevVersion < 23 {
 		err = dbUpdateFromV22(db)
+		if err != nil {
+			return err
+		}
+	}
+	if prevVersion < 24 {
+		err = dbUpdateFromV23(db)
+		if err != nil {
+			return err
+		}
+	}
+	if prevVersion < 25 {
+		err = dbUpdateFromV24(db)
+		if err != nil {
+			return err
+		}
+	}
+	if prevVersion < 26 {
+		err = dbUpdateFromV25(db)
+		if err != nil {
+			return err
+		}
+	}
+	if prevVersion < 27 {
+		err = dbUpdateFromV26(db)
 		if err != nil {
 			return err
 		}

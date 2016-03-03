@@ -72,6 +72,7 @@ type imageCmd struct {
 	addAliases  aliasList
 	publicImage bool
 	copyAliases bool
+	autoUpdate  bool
 }
 
 func (c *imageCmd) showByDefault() bool {
@@ -110,8 +111,11 @@ hash or alias name (if one is set).
 lxc image import <tarball> [rootfs tarball|URL] [remote:] [--public] [--created-at=ISO-8601] [--expires-at=ISO-8601] [--fingerprint=FINGERPRINT] [prop=value]
     Import an image tarball (or tarballs) into the LXD image store.
 
-lxc image copy [remote:]<image> <remote>: [--alias=ALIAS].. [--copy-aliases] [--public]
+lxc image copy [remote:]<image> <remote>: [--alias=ALIAS].. [--copy-aliases] [--public] [--auto-update]
     Copy an image from one LXD daemon to another over the network.
+
+    The auto-update flag instructs the server to keep this image up to
+    date. It requires the source to be an alias and for it to be public.
 
 lxc image delete [remote:]<image>
     Delete an image from the LXD image store.
@@ -149,6 +153,7 @@ lxc image alias list [remote:]
 func (c *imageCmd) flags() {
 	gnuflag.BoolVar(&c.publicImage, "public", false, i18n.G("Make image public"))
 	gnuflag.BoolVar(&c.copyAliases, "copy-aliases", false, i18n.G("Copy aliases from source"))
+	gnuflag.BoolVar(&c.autoUpdate, "auto-update", false, i18n.G("Keep the image up to date after initial copy"))
 	gnuflag.Var(&c.addAliases, "alias", i18n.G("New alias to define at target"))
 }
 
@@ -224,29 +229,32 @@ func (c *imageCmd) run(config *lxd.Config, args []string) error {
 		if len(args) != 3 {
 			return errArgs
 		}
+
 		remote, inName := config.ParseRemoteAndContainer(args[1])
 		if inName == "" {
-			return errArgs
+			inName = "default"
 		}
+
 		destRemote, outName := config.ParseRemoteAndContainer(args[2])
 		if outName != "" {
 			return errArgs
 		}
+
 		d, err := lxd.NewClient(config, remote)
 		if err != nil {
 			return err
 		}
+
 		dest, err := lxd.NewClient(config, destRemote)
 		if err != nil {
 			return err
 		}
-		image := c.dereferenceAlias(d, inName)
 
 		progressHandler := func(progress string) {
 			fmt.Printf(i18n.G("Copying the image: %s")+"\r", progress)
 		}
 
-		err = d.CopyImage(image, dest, c.copyAliases, c.addAliases, c.publicImage, progressHandler)
+		err = d.CopyImage(inName, dest, c.copyAliases, c.addAliases, c.publicImage, c.autoUpdate, progressHandler)
 		if err == nil {
 			fmt.Println(i18n.G("Image copied successfully!"))
 		}
@@ -257,14 +265,17 @@ func (c *imageCmd) run(config *lxd.Config, args []string) error {
 		if len(args) < 2 {
 			return errArgs
 		}
+
 		remote, inName := config.ParseRemoteAndContainer(args[1])
 		if inName == "" {
-			return errArgs
+			inName = "default"
 		}
+
 		d, err := lxd.NewClient(config, remote)
 		if err != nil {
 			return err
 		}
+
 		image := c.dereferenceAlias(d, inName)
 		err = d.DeleteImage(image)
 		return err
@@ -273,10 +284,12 @@ func (c *imageCmd) run(config *lxd.Config, args []string) error {
 		if len(args) < 2 {
 			return errArgs
 		}
+
 		remote, inName := config.ParseRemoteAndContainer(args[1])
 		if inName == "" {
-			return errArgs
+			inName = "default"
 		}
+
 		d, err := lxd.NewClient(config, remote)
 		if err != nil {
 			return err
@@ -287,13 +300,18 @@ func (c *imageCmd) run(config *lxd.Config, args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf(i18n.G("Fingerprint: %s")+"\n", info.Fingerprint)
-		public := i18n.G("no")
 
+		public := i18n.G("no")
 		if info.Public {
 			public = i18n.G("yes")
 		}
 
+		autoUpdate := i18n.G("disabled")
+		if info.AutoUpdate {
+			autoUpdate = i18n.G("enabled")
+		}
+
+		fmt.Printf(i18n.G("Fingerprint: %s")+"\n", info.Fingerprint)
 		fmt.Printf(i18n.G("Size: %.2fMB")+"\n", float64(info.Size)/1024.0/1024.0)
 		fmt.Printf(i18n.G("Architecture: %s")+"\n", info.Architecture)
 		fmt.Printf(i18n.G("Public: %s")+"\n", public)
@@ -315,6 +333,13 @@ func (c *imageCmd) run(config *lxd.Config, args []string) error {
 		fmt.Println(i18n.G("Aliases:"))
 		for _, alias := range info.Aliases {
 			fmt.Printf("    - %s\n", alias.Name)
+		}
+		fmt.Printf(i18n.G("Auto update: %s")+"\n", autoUpdate)
+		if info.Source != nil {
+			fmt.Println(i18n.G("Source:"))
+			fmt.Printf("    Server: %s\n", info.Source.Server)
+			fmt.Printf("    Protocol: %s\n", info.Source.Protocol)
+			fmt.Printf("    Alias: %s\n", info.Source.Alias)
 		}
 		return nil
 
@@ -359,12 +384,19 @@ func (c *imageCmd) run(config *lxd.Config, args []string) error {
 			return err
 		}
 
+		handler := func(percent int) {
+			fmt.Printf(i18n.G("Transfering image: %d%%")+"\r", percent)
+			if percent == 100 {
+				fmt.Printf("\n")
+			}
+		}
+
 		if strings.HasPrefix(imageFile, "https://") {
 			fingerprint, err = d.PostImageURL(imageFile, c.publicImage, c.addAliases)
 		} else if strings.HasPrefix(imageFile, "http://") {
 			return fmt.Errorf(i18n.G("Only https:// is supported for remote image import."))
 		} else {
-			fingerprint, err = d.PostImage(imageFile, rootfsFile, properties, c.publicImage, c.addAliases)
+			fingerprint, err = d.PostImage(imageFile, rootfsFile, properties, c.publicImage, c.addAliases, handler)
 		}
 
 		if err != nil {
@@ -414,7 +446,7 @@ func (c *imageCmd) run(config *lxd.Config, args []string) error {
 
 		remote, inName := config.ParseRemoteAndContainer(args[1])
 		if inName == "" {
-			return errArgs
+			inName = "default"
 		}
 
 		d, err := lxd.NewClient(config, remote)
@@ -436,7 +468,7 @@ func (c *imageCmd) run(config *lxd.Config, args []string) error {
 
 		remote, inName := config.ParseRemoteAndContainer(args[1])
 		if inName == "" {
-			return errArgs
+			inName = "default"
 		}
 
 		d, err := lxd.NewClient(config, remote)
@@ -450,7 +482,8 @@ func (c *imageCmd) run(config *lxd.Config, args []string) error {
 		if len(args) > 2 {
 			target = args[2]
 		}
-		_, outfile, err := d.ExportImage(image, target)
+
+		outfile, err := d.ExportImage(image, target)
 		if err != nil {
 			return err
 		}
@@ -464,10 +497,12 @@ func (c *imageCmd) run(config *lxd.Config, args []string) error {
 		if len(args) < 2 {
 			return errArgs
 		}
+
 		remote, inName := config.ParseRemoteAndContainer(args[1])
 		if inName == "" {
-			return errArgs
+			inName = "default"
 		}
+
 		d, err := lxd.NewClient(config, remote)
 		if err != nil {
 			return err
@@ -548,7 +583,9 @@ func (c *imageCmd) showImages(images []shared.ImageInfo, filters []string) error
 	}
 
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetColWidth(50)
+	table.SetAutoWrapText(false)
+	table.SetAlignment(tablewriter.ALIGN_LEFT)
+	table.SetRowLine(true)
 	table.SetHeader([]string{
 		i18n.G("ALIAS"),
 		i18n.G("FINGERPRINT"),
@@ -571,14 +608,15 @@ func (c *imageCmd) showAliases(aliases shared.ImageAliases) error {
 	}
 
 	table := tablewriter.NewWriter(os.Stdout)
+	table.SetAutoWrapText(false)
+	table.SetAlignment(tablewriter.ALIGN_LEFT)
+	table.SetRowLine(true)
 	table.SetHeader([]string{
 		i18n.G("ALIAS"),
 		i18n.G("FINGERPRINT"),
 		i18n.G("DESCRIPTION")})
-
-	for _, v := range data {
-		table.Append(v)
-	}
+	sort.Sort(SortImage(data))
+	table.AppendBulk(data)
 	table.Render()
 
 	return nil

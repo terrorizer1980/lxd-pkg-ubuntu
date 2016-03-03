@@ -63,13 +63,24 @@ func lxcValidConfig(rawLxc string) error {
 			return fmt.Errorf("Invalid raw.lxc line: %s", line)
 		}
 
+		key := strings.ToLower(strings.Trim(membs[0], " \t"))
+
 		// Blacklist some keys
-		if strings.ToLower(strings.Trim(membs[0], " \t")) == "lxc.logfile" {
+		if key == "lxc.logfile" {
 			return fmt.Errorf("Setting lxc.logfile is not allowed")
 		}
 
-		if strings.HasPrefix(strings.ToLower(strings.Trim(membs[0], " \t")), "lxc.network.") {
-			return fmt.Errorf("Setting lxc.network keys is not allowed")
+		if strings.HasPrefix(key, "lxc.network.") {
+			fields := strings.Split(key, ".")
+			if len(fields) == 4 && shared.StringInSlice(fields[3], []string{"ipv4", "ipv6"}) {
+				continue
+			}
+
+			if len(fields) == 5 && shared.StringInSlice(fields[3], []string{"ipv4", "ipv6"}) && fields[4] == "gateway" {
+				continue
+			}
+
+			return fmt.Errorf("Only interface-specific ipv4/ipv6 lxc.network keys are allowed")
 		}
 	}
 
@@ -86,10 +97,12 @@ func containerLXCCreate(d *Daemon, args containerArgs) (container, error) {
 		ephemeral:    args.Ephemeral,
 		architecture: args.Architecture,
 		cType:        args.Ctype,
+		stateful:     args.Stateful,
 		creationDate: args.CreationDate,
 		profiles:     args.Profiles,
 		localConfig:  args.Config,
-		localDevices: args.Devices}
+		localDevices: args.Devices,
+	}
 
 	// No need to detect storage here, its a new container.
 	c.storage = d.Storage
@@ -185,7 +198,8 @@ func containerLXCLoad(d *Daemon, args containerArgs) (container, error) {
 		creationDate: args.CreationDate,
 		profiles:     args.Profiles,
 		localConfig:  args.Config,
-		localDevices: args.Devices}
+		localDevices: args.Devices,
+		stateful:     args.Stateful}
 
 	// Detect the storage backend
 	s, err := storageForFilename(d, shared.VarPath("containers", strings.Split(c.name, "/")[0]))
@@ -212,6 +226,7 @@ type containerLXC struct {
 	ephemeral    bool
 	id           int
 	name         string
+	stateful     bool
 
 	// Config
 	expandedConfig  map[string]string
@@ -274,7 +289,21 @@ func (c *containerLXC) initLXC() error {
 		return err
 	}
 
-	err = lxcSetConfigItem(cc, "lxc.mount.auto", "cgroup:mixed proc:mixed sys:mixed")
+	// Set an appropriate /proc, /sys/ and /sys/fs/cgroup
+	mounts := []string{}
+	if c.IsPrivileged() && !runningInUserns {
+		mounts = append(mounts, "proc:mixed")
+		mounts = append(mounts, "sys:mixed")
+	} else {
+		mounts = append(mounts, "proc:rw")
+		mounts = append(mounts, "sys:rw")
+	}
+
+	if !shared.PathExists("/proc/self/ns/cgroup") {
+		mounts = append(mounts, "cgroup:mixed")
+	}
+
+	err = lxcSetConfigItem(cc, "lxc.mount.auto", strings.Join(mounts, " "))
 	if err != nil {
 		return err
 	}
@@ -470,7 +499,7 @@ func (c *containerLXC) initLXC() error {
 
 				valueInt = int64((memoryTotal / 100) * percent)
 			} else {
-				valueInt, err = deviceParseBytes(memory)
+				valueInt, err = shared.ParseByteSizeString(memory)
 				if err != nil {
 					return err
 				}
@@ -675,6 +704,12 @@ func (c *containerLXC) initLXC() error {
 					return err
 				}
 			}
+
+			err = lxcSetConfigItem(cc, "lxc.network.flags", "up")
+			if err != nil {
+				return err
+			}
+
 			if shared.StringInSlice(m["nictype"], []string{"bridged", "physical", "macvlan"}) {
 				err = lxcSetConfigItem(cc, "lxc.network.link", m["parent"])
 				if err != nil {
@@ -1039,7 +1074,7 @@ func (c *containerLXC) startCommon() (string, error) {
 	return configPath, nil
 }
 
-func (c *containerLXC) Start() error {
+func (c *containerLXC) Start(stateful bool) error {
 	// Wait for container tear down to finish
 	wgStopping, stopping := lxcStoppingContainers[c.id]
 	if stopping {
@@ -1050,6 +1085,35 @@ func (c *containerLXC) Start() error {
 	configPath, err := c.startCommon()
 	if err != nil {
 		return err
+	}
+
+	// If stateful, restore now
+	if stateful {
+		if !c.stateful {
+			return fmt.Errorf("Container has no existing state to restore.")
+		}
+
+		err := c.c.Restore(lxc.RestoreOptions{
+			Directory: c.StatePath(),
+			Verbose:   true,
+		})
+
+		err2 := os.RemoveAll(c.StatePath())
+		if err2 != nil {
+			return err2
+		}
+
+		if err != nil {
+			return err
+		}
+
+		c.stateful = false
+		err = dbContainerSetStateful(c.daemon.db, c.id, false)
+		if err != nil {
+			return err
+		}
+
+		return nil
 	}
 
 	// Start the LXC container
@@ -1201,7 +1265,39 @@ func (c *containerLXC) setupStopping() *sync.WaitGroup {
 }
 
 // Stop functions
-func (c *containerLXC) Stop() error {
+func (c *containerLXC) Stop(stateful bool) error {
+	// Handle stateful stop
+	if stateful {
+		// Cleanup any existing state
+		stateDir := c.StatePath()
+		os.RemoveAll(stateDir)
+
+		err := os.MkdirAll(stateDir, 0700)
+		if err != nil {
+			return err
+		}
+
+		// Checkpoint
+		opts := lxc.CheckpointOptions{Directory: stateDir, Stop: true, Verbose: true}
+		err = c.Checkpoint(opts)
+		err2 := CollectCRIULogFile(c, stateDir, "snapshot", "dump")
+		if err2 != nil {
+			shared.Log.Warn("failed to collect criu log file", log.Ctx{"error": err2})
+		}
+
+		if err != nil {
+			return err
+		}
+
+		c.stateful = true
+		err = dbContainerSetStateful(c.daemon.db, c.id, true)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	}
+
 	// Load the go-lxc struct
 	err := c.initLXC()
 	if err != nil {
@@ -1280,6 +1376,8 @@ func (c *containerLXC) OnStop(target string) error {
 
 	// FIXME: The go routine can go away once we can rely on LXC_TARGET
 	go func(c *containerLXC, target string, wg *sync.WaitGroup) {
+		c.fromHook = false
+
 		// Unlock on return
 		if wg != nil {
 			defer wg.Done()
@@ -1320,7 +1418,24 @@ func (c *containerLXC) OnStop(target string) error {
 
 		// Reboot the container
 		if target == "reboot" {
-			c.Start()
+
+			/* This part is a hack to workaround a LXC bug where a
+			   failure from a post-stop script doesn't prevent the container to restart. */
+			ephemeral := c.ephemeral
+			args := containerArgs{
+				Architecture: c.Architecture(),
+				Config:       c.LocalConfig(),
+				Devices:      c.LocalDevices(),
+				Ephemeral:    false,
+				Profiles:     c.Profiles(),
+			}
+			c.Update(args, false)
+			c.Stop(false)
+			args.Ephemeral = ephemeral
+			c.Update(args, true)
+
+			// Start the container again
+			c.Start(false)
 			return
 		}
 
@@ -1382,6 +1497,7 @@ func (c *containerLXC) Render() (*shared.ContainerInfo, error) {
 		Profiles:        c.profiles,
 		Status:          statusCode.String(),
 		StatusCode:      statusCode,
+		Stateful:        c.stateful,
 	}, nil
 }
 
@@ -1400,20 +1516,10 @@ func (c *containerLXC) RenderState() (*shared.ContainerState, error) {
 	}
 
 	if c.IsRunning() {
-		memory, err := c.memoryState()
-		if err != nil {
-			return nil, err
-		}
-
-		network, err := c.networkState()
-		if err != nil {
-			return nil, err
-		}
-
 		pid := c.InitPID()
 		status.Disk = c.diskState()
-		status.Memory = *memory
-		status.Network = network
+		status.Memory = c.memoryState()
+		status.Network = c.networkState()
 		status.Pid = int64(pid)
 		status.Processes = c.processesState()
 	}
@@ -1453,7 +1559,7 @@ func (c *containerLXC) Restore(sourceContainer container) error {
 	wasRunning := false
 	if c.IsRunning() {
 		wasRunning = true
-		if err := c.Stop(); err != nil {
+		if err := c.Stop(false); err != nil {
 			shared.Log.Error(
 				"Could not stop container",
 				log.Ctx{
@@ -1507,12 +1613,16 @@ func (c *containerLXC) Restore(sourceContainer container) error {
 			shared.Log.Error("failed to delete snapshot state", "path", c.StatePath(), "err", err2)
 		}
 
-		return err
+		if err != nil {
+			return err
+		}
+
+		return nil
 	}
 
 	// Restart the container
 	if wasRunning {
-		return c.Start()
+		return c.Start(false)
 	}
 
 	return nil
@@ -1883,7 +1993,7 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 		}
 
 		if m["size"] != oldRootfsSize {
-			size, err := deviceParseBytes(m["size"])
+			size, err := shared.ParseByteSizeString(m["size"])
 			if err != nil {
 				undoChanges()
 				return err
@@ -1986,7 +2096,7 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 
 					memory = fmt.Sprintf("%d", int64((memoryTotal/100)*percent))
 				} else {
-					valueInt, err := deviceParseBytes(memory)
+					valueInt, err := shared.ParseByteSizeString(memory)
 					if err != nil {
 						undoChanges()
 						return err
@@ -2687,18 +2797,18 @@ func (c *containerLXC) diskState() map[string]shared.ContainerStateDisk {
 	return disk
 }
 
-func (c *containerLXC) memoryState() (*shared.ContainerStateMemory, error) {
+func (c *containerLXC) memoryState() shared.ContainerStateMemory {
 	memory := shared.ContainerStateMemory{}
 
 	if !cgMemoryController {
-		return &memory, nil
+		return memory
 	}
 
 	// Memory in bytes
 	value, err := c.CGroupGet("memory.usage_in_bytes")
 	valueInt, err := strconv.ParseInt(value, 10, 64)
 	if err != nil {
-		return nil, err
+		valueInt = -1
 	}
 	memory.Usage = valueInt
 
@@ -2706,7 +2816,7 @@ func (c *containerLXC) memoryState() (*shared.ContainerStateMemory, error) {
 	value, err = c.CGroupGet("memory.max_usage_in_bytes")
 	valueInt, err = strconv.ParseInt(value, 10, 64)
 	if err != nil {
-		return nil, err
+		valueInt = -1
 	}
 
 	memory.UsagePeak = valueInt
@@ -2716,7 +2826,7 @@ func (c *containerLXC) memoryState() (*shared.ContainerStateMemory, error) {
 		value, err := c.CGroupGet("memory.memsw.usage_in_bytes")
 		valueInt, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
-			return nil, err
+			valueInt = -1
 		}
 
 		memory.SwapUsage = valueInt - memory.Usage
@@ -2725,19 +2835,21 @@ func (c *containerLXC) memoryState() (*shared.ContainerStateMemory, error) {
 		value, err = c.CGroupGet("memory.memsw.max_usage_in_bytes")
 		valueInt, err = strconv.ParseInt(value, 10, 64)
 		if err != nil {
-			return nil, err
+			valueInt = -1
 		}
 
 		memory.SwapUsagePeak = valueInt - memory.UsagePeak
 	}
 
-	return &memory, nil
+	return memory
 }
 
-func (c *containerLXC) networkState() (map[string]shared.ContainerStateNetwork, error) {
+func (c *containerLXC) networkState() map[string]shared.ContainerStateNetwork {
+	result := map[string]shared.ContainerStateNetwork{}
+
 	pid := c.InitPID()
 	if pid < 1 {
-		return nil, fmt.Errorf("Container isn't running")
+		return result
 	}
 
 	// Get the network state from the container
@@ -2748,24 +2860,25 @@ func (c *containerLXC) networkState() (map[string]shared.ContainerStateNetwork, 
 
 	// Process forkgetnet response
 	if err != nil {
-		return nil, fmt.Errorf("Error calling 'lxd forkgetnet %d': %s", pid, string(out))
+		shared.Log.Error("Error calling 'lxd forkgetnet", log.Ctx{"container": c.name, "output": string(out), "pid": pid})
+		return result
 	}
 
 	networks := map[string]shared.ContainerStateNetwork{}
 
 	err = json.Unmarshal(out, &networks)
 	if err != nil {
-		return nil, err
+		shared.Log.Error("Failure to read forkgetnet json", log.Ctx{"container": c.name, "err": err})
+		return result
 	}
 
 	// Add HostName field
-	result := map[string]shared.ContainerStateNetwork{}
 	for netName, net := range networks {
 		net.HostName = c.getHostInterface(netName)
 		result[netName] = net
 	}
 
-	return result, nil
+	return result
 }
 
 func (c *containerLXC) processesState() int64 {
@@ -3690,7 +3803,7 @@ func (c *containerLXC) getDiskLimits() (map[string]deviceBlockLimit, error) {
 
 		// Set the source path
 		source := m["source"]
-		if m["path"] == "" {
+		if source == "" {
 			source = c.RootfsPath()
 		}
 
@@ -3904,7 +4017,7 @@ func (c *containerLXC) setNetworkLimits(name string, m shared.Device) error {
 	// Parse the values
 	var ingressInt int64
 	if m["limits.ingress"] != "" {
-		ingressInt, err = deviceParseBits(m["limits.ingress"])
+		ingressInt, err = shared.ParseBitSizeString(m["limits.ingress"])
 		if err != nil {
 			return err
 		}
@@ -3912,7 +4025,7 @@ func (c *containerLXC) setNetworkLimits(name string, m shared.Device) error {
 
 	var egressInt int64
 	if m["limits.egress"] != "" {
-		egressInt, err = deviceParseBits(m["limits.egress"])
+		egressInt, err = shared.ParseBitSizeString(m["limits.egress"])
 		if err != nil {
 			return err
 		}
@@ -3956,6 +4069,10 @@ func (c *containerLXC) setNetworkLimits(name string, m shared.Device) error {
 }
 
 // Various state query functions
+func (c *containerLXC) IsStateful() bool {
+	return c.stateful
+}
+
 func (c *containerLXC) IsEphemeral() bool {
 	return c.ephemeral
 }

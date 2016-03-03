@@ -38,7 +38,7 @@ via the LXD PPA:
     sudo apt-get install software-properties-common
     sudo add-apt-repository ppa:ubuntu-lxc/lxd-git-master
     sudo apt-get update
-    sudo apt-get install golang lxc lxc-dev mercurial git pkg-config protobuf-compiler golang-goprotobuf-dev xz-utils tar acl
+    sudo apt-get install golang lxc lxc-dev mercurial git pkg-config protobuf-compiler golang-goprotobuf-dev xz-utils tar acl make
 
 There are a few storage backends for LXD besides the default "directory"
 backend. Installing these tools adds a bit to initramfs and may slow down your
@@ -85,18 +85,13 @@ group to talk to LXD; you can create your own group if you want):
 
 LXD has two parts, the daemon (the `lxd` binary), and the client (the `lxc`
 binary). Now that the daemon is all configured and running (either via the
-packaging or via the from-source instructions above), you can import an image:
+packaging or via the from-source instructions above), you can create a container:
 
-    $GOPATH/src/github.com/lxc/lxd/scripts/lxd-images import ubuntu --alias ubuntu
-
-With that image imported into LXD, you can now start containers:
-
-    $GOPATH/bin/lxc launch ubuntu
+    $GOPATH/bin/lxc launch ubuntu:14.04
 
 Alternatively, you can also use a remote LXD host as a source of images.
-Those will be automatically cached for you for up at container startup time:
+One comes pre-configured in LXD, called "images" (images.linuxcontainers.org)
 
-    $GOPATH/bin/lxc remote add images images.linuxcontainers.org
     $GOPATH/bin/lxc launch images:centos/7/amd64 centos
 
 ## Bug reports
@@ -118,6 +113,13 @@ this by:
     lxc config set core.trust_password foo
     lxc remote add local 127.0.0.1:8443
     wget --no-check-certificate https://127.0.0.1:8443/1.0 --certificate=$HOME/.config/lxc/client.crt --private-key=$HOME/.config/lxc/client.key -O - -q
+
+## Upgrading
+
+The `lxd` and `lxc` (`lxd-client`) binaries should be upgraded at the same time with:
+
+    apt-get update
+    apt-get install lxd lxd-client
 
 ## Support and discussions
 
@@ -266,3 +268,12 @@ Yes. The easiest way to do that is using a privileged container:
 
     lxc launch ubuntu priv -c security.privileged=true
     lxc config device add priv homedir disk source=/home/$USER path=/home/ubuntu
+
+#### How can I run docker inside a LXD container?
+
+Create a container with the migrateable profile:
+
+	lxc launch ubuntu:xenial my-docker-host -p default -p docker
+
+Then run a version of docker with the needed patches, for instance version
+v1.10.0.serge.2 branch of github.com/hallyn/docker.

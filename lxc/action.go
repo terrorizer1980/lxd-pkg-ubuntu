@@ -16,6 +16,8 @@ type actionCmd struct {
 	name       string
 	timeout    int
 	force      bool
+	stateful   bool
+	stateless  bool
 }
 
 func (c *actionCmd) showByDefault() bool {
@@ -33,12 +35,21 @@ func (c *actionCmd) flags() {
 	if c.hasTimeout {
 		gnuflag.IntVar(&c.timeout, "timeout", -1, i18n.G("Time to wait for the container before killing it."))
 		gnuflag.BoolVar(&c.force, "force", false, i18n.G("Force the container to shutdown."))
+		gnuflag.BoolVar(&c.stateful, "stateful", false, i18n.G("Store the container state (only for stop)."))
+		gnuflag.BoolVar(&c.stateless, "stateless", false, i18n.G("Ignore the container state (only forstart)."))
 	}
 }
 
 func (c *actionCmd) run(config *lxd.Config, args []string) error {
 	if len(args) == 0 {
 		return errArgs
+	}
+
+	state := false
+
+	// Only store state if asked to
+	if c.action == "stop" && c.stateful {
+		state = true
 	}
 
 	for _, nameArg := range args {
@@ -48,7 +59,28 @@ func (c *actionCmd) run(config *lxd.Config, args []string) error {
 			return err
 		}
 
-		resp, err := d.Action(name, c.action, c.timeout, c.force)
+		if name == "" {
+			return fmt.Errorf(i18n.G("Must supply container name for: ")+"\"%s\"", nameArg)
+		}
+
+		if c.action == shared.Start || c.action == shared.Stop {
+			current, err := d.ContainerInfo(name)
+			if err != nil {
+				return err
+			}
+
+			// "start" for a frozen container means "unfreeze"
+			if current.StatusCode == shared.Frozen {
+				c.action = shared.Unfreeze
+			}
+
+			// Always restore state (if present) unless asked not to
+			if c.action == shared.Start && current.Stateful && !c.stateless {
+				state = true
+			}
+		}
+
+		resp, err := d.Action(name, c.action, c.timeout, c.force, state)
 		if err != nil {
 			return err
 		}
