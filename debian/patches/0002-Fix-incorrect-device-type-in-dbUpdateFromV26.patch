@@ -1,0 +1,59 @@
+From 4a3149b1a9ee6c51ef5d74a31915997e2629f237 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Thu, 3 Mar 2016 00:52:16 -0500
+Subject: Fix incorrect device type in dbUpdateFromV26
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ lxd/db.go        |  2 +-
+ lxd/db_update.go | 14 ++++++++++++++
+ 2 files changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/lxd/db.go b/lxd/db.go
+index 75dfae5..be8be5a 100644
+--- a/lxd/db.go
++++ b/lxd/db.go
+@@ -34,7 +34,7 @@ type Profile struct {
+ // Profiles will contain a list of all Profiles.
+ type Profiles []Profile
+ 
+-const DB_CURRENT_VERSION int = 27
++const DB_CURRENT_VERSION int = 28
+ 
+ // CURRENT_SCHEMA contains the current SQLite SQL Schema.
+ const CURRENT_SCHEMA string = `
+diff --git a/lxd/db_update.go b/lxd/db_update.go
+index 9f88ba8..798431d 100644
+--- a/lxd/db_update.go
++++ b/lxd/db_update.go
+@@ -15,6 +15,14 @@ import (
+ 	log "gopkg.in/inconshreveable/log15.v2"
+ )
+ 
++func dbUpdateFromV27(db *sql.DB) error {
++	stmt := `
++UPDATE profiles_devices SET type=3 WHERE type='unix-char';
++INSERT INTO schema (version, updated_at) VALUES (?, strftime("%s"));`
++	_, err := db.Exec(stmt, 28)
++	return err
++}
++
+ func dbUpdateFromV26(db *sql.DB) error {
+ 	stmt := `
+ ALTER TABLE images ADD COLUMN auto_update INTEGER NOT NULL DEFAULT 0;
+@@ -965,6 +973,12 @@ func dbUpdate(d *Daemon, prevVersion int) error {
+ 			return err
+ 		}
+ 	}
++	if prevVersion < 28 {
++		err = dbUpdateFromV27(db)
++		if err != nil {
++			return err
++		}
++	}
+ 
+ 	return nil
+ }

@@ -958,7 +958,7 @@ msgstr  ""
 
 #: lxc/image.go:388
 #, c-format
-msgid   "Transfering image: %d%%"
+msgid   "Transferring image: %d%%"
 msgstr  ""
 
 #: lxc/action.go:93 lxc/launch.go:130

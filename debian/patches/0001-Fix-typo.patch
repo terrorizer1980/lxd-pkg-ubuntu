@@ -1,0 +1,40 @@
+From e48eca1fcfa62abfdcbdd5dc704b8882b84f4e99 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Wed, 2 Mar 2016 19:53:56 -0500
+Subject: Fix typo
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ lxc/image.go | 2 +-
+ po/lxd.pot   | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/lxc/image.go b/lxc/image.go
+index c411e37..8ba1941 100644
+--- a/lxc/image.go
++++ b/lxc/image.go
+@@ -385,7 +385,7 @@ func (c *imageCmd) run(config *lxd.Config, args []string) error {
+ 		}
+ 
+ 		handler := func(percent int) {
+-			fmt.Printf(i18n.G("Transfering image: %d%%")+"\r", percent)
++			fmt.Printf(i18n.G("Transferring image: %d%%")+"\r", percent)
+ 			if percent == 100 {
+ 				fmt.Printf("\n")
+ 			}
+diff --git a/po/lxd.pot b/po/lxd.pot
+index a9d570c..a6fd349 100644
+--- a/po/lxd.pot
++++ b/po/lxd.pot
+@@ -958,7 +958,7 @@ msgstr  ""
+ 
+ #: lxc/image.go:388
+ #, c-format
+-msgid   "Transfering image: %d%%"
++msgid   "Transferring image: %d%%"
+ msgstr  ""
+ 
+ #: lxc/action.go:93 lxc/launch.go:130
