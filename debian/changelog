@@ -1,3 +1,11 @@
+lxd (2.0.0~rc1-0ubuntu2) xenial; urgency=medium
+
+  * Cherry-pick upstream bugfixes:
+    - Typo fix in the client (s/transfering/transsferring)
+    - Fix for V26 DB update
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Thu, 03 Mar 2016 11:58:31 -0500
+
 lxd (2.0.0~rc1-0ubuntu1) xenial; urgency=medium
 
   * New upstream release (2.0.0~rc1):
