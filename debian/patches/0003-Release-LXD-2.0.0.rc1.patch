@@ -1,0 +1,26 @@
+From 936c94aaec891e8b89e005bb8c861a91e141bfa5 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Wed, 2 Mar 2016 19:52:03 -0500
+Subject: Release LXD 2.0.0.rc1
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ shared/flex.go | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/shared/flex.go b/shared/flex.go
+index ff3a2b0..9c50bfe 100644
+--- a/shared/flex.go
++++ b/shared/flex.go
+@@ -3,7 +3,7 @@
+  */
+ package shared
+ 
+-var Version = "2.0.0.beta4"
++var Version = "2.0.0.rc1"
+ var UserAgent = "LXD " + Version
+ 
+ /*
