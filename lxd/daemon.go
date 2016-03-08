@@ -803,6 +803,14 @@ func (d *Daemon) Init() error {
 		return err
 	}
 
+	/* Setup the storage driver */
+	if !d.IsMock {
+		err = d.SetupStorageDriver()
+		if err != nil {
+			return fmt.Errorf("Failed to setup storage: %s", err)
+		}
+	}
+
 	/* Prune images */
 	d.pruneChan = make(chan bool)
 	go func() {
@@ -868,21 +876,8 @@ func (d *Daemon) Init() error {
 	}
 
 	if !d.IsMock {
-		err = d.SetupStorageDriver()
-		if err != nil {
-			return fmt.Errorf("Failed to setup storage: %s", err)
-		}
-
-		/* Restart containers */
-		go func() {
-			containersRestart(d)
-		}()
-
 		/* Start the scheduler */
 		go deviceEventListener(d)
-
-		/* Re-balance in case things changed while LXD was down */
-		deviceTaskBalance(d)
 
 		/* Setup the TLS authentication */
 		certf, keyf, err := readMyCert()
@@ -1047,6 +1042,15 @@ func (d *Daemon) Init() error {
 		return nil
 	})
 
+	// Restore containers
+	if !d.IsMock {
+		/* Restart containers */
+		go containersRestart(d)
+
+		/* Re-balance in case things changed while LXD was down */
+		deviceTaskBalance(d)
+	}
+
 	return nil
 }
 
@@ -1133,6 +1137,10 @@ func (d *Daemon) ConfigKeyIsValid(key string) bool {
 	case "core.https_address":
 		return true
 	case "core.https_allowed_origin":
+		return true
+	case "core.https_allowed_methods":
+		return true
+	case "core.https_allowed_headers":
 		return true
 	case "core.trust_password":
 		return true
@@ -1281,6 +1289,16 @@ func (s *lxdHttpServer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	origin := req.Header.Get("Origin")
 	if allowedOrigin != "" && origin != "" {
 		rw.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+	}
+
+	allowedMethods, _ := s.d.ConfigValueGet("core.https_allowed_methods")
+	if allowedMethods != "" && origin != "" {
+		rw.Header().Set("Access-Control-Allow-Methods", allowedMethods)
+	}
+
+	allowedHeaders, _ := s.d.ConfigValueGet("core.https_allowed_headers")
+	if allowedHeaders != "" && origin != "" {
+		rw.Header().Set("Access-Control-Allow-Headers", allowedHeaders)
 	}
 
 	// OPTIONS request don't need any further processing
