@@ -1,3 +1,9 @@
+lxd (2.0.0~rc2-0ubuntu3) xenial; urgency=medium
+
+  * Remove the lxd cron job. (LP: #1555013)
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 09 Mar 2016 14:48:36 -0500
+
 lxd (2.0.0~rc2-0ubuntu2) xenial; urgency=medium
 
   * Cherry-pick upstream bugfix:
