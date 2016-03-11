@@ -431,17 +431,12 @@ func deviceTaskSchedulerTrigger(srcType string, srcName string, srcStatus string
 	}()
 }
 
-func deviceIsDevice(path string) bool {
+func deviceIsBlockdev(path string) bool {
 	// Get a stat struct from the provided path
 	stat := syscall.Stat_t{}
 	err := syscall.Stat(path, &stat)
 	if err != nil {
 		return false
-	}
-
-	// Check if it's a character device
-	if stat.Mode&syscall.S_IFMT == syscall.S_IFCHR {
-		return true
 	}
 
 	// Check if it's a block device
@@ -532,7 +527,7 @@ func deviceMountDisk(srcPath string, dstPath string, readonly bool) error {
 
 	// Detect the filesystem
 	fstype := "none"
-	if deviceIsDevice(srcPath) {
+	if deviceIsBlockdev(srcPath) {
 		fstype, err = shared.BlockFsDetect(srcPath)
 		if err != nil {
 			return err
@@ -709,6 +704,7 @@ func deviceGetParentBlocks(path string) ([]string, error) {
 			return nil, fmt.Errorf("Failed to query zfs filesystem information for %s: %s", device[1], output)
 		}
 
+		header := true
 		for _, line := range strings.Split(string(output), "\n") {
 			fields := strings.Fields(line)
 			if len(fields) < 5 {
@@ -716,6 +712,11 @@ func deviceGetParentBlocks(path string) ([]string, error) {
 			}
 
 			if fields[1] != "ONLINE" {
+				continue
+			}
+
+			if header {
+				header = false
 				continue
 			}
 

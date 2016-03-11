@@ -339,7 +339,7 @@ type container interface {
 	FilePush(srcpath string, dstpath string, uid int, gid int, mode os.FileMode) error
 
 	// Status
-	Render() (*shared.ContainerInfo, error)
+	Render() (interface{}, error)
 	RenderState() (*shared.ContainerState, error)
 	IsPrivileged() bool
 	IsRunning() bool
@@ -594,6 +594,9 @@ func containerCreateInternal(d *Daemon, args containerArgs) (container, error) {
 
 	path := containerPath(args.Name, args.Ctype == cTypeSnapshot)
 	if shared.PathExists(path) {
+		if shared.IsSnapshot(args.Name) {
+			return nil, fmt.Errorf("Snapshot '%s' already exists", args.Name)
+		}
 		return nil, fmt.Errorf("The container already exists")
 	}
 

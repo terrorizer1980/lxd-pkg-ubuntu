@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -92,8 +93,12 @@ func (s *SimpleStreamsManifest) ToLXD() ([]ImageInfo, map[string][][]string) {
 		}
 
 		for name, version := range product.Versions {
-			// Short of anything better, use the name as date
-			creationDate, err := time.Parse(nameLayout, name)
+			// Short of anything better, use the name as date (see format above)
+			if len(name) < 8 {
+				continue
+			}
+
+			creationDate, err := time.Parse(nameLayout, name[0:8])
 			if err != nil {
 				continue
 			}
@@ -215,7 +220,7 @@ type SimpleStreamsIndexStream struct {
 	Products []string `json:"products"`
 }
 
-func SimpleStreamsClient(url string) (*SimpleStreams, error) {
+func SimpleStreamsClient(url string, proxy func(*http.Request) (*url.URL, error)) (*SimpleStreams, error) {
 	// Setup a http client
 	tlsConfig, err := GetTLSConfig("", "", nil)
 	if err != nil {
@@ -225,7 +230,7 @@ func SimpleStreamsClient(url string) (*SimpleStreams, error) {
 	tr := &http.Transport{
 		TLSClientConfig: tlsConfig,
 		Dial:            RFC3493Dialer,
-		Proxy:           http.ProxyFromEnvironment,
+		Proxy:           proxy,
 	}
 
 	myHttp := http.Client{
