@@ -324,7 +324,7 @@ func (c *containerLXC) initLXC() error {
 	}
 
 	for _, mnt := range []string{"/proc/sys/fs/binfmt_misc", "/sys/firmware/efi/efivars", "/sys/fs/fuse/connections", "/sys/fs/pstore", "/sys/kernel/debug", "/sys/kernel/security"} {
-		err = lxcSetConfigItem(cc, "lxc.mount.entry", fmt.Sprintf("%s %s none bind,optional", mnt, strings.TrimPrefix(mnt, "/")))
+		err = lxcSetConfigItem(cc, "lxc.mount.entry", fmt.Sprintf("%s %s none rbind,optional", mnt, strings.TrimPrefix(mnt, "/")))
 		if err != nil {
 			return err
 		}
@@ -758,7 +758,7 @@ func (c *containerLXC) initLXC() error {
 			// Various option checks
 			isOptional := m["optional"] == "1" || m["optional"] == "true"
 			isReadOnly := m["readonly"] == "1" || m["readonly"] == "true"
-			isFile := !shared.IsDir(srcPath) && !deviceIsDevice(srcPath)
+			isFile := !shared.IsDir(srcPath) && !deviceIsBlockdev(srcPath)
 
 			// Deal with a rootfs
 			if tgtPath == "" {
@@ -1076,7 +1076,9 @@ func (c *containerLXC) startCommon() (string, error) {
 
 func (c *containerLXC) Start(stateful bool) error {
 	// Wait for container tear down to finish
+	lxcStoppingContainersLock.Lock()
 	wgStopping, stopping := lxcStoppingContainers[c.id]
+	lxcStoppingContainersLock.Unlock()
 	if stopping {
 		wgStopping.Wait()
 	}
@@ -1354,7 +1356,9 @@ func (c *containerLXC) Shutdown(timeout time.Duration) error {
 
 func (c *containerLXC) OnStop(target string) error {
 	// Get locking
+	lxcStoppingContainersLock.Lock()
 	wg, stopping := lxcStoppingContainers[c.id]
+	lxcStoppingContainersLock.Unlock()
 	if wg != nil {
 		wg.Add(1)
 	}
@@ -1472,33 +1476,48 @@ func (c *containerLXC) Unfreeze() error {
 	return c.c.Unfreeze()
 }
 
-func (c *containerLXC) Render() (*shared.ContainerInfo, error) {
+func (c *containerLXC) Render() (interface{}, error) {
 	// Load the go-lxc struct
 	err := c.initLXC()
 	if err != nil {
 		return nil, err
 	}
 
-	// FIXME: Render shouldn't directly access the go-lxc struct
-	statusCode := shared.FromLXCState(int(c.c.State()))
-
 	// Ignore err as the arch string on error is correct (unknown)
 	architectureName, _ := shared.ArchitectureName(c.architecture)
 
-	return &shared.ContainerInfo{
-		Architecture:    architectureName,
-		Config:          c.localConfig,
-		CreationDate:    c.creationDate,
-		Devices:         c.localDevices,
-		Ephemeral:       c.ephemeral,
-		ExpandedConfig:  c.expandedConfig,
-		ExpandedDevices: c.expandedDevices,
-		Name:            c.name,
-		Profiles:        c.profiles,
-		Status:          statusCode.String(),
-		StatusCode:      statusCode,
-		Stateful:        c.stateful,
-	}, nil
+	if c.IsSnapshot() {
+		return &shared.SnapshotInfo{
+			Architecture:    architectureName,
+			Config:          c.localConfig,
+			CreationDate:    c.creationDate,
+			Devices:         c.localDevices,
+			Ephemeral:       c.ephemeral,
+			ExpandedConfig:  c.expandedConfig,
+			ExpandedDevices: c.expandedDevices,
+			Name:            c.name,
+			Profiles:        c.profiles,
+			Stateful:        c.stateful,
+		}, nil
+	} else {
+		// FIXME: Render shouldn't directly access the go-lxc struct
+		statusCode := shared.FromLXCState(int(c.c.State()))
+
+		return &shared.ContainerInfo{
+			Architecture:    architectureName,
+			Config:          c.localConfig,
+			CreationDate:    c.creationDate,
+			Devices:         c.localDevices,
+			Ephemeral:       c.ephemeral,
+			ExpandedConfig:  c.expandedConfig,
+			ExpandedDevices: c.expandedDevices,
+			Name:            c.name,
+			Profiles:        c.profiles,
+			Status:          statusCode.String(),
+			StatusCode:      statusCode,
+			Stateful:        c.stateful,
+		}, nil
+	}
 }
 
 func (c *containerLXC) RenderState() (*shared.ContainerState, error) {
@@ -2695,6 +2714,10 @@ func (c *containerLXC) FilePull(srcpath string, dstpath string) error {
 
 	// Process forkgetfile response
 	if string(out) != "" {
+		if strings.HasPrefix(string(out), "error:") {
+			return fmt.Errorf(strings.TrimPrefix(strings.TrimSuffix(string(out), "\n"), "error: "))
+		}
+
 		for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
 			shared.Debugf("forkgetfile: %s", line)
 		}
@@ -2754,6 +2777,10 @@ func (c *containerLXC) FilePush(srcpath string, dstpath string, uid int, gid int
 
 	// Process forkputfile response
 	if string(out) != "" {
+		if strings.HasPrefix(string(out), "error:") {
+			return fmt.Errorf(strings.TrimPrefix(strings.TrimSuffix(string(out), "\n"), "error: "))
+		}
+
 		for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
 			shared.Debugf("forkgetfile: %s", line)
 		}
@@ -3611,7 +3638,7 @@ func (c *containerLXC) createDiskDevice(name string, m shared.Device) (string, e
 	// Check if read-only
 	isOptional := m["optional"] == "1" || m["optional"] == "true"
 	isReadOnly := m["readonly"] == "1" || m["readonly"] == "true"
-	isFile := !shared.IsDir(srcPath) && !deviceIsDevice(srcPath)
+	isFile := !shared.IsDir(srcPath) && !deviceIsBlockdev(srcPath)
 
 	// Check if the source exists
 	if !shared.PathExists(srcPath) {

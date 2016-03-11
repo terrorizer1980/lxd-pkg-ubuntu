@@ -901,7 +901,7 @@ func (s *storageLvm) createDefaultThinPool() (string, error) {
 		fmt.Sprintf("%s/%s", s.vgName, storageLvmDefaultThinPoolName))
 
 	if err != nil {
-		s.log.Debug(
+		s.log.Error(
 			"Could not create thin pool",
 			log.Ctx{
 				"name":   storageLvmDefaultThinPoolName,
@@ -920,7 +920,7 @@ func (s *storageLvm) createDefaultThinPool() (string, error) {
 		fmt.Sprintf("%s/%s", s.vgName, storageLvmDefaultThinPoolName))
 
 	if err != nil {
-		s.log.Debug(
+		s.log.Error(
 			"Could not grow thin pool",
 			log.Ctx{
 				"name":   storageLvmDefaultThinPoolName,
@@ -952,15 +952,20 @@ func (s *storageLvm) createThinLV(lvname string) (string, error) {
 		}
 	}
 
+	lvSize := os.Getenv("LXD_LVM_LVSIZE")
+	if lvSize == "" {
+		lvSize = storageLvmDefaultThinLVSize
+	}
+
 	output, err := s.tryExec(
 		"lvcreate",
 		"--thin",
 		"-n", lvname,
-		"--virtualsize", storageLvmDefaultThinLVSize,
+		"--virtualsize", lvSize,
 		fmt.Sprintf("%s/%s", s.vgName, poolname))
 
 	if err != nil {
-		s.log.Debug("Could not create LV", log.Ctx{"lvname": lvname, "output": string(output)})
+		s.log.Error("Could not create LV", log.Ctx{"lvname": lvname, "output": string(output)})
 		return "", fmt.Errorf("Could not create thin LV named %s", lvname)
 	}
 
@@ -997,7 +1002,7 @@ func (s *storageLvm) removeLV(lvname string) error {
 		"lvremove", "-f", fmt.Sprintf("%s/%s", s.vgName, lvname))
 
 	if err != nil {
-		s.log.Debug("Could not remove LV", log.Ctx{"lvname": lvname, "output": string(output)})
+		s.log.Error("Could not remove LV", log.Ctx{"lvname": lvname, "output": string(output)})
 		return fmt.Errorf("Could not remove LV named %s", lvname)
 	}
 
@@ -1024,7 +1029,7 @@ func (s *storageLvm) createSnapshotLV(lvname string, origlvname string, readonly
 			"-s", fmt.Sprintf("/dev/%s/%s", s.vgName, origlvname))
 	}
 	if err != nil {
-		s.log.Debug("Could not create LV snapshot", log.Ctx{"lvname": lvname, "origlvname": origlvname, "output": string(output)})
+		s.log.Error("Could not create LV snapshot", log.Ctx{"lvname": lvname, "origlvname": origlvname, "output": string(output)})
 		return "", fmt.Errorf("Could not create snapshot LV named %s", lvname)
 	}
 
@@ -1056,10 +1061,10 @@ func (s *storageLvm) MigrationType() MigrationFSType {
 	return MigrationFSType_RSYNC
 }
 
-func (s *storageLvm) MigrationSource(container container) ([]MigrationStorageSource, error) {
+func (s *storageLvm) MigrationSource(container container) (MigrationStorageSourceDriver, error) {
 	return rsyncMigrationSource(container)
 }
 
-func (s *storageLvm) MigrationSink(container container, snapshots []container, conn *websocket.Conn) error {
-	return rsyncMigrationSink(container, snapshots, conn)
+func (s *storageLvm) MigrationSink(live bool, container container, snapshots []container, conn *websocket.Conn) error {
+	return rsyncMigrationSink(live, container, snapshots, conn)
 }

@@ -299,25 +299,15 @@ func (s *migrationSourceWs) Do(op *operation) error {
 		}
 	}
 
-	sources, fsErr := s.container.Storage().MigrationSource(s.container)
+	driver, fsErr := s.container.Storage().MigrationSource(s.container)
 	/* the protocol says we have to send a header no matter what, so let's
 	 * do that, but then immediately send an error.
 	 */
 	snapshots := []string{}
 	if fsErr == nil {
-		/* A bit of a special case here: doing lxc launch
-		 * host2:c1/snap1 host1:container we're sending a snapshot, but
-		 * it ends up as the container on the other end. So, we want to
-		 * send it as the main container (i.e. ignore its IsSnapshot()).
-		 */
-		if len(sources) > 1 {
-			for _, snap := range sources {
-				if !snap.IsSnapshot() {
-					continue
-				}
-				name := shared.ExtractSnapshotName(snap.Name())
-				snapshots = append(snapshots, name)
-			}
+		fullSnaps := driver.Snapshots()
+		for _, snap := range fullSnaps {
+			snapshots = append(snapshots, shared.ExtractSnapshotName(snap.Name()))
 		}
 	}
 
@@ -348,15 +338,23 @@ func (s *migrationSourceWs) Do(op *operation) error {
 		myType = MigrationFSType_RSYNC
 		header.Fs = &myType
 
-		sources, _ = rsyncMigrationSource(s.container)
+		driver, _ = rsyncMigrationSource(s.container)
+	}
+
+	if err := driver.SendWhileRunning(s.fsConn); err != nil {
+		driver.Cleanup()
+		s.sendControl(err)
+		return err
 	}
 
 	if s.live {
 		if header.Criu == nil {
+			driver.Cleanup()
 			err := fmt.Errorf("Got no CRIU socket type for live migration")
 			s.sendControl(err)
 			return err
 		} else if *header.Criu != CRIUType_CRIU_RSYNC {
+			driver.Cleanup()
 			err := fmt.Errorf("Formats other than criu rsync not understood")
 			s.sendControl(err)
 			return err
@@ -364,6 +362,7 @@ func (s *migrationSourceWs) Do(op *operation) error {
 
 		checkpointDir, err := ioutil.TempDir("", "lxd_checkpoint_")
 		if err != nil {
+			driver.Cleanup()
 			s.sendControl(err)
 			return err
 		}
@@ -377,6 +376,7 @@ func (s *migrationSourceWs) Do(op *operation) error {
 		}
 
 		if err != nil {
+			driver.Cleanup()
 			log, err2 := GetCRIULogErrors(checkpointDir, "dump")
 
 			/* couldn't find the CRIU log file which means we
@@ -399,18 +399,19 @@ func (s *migrationSourceWs) Do(op *operation) error {
 		 * p.haul's protocol, it will make sense to do these in parallel.
 		 */
 		if err := RsyncSend(shared.AddSlash(checkpointDir), s.criuConn); err != nil {
+			driver.Cleanup()
+			s.sendControl(err)
+			return err
+		}
+
+		if err := driver.SendAfterCheckpoint(s.fsConn); err != nil {
+			driver.Cleanup()
 			s.sendControl(err)
 			return err
 		}
 	}
 
-	for _, source := range sources {
-		shared.Debugf("sending fs object %s", source.Name())
-		if err := source.Send(s.fsConn); err != nil {
-			s.sendControl(err)
-			return err
-		}
-	}
+	driver.Cleanup()
 
 	msg := MigrationControl{}
 	if err := s.recv(&msg); err != nil {
@@ -536,51 +537,6 @@ func (c *migrationSink) do() error {
 		imagesDir := ""
 		srcIdmap := new(shared.IdmapSet)
 
-		if c.live {
-			var err error
-			imagesDir, err = ioutil.TempDir("", "lxd_restore_")
-			if err != nil {
-				os.RemoveAll(imagesDir)
-				c.sendControl(err)
-				return
-			}
-
-			defer func() {
-				err := CollectCRIULogFile(c.container, imagesDir, "migration", "restore")
-				/*
-				 * If the checkpoint fails, we won't have any log to collect,
-				 * so don't warn about that.
-				 */
-				if err != nil && !os.IsNotExist(err) {
-					shared.Debugf("Error collectiong migration log file %s", err)
-				}
-
-				os.RemoveAll(imagesDir)
-			}()
-
-			if err := RsyncRecv(shared.AddSlash(imagesDir), c.criuConn); err != nil {
-				restore <- err
-				os.RemoveAll(imagesDir)
-				c.sendControl(err)
-				return
-			}
-
-			/*
-			 * For unprivileged containers we need to shift the
-			 * perms on the images images so that they can be
-			 * opened by the process after it is in its user
-			 * namespace.
-			 */
-			if !c.container.IsPrivileged() {
-				if err := c.container.IdmapSet().ShiftRootfs(imagesDir); err != nil {
-					restore <- err
-					os.RemoveAll(imagesDir)
-					c.sendControl(err)
-					return
-				}
-			}
-		}
-
 		snapshots := []container{}
 		for _, snap := range header.Snapshots {
 			// TODO: we need to propagate snapshot configurations
@@ -602,7 +558,6 @@ func (c *migrationSink) do() error {
 			ct, err := containerCreateEmptySnapshot(c.container.Daemon(), args)
 			if err != nil {
 				restore <- err
-				c.sendControl(err)
 				return
 			}
 			snapshots = append(snapshots, ct)
@@ -618,24 +573,71 @@ func (c *migrationSink) do() error {
 			srcIdmap.Idmap = shared.Extend(srcIdmap.Idmap, e)
 		}
 
-		if err := mySink(c.container, snapshots, c.fsConn); err != nil {
-			restore <- err
-			c.sendControl(err)
-			return
-		}
-
-		if err := ShiftIfNecessary(c.container, srcIdmap); err != nil {
-			restore <- err
-			c.sendControl(err)
-			return
-		}
-
-		for _, snap := range snapshots {
-			if err := ShiftIfNecessary(snap, srcIdmap); err != nil {
-				restore <- err
-				c.sendControl(err)
+		/* We do the fs receive in parallel so we don't have to reason
+		 * about when to receive what. The sending side is smart enough
+		 * to send the filesystem bits that it can before it seizes the
+		 * container to start checkpointing, so the total transfer time
+		 * will be minimized even if we're dumb here.
+		 */
+		fsTransfer := make(chan error)
+		go func() {
+			if err := mySink(c.live, c.container, snapshots, c.fsConn); err != nil {
+				fsTransfer <- err
 				return
 			}
+
+			if err := ShiftIfNecessary(c.container, srcIdmap); err != nil {
+				fsTransfer <- err
+				return
+			}
+
+			fsTransfer <- nil
+		}()
+
+		if c.live {
+			var err error
+			imagesDir, err = ioutil.TempDir("", "lxd_restore_")
+			if err != nil {
+				os.RemoveAll(imagesDir)
+				return
+			}
+
+			defer func() {
+				err := CollectCRIULogFile(c.container, imagesDir, "migration", "restore")
+				/*
+				 * If the checkpoint fails, we won't have any log to collect,
+				 * so don't warn about that.
+				 */
+				if err != nil && !os.IsNotExist(err) {
+					shared.Debugf("Error collectiong migration log file %s", err)
+				}
+
+				os.RemoveAll(imagesDir)
+			}()
+
+			if err := RsyncRecv(shared.AddSlash(imagesDir), c.criuConn); err != nil {
+				restore <- err
+				return
+			}
+
+			/*
+			 * For unprivileged containers we need to shift the
+			 * perms on the images images so that they can be
+			 * opened by the process after it is in its user
+			 * namespace.
+			 */
+			if !c.container.IsPrivileged() {
+				if err := c.container.IdmapSet().ShiftRootfs(imagesDir); err != nil {
+					restore <- err
+					return
+				}
+			}
+		}
+
+		err := <-fsTransfer
+		if err != nil {
+			restore <- err
+			return
 		}
 
 		if c.live {
@@ -648,12 +650,20 @@ func (c *migrationSink) do() error {
 					log = err.Error()
 				}
 				err = fmt.Errorf("restore failed:\n%s", log)
+				restore <- err
+				return
 			}
 
-			restore <- err
-		} else {
-			restore <- nil
 		}
+
+		for _, snap := range snapshots {
+			if err := ShiftIfNecessary(snap, srcIdmap); err != nil {
+				restore <- err
+				return
+			}
+		}
+
+		restore <- nil
 	}(c)
 
 	source := c.controlChannel()

@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
@@ -82,7 +83,8 @@ type Daemon struct {
 
 	Storage storage
 
-	Sockets []Socket
+	TCPSocket  *Socket
+	UnixSocket *Socket
 
 	devlxd *net.UnixListener
 
@@ -94,6 +96,8 @@ type Daemon struct {
 	imagesDownloadingLock sync.RWMutex
 
 	tlsConfig *tls.Config
+
+	proxy func(req *http.Request) (*url.URL, error)
 }
 
 // Command is the basic structure for every API call.
@@ -105,6 +109,14 @@ type Command struct {
 	put           func(d *Daemon, r *http.Request) Response
 	post          func(d *Daemon, r *http.Request) Response
 	delete        func(d *Daemon, r *http.Request) Response
+}
+
+func (d *Daemon) updateProxy() {
+	d.proxy = shared.ProxyFromConfig(
+		d.configValues["core.proxy_https"],
+		d.configValues["core.proxy_http"],
+		d.configValues["core.proxy_ignore_hosts"],
+	)
 }
 
 func (d *Daemon) httpGetSync(url string, certificate string) (*lxd.Response, error) {
@@ -128,7 +140,7 @@ func (d *Daemon) httpGetSync(url string, certificate string) (*lxd.Response, err
 	tr := &http.Transport{
 		TLSClientConfig: tlsConfig,
 		Dial:            shared.RFC3493Dialer,
-		Proxy:           http.ProxyFromEnvironment,
+		Proxy:           d.proxy,
 	}
 
 	myhttp := http.Client{
@@ -180,7 +192,7 @@ func (d *Daemon) httpGetFile(url string, certificate string) (*http.Response, er
 	tr := &http.Transport{
 		TLSClientConfig: tlsConfig,
 		Dial:            shared.RFC3493Dialer,
-		Proxy:           http.ProxyFromEnvironment,
+		Proxy:           d.proxy,
 	}
 	myhttp := http.Client{
 		Transport: tr,
@@ -471,93 +483,13 @@ func (d *Daemon) ListenAddresses() ([]string, error) {
 	return addresses, nil
 }
 
-func bytesZero(x []byte) bool {
-	for _, b := range x {
-		if b != 0 {
-			return false
-		}
-	}
-	return true
-}
-
-func bytesEqual(x, y []byte) bool {
-	if len(x) != len(y) {
-		return false
-	}
-	for i, b := range x {
-		if y[i] != b {
-			return false
-		}
-	}
-	return true
-}
-
-func isZeroIP(x []byte) bool {
-	if x == nil {
-		return false
-	}
-
-	if bytesZero(x) {
-		return true
-	}
-
-	if len(x) != net.IPv6len {
-		return false
-	}
-
-	var v4InV6Prefix = []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff}
-	return bytesEqual(x[0:12], v4InV6Prefix) && bytesZero(x[12:])
-}
-
-func IpsEqual(ip1 net.IP, ip2 net.IP) bool {
-	if ip1.Equal(ip2) {
-		return true
-	}
-
-	/* the go std library Equal doesn't recognize [::] == 0.0.0.0, since it
-	 * tests for the ipv4 prefix, which isn't present in [::]. However,
-	 * they are in fact equal. Let's test for this case too.
-	 */
-	return isZeroIP(ip1) && isZeroIP(ip2)
-}
-
 func (d *Daemon) UpdateHTTPsPort(oldAddress string, newAddress string) error {
-	var sockets []Socket
-
 	if oldAddress == newAddress {
 		return nil
 	}
 
-	if oldAddress != "" {
-		oldHost, oldPort, err := net.SplitHostPort(oldAddress)
-		if err != nil {
-			oldHost = oldAddress
-			oldPort = shared.DefaultPort
-		}
-
-		// Strip brackets around IPv6 once we've gotten rid of the port
-		oldHost = strings.TrimLeft(oldHost, "[")
-		oldHost = strings.TrimRight(oldHost, "]")
-
-		for _, socket := range d.Sockets {
-			host, port, err := net.SplitHostPort(socket.Socket.Addr().String())
-			if err != nil {
-				host = socket.Socket.Addr().String()
-				port = shared.DefaultPort
-			}
-
-			// Strip brackets around IPv6 once we've gotten rid of the port
-			host = strings.TrimLeft(host, "[")
-			host = strings.TrimRight(host, "]")
-
-			if !shared.PathExists(host) && IpsEqual(net.ParseIP(host), net.ParseIP(oldHost)) && port == oldPort {
-				socket.Socket.Close()
-			} else {
-				sockets = append(sockets, socket)
-			}
-		}
-	} else {
-		sockets = d.Sockets
+	if d.TCPSocket != nil {
+		d.TCPSocket.Socket.Close()
 	}
 
 	if newAddress != "" {
@@ -571,16 +503,24 @@ func (d *Daemon) UpdateHTTPsPort(oldAddress string, newAddress string) error {
 			}
 		}
 
-		tcpl, err := tls.Listen("tcp", newAddress, d.tlsConfig)
+		var tcpl net.Listener
+		for i := 0; i < 10; i++ {
+			tcpl, err = tls.Listen("tcp", newAddress, d.tlsConfig)
+			if err == nil {
+				break
+			}
+
+			time.Sleep(100 * time.Millisecond)
+		}
+
 		if err != nil {
 			return fmt.Errorf("cannot listen on https socket: %v", err)
 		}
 
 		d.tomb.Go(func() error { return http.Serve(tcpl, d.mux) })
-		sockets = append(sockets, Socket{Socket: tcpl, CloseOnExit: true})
+		d.TCPSocket = &Socket{Socket: tcpl, CloseOnExit: true}
 	}
 
-	d.Sockets = sockets
 	return nil
 }
 
@@ -830,6 +770,15 @@ func (d *Daemon) Init() error {
 		}
 	}()
 
+	/* Load all config values from the database */
+	_, err = d.ConfigValuesGet()
+	if err != nil {
+		return err
+	}
+
+	/* set the initial proxy function based on config values in the DB */
+	d.updateProxy()
+
 	/* Auto-update images */
 	d.resetAutoUpdateChan = make(chan bool)
 	go func() {
@@ -936,17 +885,15 @@ func (d *Daemon) Init() error {
 		return err
 	}
 
-	var sockets []Socket
-
 	if len(listeners) > 0 {
 		shared.Log.Info("LXD is socket activated")
 
 		for _, listener := range listeners {
 			if shared.PathExists(listener.Addr().String()) {
-				sockets = append(sockets, Socket{Socket: listener, CloseOnExit: false})
+				d.UnixSocket = &Socket{Socket: listener, CloseOnExit: false}
 			} else {
 				tlsListener := tls.NewListener(listener, d.tlsConfig)
-				sockets = append(sockets, Socket{Socket: tlsListener, CloseOnExit: false})
+				d.TCPSocket = &Socket{Socket: tlsListener, CloseOnExit: false}
 			}
 		}
 	} else {
@@ -999,7 +946,7 @@ func (d *Daemon) Init() error {
 			return err
 		}
 
-		sockets = append(sockets, Socket{Socket: unixl, CloseOnExit: true})
+		d.UnixSocket = &Socket{Socket: unixl, CloseOnExit: true}
 	}
 
 	listenAddr, err := d.ConfigValueGet("core.https_address")
@@ -1017,22 +964,24 @@ func (d *Daemon) Init() error {
 		if err != nil {
 			shared.Log.Error("cannot listen on https socket, skipping...", log.Ctx{"err": err})
 		} else {
-			sockets = append(sockets, Socket{Socket: tcpl, CloseOnExit: true})
+			if d.TCPSocket != nil {
+				shared.Log.Info("Replacing systemd TCP socket by configure one")
+				d.TCPSocket.Socket.Close()
+			}
+			d.TCPSocket = &Socket{Socket: tcpl, CloseOnExit: true}
 		}
-	}
-
-	if !d.IsMock {
-		d.Sockets = sockets
-	} else {
-		d.Sockets = []Socket{}
 	}
 
 	d.tomb.Go(func() error {
 		shared.Log.Info("REST API daemon:")
-		for _, socket := range d.Sockets {
-			shared.Log.Info(" - binding socket", log.Ctx{"socket": socket.Socket.Addr()})
-			current_socket := socket
-			d.tomb.Go(func() error { return http.Serve(current_socket.Socket, &lxdHttpServer{d.mux, d}) })
+		if d.UnixSocket != nil {
+			shared.Log.Info(" - binding Unix socket", log.Ctx{"socket": d.UnixSocket.Socket.Addr()})
+			d.tomb.Go(func() error { return http.Serve(d.UnixSocket.Socket, &lxdHttpServer{d.mux, d}) })
+		}
+
+		if d.TCPSocket != nil {
+			shared.Log.Info(" - binding TCP socket", log.Ctx{"socket": d.TCPSocket.Socket.Addr()})
+			d.tomb.Go(func() error { return http.Serve(d.TCPSocket.Socket, &lxdHttpServer{d.mux, d}) })
 		}
 
 		d.tomb.Go(func() error {
@@ -1095,7 +1044,11 @@ func (d *Daemon) Stop() error {
 
 	d.tomb.Kill(errStop)
 	shared.Log.Info("Stopping REST API handler:")
-	for _, socket := range d.Sockets {
+	for _, socket := range []*Socket{d.TCPSocket, d.UnixSocket} {
+		if socket == nil {
+			continue
+		}
+
 		if socket.CloseOnExit {
 			shared.Log.Info(" - closing socket", log.Ctx{"socket": socket.Socket.Addr()})
 			socket.Socket.Close()
@@ -1141,6 +1094,12 @@ func (d *Daemon) ConfigKeyIsValid(key string) bool {
 	case "core.https_allowed_methods":
 		return true
 	case "core.https_allowed_headers":
+		return true
+	case "core.proxy_https":
+		return true
+	case "core.proxy_http":
+		return true
+	case "core.proxy_ignore_hosts":
 		return true
 	case "core.trust_password":
 		return true
