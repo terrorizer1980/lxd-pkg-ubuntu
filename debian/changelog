@@ -1,3 +1,38 @@
+lxd (2.0.0~rc3-0ubuntu1) xenial; urgency=medium
+
+  * New upstream release (2.0.0~rc3):
+    - GET /1.0/containers/NAME/snapshots/SNAPNAME now returns the
+      configuration and devices included in the snapshot
+    - Three new configuration options have been introduced to configure
+      the daemon to use an HTTP proxy
+        + core.proxy_https (if not set, uses HTTPS_PROXY env variable)
+        + core.proxy_http (if not set, uses HTTP_PROXY env variable)
+        + core.proxy_ignore_hosts (if not set, uses NO_PROXY env variable)
+    - Cache remote simplestream data for an hour in the daemon so we
+      don't hammer the remote server
+    - Allow for auto-update of images coming from a LXD server
+    - Change ConnectInfo to take a RemoteConfig.
+    - Workaround kernel overmounting protection
+    - migration: attempt to be slightly smart about moving filesystems
+    - tests: disarm the gremlins by comparing things in UTC
+    - zfs: fix handling of the "snapshot only" send case
+    - Allow reducing the LVM LV size and update tests
+    - profiles: don't mask error message when not found
+    - mounting: only block devices hold filesystems
+    - Rework event locking
+    - Fix panic due to concurent read/edit of container lock
+    - zfs: Skip the pool header line
+    - Make it clear that the init arguments only apply in auto mode
+    - Fix error message when snapshotting with existing name
+    - lvm: make errors log as errors
+    - Don't generate client certificates when calling NewClient
+    - Fix parsing image names
+    - Forward errors from forkgetfile and forkputfile
+    - Make changing https_address more reliable
+    - migration: don't defer cleanup of sending snapshots
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Thu, 10 Mar 2016 23:10:53 -0500
+
 lxd (2.0.0~rc2-0ubuntu3) xenial; urgency=medium
 
   * Remove the lxd cron job. (LP: #1555013)
