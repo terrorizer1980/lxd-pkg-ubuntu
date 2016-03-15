@@ -1,3 +1,9 @@
+lxd (2.0.0~rc3-0ubuntu2) xenial; urgency=medium
+
+  * debian/tests/control: Fix pyflakes → pyflakes3 test dep.
+
+ -- Martin Pitt <martin.pitt@ubuntu.com>  Tue, 15 Mar 2016 11:03:58 +0100
+
 lxd (2.0.0~rc3-0ubuntu1) xenial; urgency=medium
 
   * New upstream release (2.0.0~rc3):
