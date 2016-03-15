@@ -32,6 +32,7 @@ case "$1" in
 
         echo -n "Starting $DESC: "
         ulimit -n 65536
+        [ -e /etc/environment ] && . /etc/environment
         if start-stop-daemon ${START} -- --group lxd --logfile=/var/log/lxd/lxd.log >/dev/null 2>&1 ; then
             echo "${NAME}."
             ${DAEMON} waitready --timeout=600
