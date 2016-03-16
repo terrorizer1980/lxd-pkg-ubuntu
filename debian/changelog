@@ -1,3 +1,9 @@
+lxd (2.0.0~rc3-0ubuntu4) xenial; urgency=medium
+
+  * Use golang-gettext-dev from the archive.
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Tue, 15 Mar 2016 23:28:15 -0400
+
 lxd (2.0.0~rc3-0ubuntu3) xenial; urgency=medium
 
   * Use /etc/environment in the init scripts.
