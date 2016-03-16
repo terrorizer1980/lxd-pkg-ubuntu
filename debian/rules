@@ -52,6 +52,7 @@ else
 	debian/helpers/link-from-installed github.com/golang/protobuf
 	debian/helpers/link-from-installed github.com/gorilla/context
 	debian/helpers/link-from-installed github.com/gorilla/mux
+	debian/helpers/link-from-installed github.com/gosexy/gettext
 	debian/helpers/link-from-installed github.com/mattn/go-sqlite3
 	debian/helpers/link-from-installed github.com/olekukonko/tablewriter
 	debian/helpers/link-from-installed github.com/pborman/uuid
@@ -68,7 +69,6 @@ else
 
 	# Packages that aren't in main yet
 	debian/helpers/link-from-bundled github.com/gorilla/websocket
-	debian/helpers/link-from-bundled github.com/gosexy/gettext
 endif
 
 	# And put the lxd source back again.
