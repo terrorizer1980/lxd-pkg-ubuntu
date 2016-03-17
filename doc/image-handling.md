@@ -16,8 +16,25 @@ will be kept locally as a private image until either it's been unused
 images.remote\_cache\_expiry or until the image's expiry is reached
 whichever comes first.
 
-LXD keeps track of image usage by updating the last\_use\_date image
+LXD keeps track of image usage by updating the last\_used\_at image
 property every time a new container is spawned from the image.
+
+# Auto-update
+LXD can keep images up to date. By default, any image which comes from a
+remote server and was requested through an alias will be automatically
+updated by LXD. This can be changed with images.auto\_update\_cached.
+
+On startup and then every 3 hours (unless images.auto\_update\_interval
+is set), the LXD daemon will go look for more recent version of all the
+images in the store which are marked as auto-update and have a recorded
+source server.
+
+When a new image is found, it is downloaded into the image store, the
+aliases pointing to the old image are moved to the new one and the old
+image is removed from the store.
+
+The user can also request a particular image be kept up to date when
+manually copying an image from a remote server.
 
 # Image format
 LXD currently supports two LXD-specific image formats.
@@ -40,6 +57,8 @@ Tarball, can be compressed and contains:
  - metadata.yaml
  - templates/ (optional)
 
+In this mode, the image identifier is the SHA-256 of the tarball.
+
 ## Split tarballs
 Two (possibly compressed) tarballs. One for metadata, one for the rootfs.
 
@@ -48,6 +67,9 @@ metadata.tar contains:
  - templates/ (optional)
 
 rootfs.tar contains a Linux root filesystem at its root.
+
+In this mode the image identifier is the SHA-256 of the concatenation of
+the metadata and rootfs tarball (in that order).
 
 ## Content
 The rootfs directory (or tarball) contains a full file system tree of what will become the container's /.
@@ -77,6 +99,11 @@ LXD, at the moment, this contains:
         when:
           - start
         template: hostname.tpl
+      /etc/network/interfaces:
+        when:
+          - create
+        template: interfaces.tpl
+        create_only: true
 
 The architecture and creation\_date fields are mandatory, the properties
 are just a set of default properties for the image. The os, release,
@@ -95,6 +122,8 @@ The templates will always receive the following context:
  - config: key/value map of the container's configuration (map[string]string)
  - devices: key/value map of the devices assigned to this container (map[string]map[string]string)
  - properties: key/value map of the template properties specified in metadata.yaml (map[string]string)
+
+The "create\_only" key can be set to have LXD only only create missing files but not overwrite an existing file.
 
 As a general rule, you should never template a file which is owned by a
 package or is otherwise expected to be overwritten by normal operation
