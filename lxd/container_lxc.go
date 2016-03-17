@@ -284,7 +284,7 @@ func (c *containerLXC) initLXC() error {
 	}
 
 	// Base config
-	err = lxcSetConfigItem(cc, "lxc.cap.drop", "mac_admin mac_override sys_time sys_module")
+	err = lxcSetConfigItem(cc, "lxc.cap.drop", "mac_admin mac_override sys_time sys_module sys_rawio")
 	if err != nil {
 		return err
 	}
@@ -758,6 +758,7 @@ func (c *containerLXC) initLXC() error {
 			// Various option checks
 			isOptional := m["optional"] == "1" || m["optional"] == "true"
 			isReadOnly := m["readonly"] == "1" || m["readonly"] == "true"
+			isRecursive := m["recursive"] == "1" || m["recursive"] == "true"
 			isFile := !shared.IsDir(srcPath) && !deviceIsBlockdev(srcPath)
 
 			// Deal with a rootfs
@@ -776,6 +777,7 @@ func (c *containerLXC) initLXC() error {
 					}
 				}
 			} else {
+				rbind := ""
 				options := []string{}
 				if isReadOnly {
 					options = append(options, "ro")
@@ -785,13 +787,17 @@ func (c *containerLXC) initLXC() error {
 					options = append(options, "optional")
 				}
 
+				if isRecursive {
+					rbind = "r"
+				}
+
 				if isFile {
 					options = append(options, "create=file")
 				} else {
 					options = append(options, "create=dir")
 				}
 
-				err = lxcSetConfigItem(cc, "lxc.mount.entry", fmt.Sprintf("%s %s none bind,%s", devPath, tgtPath, strings.Join(options, ",")))
+				err = lxcSetConfigItem(cc, "lxc.mount.entry", fmt.Sprintf("%s %s none %sbind,%s", devPath, tgtPath, rbind, strings.Join(options, ",")))
 				if err != nil {
 					return err
 				}
@@ -1411,13 +1417,13 @@ func (c *containerLXC) OnStop(target string) error {
 		// Clean all the unix devices
 		err = c.removeUnixDevices()
 		if err != nil {
-			shared.Log.Error("Unable to remove unix devices")
+			shared.Log.Error("Unable to remove unix devices", log.Ctx{"err": err})
 		}
 
 		// Clean all the disk devices
 		err = c.removeDiskDevices()
 		if err != nil {
-			shared.Log.Error("Unable to remove disk devices")
+			shared.Log.Error("Unable to remove disk devices", log.Ctx{"err": err})
 		}
 
 		// Reboot the container
@@ -1476,6 +1482,25 @@ func (c *containerLXC) Unfreeze() error {
 	return c.c.Unfreeze()
 }
 
+var LxcMonitorStateError = fmt.Errorf("Monitor is hung")
+
+// Get lxc container state, with 1 second timeout
+// If we don't get a reply, assume the lxc monitor is hung
+func (c *containerLXC) getLxcState() (lxc.State, error) {
+	monitor := make(chan lxc.State, 1)
+
+	go func(c *lxc.Container) {
+		monitor <- c.State()
+	}(c.c)
+
+	select {
+	case state := <-monitor:
+		return state, nil
+	case <-time.After(time.Second):
+		return lxc.StateMap["FROZEN"], LxcMonitorStateError
+	}
+}
+
 func (c *containerLXC) Render() (interface{}, error) {
 	// Load the go-lxc struct
 	err := c.initLXC()
@@ -1501,7 +1526,11 @@ func (c *containerLXC) Render() (interface{}, error) {
 		}, nil
 	} else {
 		// FIXME: Render shouldn't directly access the go-lxc struct
-		statusCode := shared.FromLXCState(int(c.c.State()))
+		cState, err := c.getLxcState()
+		if err != nil {
+			return nil, err
+		}
+		statusCode := shared.FromLXCState(int(cState))
 
 		return &shared.ContainerInfo{
 			Architecture:    architectureName,
@@ -1527,8 +1556,11 @@ func (c *containerLXC) RenderState() (*shared.ContainerState, error) {
 		return nil, err
 	}
 
-	// FIXME: RenderState shouldn't directly access the go-lxc struct
-	statusCode := shared.FromLXCState(int(c.c.State()))
+	cState, err := c.getLxcState()
+	if err != nil {
+		return nil, err
+	}
+	statusCode := shared.FromLXCState(int(cState))
 	status := shared.ContainerState{
 		Status:     statusCode.String(),
 		StatusCode: statusCode,
@@ -2594,6 +2626,10 @@ func (c *containerLXC) TemplateApply(trigger string) error {
 		// Open the file to template, create if needed
 		fullpath := filepath.Join(c.RootfsPath(), strings.TrimLeft(templatePath, "/"))
 		if shared.PathExists(fullpath) {
+			if template.CreateOnly {
+				continue
+			}
+
 			// Open the existing file
 			w, err = os.Create(fullpath)
 			if err != nil {
@@ -3103,7 +3139,7 @@ func (c *containerLXC) removeMount(mount string) error {
 	pid := c.InitPID()
 	if pid == -1 {
 		// Container isn't running
-		return fmt.Errorf("Can't insert mount into stopped container")
+		return fmt.Errorf("Can't remove mount from stopped container")
 	}
 
 	// Remove the mount from the container
@@ -3638,6 +3674,7 @@ func (c *containerLXC) createDiskDevice(name string, m shared.Device) (string, e
 	// Check if read-only
 	isOptional := m["optional"] == "1" || m["optional"] == "true"
 	isReadOnly := m["readonly"] == "1" || m["readonly"] == "true"
+	isRecursive := m["recursive"] == "1" || m["recursive"] == "true"
 	isFile := !shared.IsDir(srcPath) && !deviceIsBlockdev(srcPath)
 
 	// Check if the source exists
@@ -3680,7 +3717,7 @@ func (c *containerLXC) createDiskDevice(name string, m shared.Device) (string, e
 	}
 
 	// Mount the fs
-	err := deviceMountDisk(srcPath, devPath, isReadOnly)
+	err := deviceMountDisk(srcPath, devPath, isReadOnly, isRecursive)
 	if err != nil {
 		return "", err
 	}
@@ -3694,15 +3731,22 @@ func (c *containerLXC) insertDiskDevice(name string, m shared.Device) error {
 		return fmt.Errorf("Can't insert device into stopped container")
 	}
 
+	isRecursive := m["recursive"] == "1" || m["recursive"] == "true"
+
 	// Create the device on the host
 	devPath, err := c.createDiskDevice(name, m)
 	if err != nil {
 		return fmt.Errorf("Failed to setup device: %s", err)
 	}
 
+	flags := syscall.MS_BIND
+	if isRecursive {
+		flags |= syscall.MS_REC
+	}
+
 	// Bind-mount it into the container
 	tgtPath := strings.TrimSuffix(m["path"], "/")
-	err = c.insertMount(devPath, tgtPath, "none", syscall.MS_BIND)
+	err = c.insertMount(devPath, tgtPath, "none", flags)
 	if err != nil {
 		return fmt.Errorf("Failed to add mount for device: %s", err)
 	}
@@ -4231,7 +4275,11 @@ func (c *containerLXC) State() string {
 		return "BROKEN"
 	}
 
-	return c.c.State().String()
+	state, err := c.getLxcState()
+	if err != nil {
+		return shared.Error.String()
+	}
+	return state.String()
 }
 
 // Various container paths
