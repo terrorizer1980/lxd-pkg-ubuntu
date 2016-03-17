@@ -1,3 +1,35 @@
+lxd (2.0.0~rc4-0ubuntu1) xenial; urgency=medium
+
+  * New upstream release (2.0.0~rc4):
+    - Support for recursive bind-mounts (recursive property on disk entries)
+    - Add a new "ERROR" state for containers, used to indicate a
+      communication problem with LXC
+    - Make it possible to have templates only apply for non-existing
+      files (create_only property)
+    - All the specifications have been updated and moved to the doc/ directory
+    - /dev/lxd access is now restricted to uid 0 in the container
+    - devices client: only print success message when successful
+    - Fix devlxd failing to detect container
+    - Have "device show" print yaml
+    - specs: Clarify image handling
+    - specs: Remove command-line-user-experience
+    - specs: Remove dia database diagram
+    - specs: Clarify the daemon spec
+    - specs: Update /dev/lxd spec to match current state
+    - specs: Update environment variables list
+    - specs: Update SSL spec to match current state
+    - specs: Re-format the migration document
+    - specs: Update requirements
+    - specs: Update storage backend spec
+    - specs: Update userns to match reality
+    - docker profile: add the apparmor enabled overmount
+    - More strictly parse remote URLs
+    - Fix devlxd access outside of an exec session
+    - Return better errors for public and simplestream remotes
+    - Block sys_rawio by default
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 16 Mar 2016 22:57:18 -0400
+
 lxd (2.0.0~rc3-0ubuntu4) xenial; urgency=medium
 
   * Use golang-gettext-dev from the archive.
