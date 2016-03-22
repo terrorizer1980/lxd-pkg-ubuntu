@@ -651,9 +651,16 @@ func imagesPost(d *Daemon, r *http.Request) Response {
 	// Is this a container request?
 	post.Seek(0, 0)
 	decoder := json.NewDecoder(post)
+	imageUpload := false
+
 	req := imagePostReq{}
 	err = decoder.Decode(&req)
-	imageUpload := err != nil
+	if err != nil {
+		if r.Header.Get("Content-Type") == "application/json" {
+			return BadRequest(err)
+		}
+		imageUpload = true
+	}
 
 	if !imageUpload && !shared.StringInSlice(req.Source["type"], []string{"container", "snapshot", "image", "url"}) {
 		cleanup(builddir, post)
@@ -933,11 +940,19 @@ func doDeleteImage(d *Daemon, fingerprint string) error {
 func imageDelete(d *Daemon, r *http.Request) Response {
 	fingerprint := mux.Vars(r)["fingerprint"]
 
-	if err := doDeleteImage(d, fingerprint); err != nil {
-		return SmartError(err)
+	rmimg := func(op *operation) error {
+		return doDeleteImage(d, fingerprint)
 	}
 
-	return EmptySyncResponse
+	resources := map[string][]string{}
+	resources["images"] = []string{fingerprint}
+
+	op, err := operationCreate(operationClassTask, resources, nil, rmimg, nil, nil)
+	if err != nil {
+		return InternalError(err)
+	}
+
+	return OperationResponse(op)
 }
 
 func doImageGet(d *Daemon, fingerprint string, public bool) (*shared.ImageInfo, Response) {

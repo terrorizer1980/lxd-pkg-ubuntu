@@ -318,13 +318,25 @@ func (c *containerLXC) initLXC() error {
 		return err
 	}
 
-	err = lxcSetConfigItem(cc, "lxc.mount.entry", "mqueue dev/mqueue mqueue rw,relatime,create=dir,optional")
-	if err != nil {
-		return err
+	bindMounts := []string{
+		"/proc/sys/fs/binfmt_misc",
+		"/sys/firmware/efi/efivars",
+		"/sys/fs/fuse/connections",
+		"/sys/fs/pstore",
+		"/sys/kernel/debug",
+		"/sys/kernel/security"}
+
+	if c.IsPrivileged() && !runningInUserns {
+		err = lxcSetConfigItem(cc, "lxc.mount.entry", "mqueue dev/mqueue mqueue rw,relatime,create=dir,optional")
+		if err != nil {
+			return err
+		}
+	} else {
+		bindMounts = append(bindMounts, "/dev/mqueue")
 	}
 
-	for _, mnt := range []string{"/proc/sys/fs/binfmt_misc", "/sys/firmware/efi/efivars", "/sys/fs/fuse/connections", "/sys/fs/pstore", "/sys/kernel/debug", "/sys/kernel/security"} {
-		err = lxcSetConfigItem(cc, "lxc.mount.entry", fmt.Sprintf("%s %s none rbind,optional", mnt, strings.TrimPrefix(mnt, "/")))
+	for _, mnt := range bindMounts {
+		err = lxcSetConfigItem(cc, "lxc.mount.entry", fmt.Sprintf("%s %s none rbind,create=dir,optional", mnt, strings.TrimPrefix(mnt, "/")))
 		if err != nil {
 			return err
 		}
@@ -1101,16 +1113,36 @@ func (c *containerLXC) Start(stateful bool) error {
 			return fmt.Errorf("Container has no existing state to restore.")
 		}
 
-		err := c.c.Restore(lxc.RestoreOptions{
-			Directory: c.StatePath(),
-			Verbose:   true,
-		})
-
-		err2 := os.RemoveAll(c.StatePath())
-		if err2 != nil {
-			return err2
+		if !c.IsPrivileged() {
+			if err := c.IdmapSet().ShiftRootfs(c.StatePath()); err != nil {
+				return err
+			}
 		}
 
+		out, err := exec.Command(
+			c.daemon.execPath,
+			"forkmigrate",
+			c.name,
+			c.daemon.lxcpath,
+			configPath,
+			c.StatePath()).CombinedOutput()
+		if string(out) != "" {
+			for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+				shared.Debugf("forkmigrate: %s", line)
+			}
+		}
+		CollectCRIULogFile(c, c.StatePath(), "snapshot", "restore")
+
+		if err != nil {
+			return err
+		}
+
+		os.RemoveAll(c.StatePath())
+		c.stateful = false
+		return dbContainerSetStateful(c.daemon.db, c.id, false)
+	} else if c.stateful {
+		/* stateless start required when we have state, let's delete it */
+		err := os.RemoveAll(c.StatePath())
 		if err != nil {
 			return err
 		}
@@ -1120,8 +1152,6 @@ func (c *containerLXC) Start(stateful bool) error {
 		if err != nil {
 			return err
 		}
-
-		return nil
 	}
 
 	// Start the LXC container
@@ -1496,7 +1526,7 @@ func (c *containerLXC) getLxcState() (lxc.State, error) {
 	select {
 	case state := <-monitor:
 		return state, nil
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		return lxc.StateMap["FROZEN"], LxcMonitorStateError
 	}
 }
@@ -1652,10 +1682,34 @@ func (c *containerLXC) Restore(sourceContainer container) error {
 	// If the container wasn't running but was stateful, should we restore
 	// it as running?
 	if shared.PathExists(c.StatePath()) {
-		err := c.c.Restore(lxc.RestoreOptions{
-			Directory: c.StatePath(),
-			Verbose:   true,
-		})
+		configPath, err := c.startCommon()
+		if err != nil {
+			return err
+		}
+
+		if !c.IsPrivileged() {
+			if err := c.IdmapSet().ShiftRootfs(c.StatePath()); err != nil {
+				return err
+			}
+		}
+
+		out, err := exec.Command(
+			c.daemon.execPath,
+			"forkmigrate",
+			c.name,
+			c.daemon.lxcpath,
+			configPath,
+			c.StatePath()).CombinedOutput()
+		if string(out) != "" {
+			for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+				shared.Debugf("forkmigrate: %s", line)
+			}
+		}
+		CollectCRIULogFile(c, c.StatePath(), "snapshot", "restore")
+
+		if err != nil {
+			return err
+		}
 
 		// Remove the state from the parent container; we only keep
 		// this in snapshots.
