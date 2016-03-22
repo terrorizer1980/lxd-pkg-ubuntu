@@ -1,3 +1,23 @@
+lxd (2.0.0~rc5-0ubuntu1) xenial; urgency=medium
+
+  * New upstream release (2.0.0~rc5):
+    - Fix DELETE /1.0/images/<fingerprint> to actually be Async. This is a
+      minor API change to match the specification and will break backward
+      compatibility with older clients (only when performing image deletion).
+    - The deprecated lxd-images script has now been entirely removed.
+    - Improve error reporting on image POST
+    - Fix error handling logic around snapshots
+    - Fix container shutdown to actually happen in parallel
+    - Document 'auto\_update' parameter for 'POST /1.0/images'
+    - stateful start: rework behavior
+    - stateful snapshots: rework behavior
+    - Bind-mount mqueue if unprivileged
+    - update documentation on using docker in containers
+    - bump the monitor timeout to 5s
+    - lxd-bridge: Some tweaks
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Mon, 21 Mar 2016 23:47:43 -0400
+
 lxd (2.0.0~rc4-0ubuntu1) xenial; urgency=medium
 
   * New upstream release (2.0.0~rc4):
