@@ -1,6 +1,6 @@
 # SOME DESCRIPTIVE TITLE.
 # Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
-# This file is distributed under the same license as the PACKAGE package.
+# This file is distributed under the same license as the lxd package.
 # FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
 #
 #, fuzzy
@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: lxd\n"
 "Report-Msgid-Bugs-To: lxd@packages.debian.org\n"
-"POT-Creation-Date: 2015-10-17 00:13-0400\n"
+"POT-Creation-Date: 2016-03-23 00:30-0400\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -20,113 +20,107 @@ msgstr ""
 #. Type: boolean
 #. Description
 #: ../lxd.templates:1001
-msgid "Do you want to sync LXD images even when it isn't started yet?"
-msgstr ""
-
-#. Type: boolean
-#. Description
-#: ../lxd.templates:2001
 msgid "Do you want to setup a new bridge for LXD containers?"
 msgstr ""
 
 #. Type: boolean
 #. Description
-#: ../lxd.templates:3001
+#: ../lxd.templates:2001
 msgid "Do you want to use an existing bridge?"
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:4001
+#: ../lxd.templates:3001
 msgid "Bridge interface name:"
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:5001
+#: ../lxd.templates:4001
 msgid "Path to dnsmasq config:"
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:5001
+#: ../lxd.templates:4001
 msgid "When provided, this is included in the bridge configuration."
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:6001
+#: ../lxd.templates:5001
 msgid "Domain name:"
 msgstr ""
 
 #. Type: boolean
 #. Description
-#: ../lxd.templates:7001
+#: ../lxd.templates:6001
 msgid "Do you want to setup an IPv4 subnet?"
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:8001
+#: ../lxd.templates:7001
 msgid "IPv4 address:"
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:9001
+#: ../lxd.templates:8001
 msgid "IPv4 netmask:"
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:10001
+#: ../lxd.templates:9001
 msgid "First DHCP address:"
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:11001
+#: ../lxd.templates:10001
 msgid "Last DHCP address:"
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:12001
+#: ../lxd.templates:11001
 msgid "Max number of DHCP clients:"
 msgstr ""
 
 #. Type: boolean
 #. Description
-#: ../lxd.templates:13001
+#: ../lxd.templates:12001
 msgid "Do you want to NAT the IPv4 traffic?"
 msgstr ""
 
 #. Type: boolean
 #. Description
-#: ../lxd.templates:14001
+#: ../lxd.templates:13001
 msgid "Do you want to setup an IPv6 subnet?"
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:15001
+#: ../lxd.templates:14001
 msgid "IPv6 address:"
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:16001
+#: ../lxd.templates:15001
 msgid "IPv6 netmask:"
 msgstr ""
 
 #. Type: boolean
 #. Description
-#: ../lxd.templates:17001
+#: ../lxd.templates:16001
 msgid "Do you want to NAT the IPv6 traffic?"
 msgstr ""
 
 #. Type: boolean
 #. Description
-#: ../lxd.templates:18001
+#: ../lxd.templates:17001
 msgid "Do you want to setup an HTTP proxy?"
 msgstr ""

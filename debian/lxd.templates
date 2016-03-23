@@ -1,8 +1,3 @@
-Template: lxd/force-image-sync
-Type: boolean
-Default: false
-_Description: Do you want to sync LXD images even when it isn't started yet?
-
 Template: lxd/setup-bridge
 Type: boolean
 Default: true
