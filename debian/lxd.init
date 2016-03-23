@@ -33,8 +33,17 @@ case "$1" in
         echo -n "Starting $DESC: "
         ulimit -n 65536
         [ -e /etc/environment ] && . /etc/environment
+        /usr/lib/lxd/lxd-bridge.start
         if start-stop-daemon ${START} -- --group lxd --logfile=/var/log/lxd/lxd.log >/dev/null 2>&1 ; then
             echo "${NAME}."
+
+            # Wait for the unix socket
+            for i in $(seq 30); do
+                lxc finger --force-local >/dev/null 2>&1 && break
+                sleep 1
+            done
+
+            /usr/lib/lxd/profile-config
             ${DAEMON} waitready --timeout=600
         else
             if start-stop-daemon --test ${START} >/dev/null 2>&1; then
@@ -58,6 +67,7 @@ case "$1" in
             --startas ${DAEMON} --retry 10 --name ${NAME} \
             >/dev/null 2>&1 ; then
                 echo "${NAME}."
+            /usr/lib/lxd/lxd-bridge stop
         else
             if start-stop-daemon --test ${START} >/dev/null 2>&1; then
                 echo "(not running)."

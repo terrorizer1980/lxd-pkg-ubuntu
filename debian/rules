@@ -96,8 +96,10 @@ override_dh_install:
 
 override_dh_installinit:
 	# We handle starting and restarting things ourselves
+	dh_systemd_enable -plxd --name=lxd-bridge lxd-bridge.service
 	dh_systemd_enable -plxd --name=lxd-containers lxd-containers.service
 	dh_installinit -plxd --no-start
+	dh_installinit -plxd --name=lxd-bridge --no-start --noscripts
 	dh_installinit -plxd --name=lxd-containers --no-start --noscripts
 	dh_systemd_start -plxd lxd-containers.service --no-restart-on-upgrade
 

@@ -1,0 +1,12 @@
+#!/bin/sh -e
+
+# Start by bringing up the bridge
+/usr/lib/lxd/lxd-bridge start
+
+# Switch LXD in setup mode if needed
+if ([ ! -e "/var/lib/lxd-bridge/timestamp" ] || [ "/etc/default/lxd-bridge" -nt "/var/lib/lxd-bridge/timestamp" ]) && [ -e "/var/lib/lxd" ]; then
+    touch /var/lib/lxd-bridge/timestamp
+    touch /var/lib/lxd/.setup_mode
+fi
+
+exit 0

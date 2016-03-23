@@ -1,6 +1,8 @@
 usr/bin/lxd
-usr/bin/lxd-bridge-proxy usr/lib/lxd/
+usr/share/man/man1/lxd.1
 
 lxd-bridge/lxd-bridge usr/lib/lxd/
+usr/bin/lxd-bridge-proxy usr/lib/lxd/
 
-usr/share/man/man1/lxd.1
+debian/wrappers/lxd-bridge.start usr/lib/lxd/
+debian/wrappers/profile-config usr/lib/lxd/
