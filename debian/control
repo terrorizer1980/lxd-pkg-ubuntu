@@ -35,6 +35,8 @@ Architecture: any
 Depends: ${misc:Depends}, ${shlibs:Depends}
 Built-Using: ${misc:Built-Using}
 Suggests: lxd
+Breaks: lxc1 (<= 2.0.0~rc13-0ubuntu2~)
+Replaces: lxc1 (<= 2.0.0~rc13-0ubuntu2~)
 Description: Container hypervisor based on LXC - client
  LXD offers a REST API to remotely manage containers over the network,
  using an image based workflow and with support for live migration.
