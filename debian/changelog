@@ -1,3 +1,29 @@
+lxd (2.0.0~rc6-0ubuntu1) xenial; urgency=medium
+
+  * New upstream release (2.0.0~rc6):
+    - lxd init: clarify no port is wanted with server address
+    - lxd init: accept empty trust password
+    - lxd init: recommend port 8843
+    - README: document composing docker and default profiles
+    - Rename IsMock to MockMode
+    - Cleanup daemon initialization
+    - Remove the startDaemon function
+    - Add a setup mode allowing to delay part of startup
+    - Cleanup function names in main.go
+    - Improve waitready
+    - Implement device set/unset
+    - Fix permissions of new devices nodes (LP: #1560752)
+    - Allow the bridge to be brought down even if disabled
+    - Some more lxd-bridge fixes
+    - lxd-bridge: Make shellcheck happy
+    - Implement "lxc config device get"
+    - List broken containers (with state set to ERROR)
+  * Update lxd.service to start after lxc-net.service (if present)
+  * Update the debconf templates (planning for lxdbr0 configuration)
+  * Fix bash completion profile
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 23 Mar 2016 22:40:18 -0400
+
 lxd (2.0.0~rc5-0ubuntu1) xenial; urgency=medium
 
   * New upstream release (2.0.0~rc5):
