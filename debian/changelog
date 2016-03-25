@@ -1,3 +1,37 @@
+lxd (2.0.0~rc6-0ubuntu2) xenial; urgency=medium
+
+  * Turn on lxdbr0. This upload enables the debconf questions for lxdbr0
+    as well as the needed init scripts and handlers.
+
+    It however does NOT change the default bridge over BY DEFAULT.
+    The default bridge will only be switched to lxdbr0 if the user
+    manually edits /etc/default/lxd-bridge or runs "dpkg-reconfigure lxd".
+
+    This is a temporary setup to allow all downstreams to adjust for the
+    new world where the lxdbr0 bridge comes with a link-local address only
+    and requires configuration.
+
+    Once we are satisfied those downstreams have updated their code to
+    support this new bridge, we will remove the dependency on the "lxc1"
+    package and switch everyone over to the lxdbr0 with a suitable
+    upgrade-only warning and initial debconf run (so users can minimize the
+    impact of the switch).
+
+    This change includes:
+     - Introduce debconf configuration script to generate
+       /etc/default/lxd-bridge
+     - New lxd-bridge.service systemd unit
+     - New update-profile and lxd-bridge.start helper scripts, used to
+       only apply LXD configuration changes when needed.
+     - Update to the sysvinit and upstart jobs to run the needed
+       scripts. Those two "legacy" init systems do not get the full treatment
+       of a separate init script for the bridge, but do get all the features
+       nevertheless.
+  * Fix lxd.service start condition to start after lxc-net.service
+    rather than lxc.service.
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 23 Mar 2016 23:49:29 -0400
+
 lxd (2.0.0~rc6-0ubuntu1) xenial; urgency=medium
 
   * New upstream release (2.0.0~rc6):
