@@ -1,3 +1,21 @@
+lxd (2.0.0~rc7-0ubuntu1) xenial; urgency=medium
+
+  * New upstream release (2.0.0~rc7):
+    - "lxc info" now reports resource consumption
+    - Improved bash completions
+    - Implement container creation from image properties
+    - exec: remove dead code path
+    - exec: send initial window size
+    - exec: client: don't always send window size
+    - exec: only access terminal size in interactive mode
+    - docs: s/initial/Initial
+    - Tests: Don't translate lxc output for parsing it.
+    - Workaround a URL parser issue
+    - Clarify the ZFS restore error
+    - lxd-bridge: Don't fail due to missing IPv6
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Mon, 28 Mar 2016 22:20:54 -0400
+
 lxd (2.0.0~rc6-0ubuntu2) xenial; urgency=medium
 
   * Turn on lxdbr0. This upload enables the debconf questions for lxdbr0
