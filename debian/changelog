@@ -1,3 +1,21 @@
+lxd (2.0.0~rc8-0ubuntu1) xenial; urgency=medium
+
+  * New upstream release (2.0.0~rc8):
+    - The LVM volume size is now configurable through configuration
+      rather than environment variables
+    - "lxc image alias list" now supports filtering
+    - Fix initial exec size
+    - Fix wrong packets sent value
+    - Workaround RemoveAll failures on long paths
+    - doc: Fix bad markdown
+    - Apply all templates at container startup time
+    - simplestreams: cleanup
+    - Use fork for command execution
+    - Failure to unload the apparmor profile isn't fatal
+    - Prevent deadlock on container stop failure
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Thu, 31 Mar 2016 22:13:46 -0400
+
 lxd (2.0.0~rc7-0ubuntu2) xenial; urgency=medium
 
   * Use the archive version of golang-github-mattn-go-colorable-dev.
