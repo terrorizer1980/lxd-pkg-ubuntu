@@ -1233,7 +1233,24 @@ func (c *containerLXC) OnStart() error {
 	}
 
 	// Template anything that needs templating
-	err = c.TemplateApply("start")
+	key := "volatile.apply_template"
+	if c.localConfig[key] != "" {
+		// Run any template that needs running
+		err = c.templateApplyNow(c.localConfig[key])
+		if err != nil {
+			c.StorageStop()
+			return err
+		}
+
+		// Remove the volatile key from the DB
+		err := dbContainerConfigRemove(c.daemon.db, c.id, key)
+		if err != nil {
+			c.StorageStop()
+			return err
+		}
+	}
+
+	err = c.templateApplyNow("start")
 	if err != nil {
 		c.StorageStop()
 		return err
@@ -1405,14 +1422,12 @@ func (c *containerLXC) OnStop(target string) error {
 	// Stop the storage for this container
 	err := c.StorageStop()
 	if err != nil {
+		wg.Done()
 		return err
 	}
 
-	// Unlock the apparmor profile
-	err = AAUnloadProfile(c)
-	if err != nil {
-		return err
-	}
+	// Unload the apparmor profile
+	AAUnloadProfile(c)
 
 	// FIXME: The go routine can go away once we can rely on LXC_TARGET
 	go func(c *containerLXC, target string, wg *sync.WaitGroup) {
@@ -2641,6 +2656,19 @@ func (c *containerLXC) Checkpoint(opts lxc.CheckpointOptions) error {
 }
 
 func (c *containerLXC) TemplateApply(trigger string) error {
+	// "create" and "copy" are deferred until next start
+	if shared.StringInSlice(trigger, []string{"create", "copy"}) {
+		// The two events are mutually exclusive so only keep the last one
+		err := c.ConfigKeySet("volatile.apply_template", trigger)
+		if err != nil {
+			return err
+		}
+	}
+
+	return c.templateApplyNow(trigger)
+}
+
+func (c *containerLXC) templateApplyNow(trigger string) error {
 	// If there's no metadata, just return
 	fname := filepath.Join(c.Path(), "metadata.yaml")
 	if !shared.PathExists(fname) {
@@ -2889,6 +2917,46 @@ func (c *containerLXC) FilePush(srcpath string, dstpath string, uid int, gid int
 	}
 
 	return nil
+}
+
+func (c *containerLXC) Exec(command []string, env map[string]string, stdin *os.File, stdout *os.File, stderr *os.File) (int, error) {
+	envSlice := []string{}
+
+	for k, v := range env {
+		envSlice = append(envSlice, fmt.Sprintf("%s=%s", k, v))
+	}
+
+	args := []string{c.daemon.execPath, "forkexec", c.name, c.daemon.lxcpath, filepath.Join(c.LogPath(), "lxc.conf")}
+
+	args = append(args, "--")
+	args = append(args, "env")
+	args = append(args, envSlice...)
+
+	args = append(args, "--")
+	args = append(args, "cmd")
+	args = append(args, command...)
+
+	cmd := exec.Cmd{}
+	cmd.Path = c.daemon.execPath
+	cmd.Args = args
+	cmd.Stdin = stdin
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+
+	err := cmd.Run()
+	if err != nil {
+		exitErr, ok := err.(*exec.ExitError)
+		if ok {
+			status, ok := exitErr.Sys().(syscall.WaitStatus)
+			if ok {
+				return status.ExitStatus(), nil
+			}
+		}
+
+		return -1, err
+	}
+
+	return 0, nil
 }
 
 func (c *containerLXC) diskState() map[string]shared.ContainerStateDisk {
@@ -4300,18 +4368,6 @@ func (c *containerLXC) LastIdmapSet() (*shared.IdmapSet, error) {
 	}
 
 	return lastIdmap, nil
-}
-
-func (c *containerLXC) LXContainerGet() *lxc.Container {
-	// FIXME: This function should go away
-
-	// Load the go-lxc struct
-	err := c.initLXC()
-	if err != nil {
-		return nil
-	}
-
-	return c.c
 }
 
 func (c *containerLXC) Daemon() *Daemon {
