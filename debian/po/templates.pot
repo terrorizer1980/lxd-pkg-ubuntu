@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: lxd\n"
 "Report-Msgid-Bugs-To: lxd@packages.debian.org\n"
-"POT-Creation-Date: 2016-03-23 00:30-0400\n"
+"POT-Creation-Date: 2016-04-02 02:29-0400\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,110 +17,305 @@ msgstr ""
 "Content-Type: text/plain; charset=CHARSET\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#. Type: boolean
+#. Type: note
 #. Description
 #: ../lxd.templates:1001
-msgid "Do you want to setup a new bridge for LXD containers?"
+msgid "lxcbr0 is being replaced by lxdbr0"
+msgstr ""
+
+#. Type: note
+#. Description
+#: ../lxd.templates:1001
+msgid ""
+"With this package upgrade LXD is moving away from the LXC provided lxcbr0 "
+"bridge and moving to its own lxdbr0 bridge."
+msgstr ""
+
+#. Type: note
+#. Description
+#: ../lxd.templates:1001
+msgid ""
+"The reason for this switch is:\n"
+" - Reduce the number of packages being pulled in, LXD will now only\n"
+"   depend on the LXC library but not on any of the other packages.\n"
+" - Don't have a bridge running on systems which aren't using containers.\n"
+"   The new bridge is started when LXD starts and LXD itself supports\n"
+"   systemd socket activation to only start when needed.\n"
+" - Avoid breaking connectivity by shipping a bridge which masks a\n"
+"   popular RFC1918 subnet."
+msgstr ""
+
+#. Type: note
+#. Description
+#: ../lxd.templates:1001
+msgid ""
+"Important differences between lxcbr0 and lxdbr0:\n"
+" - The lxdbr0 bridge DOES NOT come with ANY configured IPv4 or IPv6 subnet.\n"
+" - The bridge provides basic HTTP connectivity out of the box by way of\n"
+"   a tiny HTTP PROXY server running on an IPv6 link-local address.\n"
+" - The user IS EXPECTED to configure the bridge to use an UNUSED subnet\n"
+"   on their network."
+msgstr ""
+
+#. Type: note
+#. Description
+#: ../lxd.templates:1001
+msgid "To configure lxdbr0 to your liking, please run: dpkg-reconfigure lxd"
+msgstr ""
+
+#. Type: note
+#. Description
+#: ../lxd.templates:1001
+msgid ""
+"If you want to stay on the lxcbr0 bridge, you will need to make sure that "
+"the \"lxc1\" package doesn't get removed from your system and select the "
+"\"use an existing bridge\" option when running the command above."
 msgstr ""
 
 #. Type: boolean
 #. Description
 #: ../lxd.templates:2001
+msgid "Do you want LXD to setup a network bridge for you?"
+msgstr ""
+
+#. Type: boolean
+#. Description
+#: ../lxd.templates:2001
+msgid ""
+"Containers need a bridge to connect them together and to the host for "
+"outside network connectivity."
+msgstr ""
+
+#. Type: boolean
+#. Description
+#: ../lxd.templates:2001
+msgid ""
+"LXD can manage a bridge for you, or you can choose to use your own existing "
+"one instead."
+msgstr ""
+
+#. Type: boolean
+#. Description
+#: ../lxd.templates:3001
 msgid "Do you want to use an existing bridge?"
+msgstr ""
+
+#. Type: boolean
+#. Description
+#: ../lxd.templates:3001
+msgid ""
+"If you have an existing bridge you want to use for LXD containers, you will "
+"be asked for its name and LXD will be configured for you."
+msgstr ""
+
+#. Type: boolean
+#. Description
+#: ../lxd.templates:3001
+msgid ""
+"If you would rather do everything by hand or not use a bridge at all, then "
+"answer no."
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:3001
+#: ../lxd.templates:4001
 msgid "Bridge interface name:"
 msgstr ""
 
 #. Type: string
 #. Description
 #: ../lxd.templates:4001
-msgid "Path to dnsmasq config:"
-msgstr ""
-
-#. Type: string
-#. Description
-#: ../lxd.templates:4001
-msgid "When provided, this is included in the bridge configuration."
+msgid "A valid network interface name (e.g. lxdbr0)."
 msgstr ""
 
 #. Type: string
 #. Description
 #: ../lxd.templates:5001
-msgid "Domain name:"
-msgstr ""
-
-#. Type: boolean
-#. Description
-#: ../lxd.templates:6001
-msgid "Do you want to setup an IPv4 subnet?"
+msgid "Path to a dnsmasq configuration file:"
 msgstr ""
 
 #. Type: string
 #. Description
+#: ../lxd.templates:5001
+msgid ""
+"This allows you to include extra dnsmasq configuration options into the LXD "
+"managed bridge."
+msgstr ""
+
+#. Type: string
+#. Description
+#: ../lxd.templates:5001
+msgid "This must be a path to a valid configuration file."
+msgstr ""
+
+#. Type: string
+#. Description
+#: ../lxd.templates:6001
+msgid "Domain name:"
+msgstr ""
+
+#. Type: string
+#. Description
+#: ../lxd.templates:6001
+msgid "This is used to resolve other containers on the bridge."
+msgstr ""
+
+#. Type: string
+#. Description
+#: ../lxd.templates:6001
+msgid ""
+"You can then contact containers which used IPv4 DHCP to get their IP address "
+"by using <name>.<domain>."
+msgstr ""
+
+#. Type: boolean
+#. Description
 #: ../lxd.templates:7001
+msgid "Do you want to setup an IPv4 subnet?"
+msgstr ""
+
+#. Type: boolean
+#. Description
+#: ../lxd.templates:7001
+msgid "Answer yes if you want your containers to have IPv4 connectivity."
+msgstr ""
+
+#. Type: string
+#. Description
+#: ../lxd.templates:8001
 msgid "IPv4 address:"
 msgstr ""
 
 #. Type: string
 #. Description
 #: ../lxd.templates:8001
-msgid "IPv4 netmask:"
+msgid "A valid IPv4 address. (e.g. 10.0.4.1)"
 msgstr ""
 
 #. Type: string
 #. Description
 #: ../lxd.templates:9001
+msgid "IPv4 CIDR mask:"
+msgstr ""
+
+#. Type: string
+#. Description
+#: ../lxd.templates:9001
+msgid "A valid CIDR mask. (e.g. 24)"
+msgstr ""
+
+#. Type: string
+#. Description
+#: ../lxd.templates:10001
 msgid "First DHCP address:"
 msgstr ""
 
 #. Type: string
 #. Description
 #: ../lxd.templates:10001
+msgid "The first address to be handed out over DHCP (e.g. 10.0.4.2)"
+msgstr ""
+
+#. Type: string
+#. Description
+#: ../lxd.templates:11001
 msgid "Last DHCP address:"
 msgstr ""
 
 #. Type: string
 #. Description
 #: ../lxd.templates:11001
+msgid "The last address to be handed out over DHCP (e.g. 10.0.4.254)"
+msgstr ""
+
+#. Type: string
+#. Description
+#: ../lxd.templates:12001
 msgid "Max number of DHCP clients:"
 msgstr ""
 
-#. Type: boolean
+#. Type: string
 #. Description
 #: ../lxd.templates:12001
-msgid "Do you want to NAT the IPv4 traffic?"
+msgid "The maximum number of DHCP leases that can be obtained. (e.g. 250)"
 msgstr ""
 
 #. Type: boolean
 #. Description
 #: ../lxd.templates:13001
+msgid "Do you want to NAT the IPv4 traffic?"
+msgstr ""
+
+#. Type: boolean
+#. Description
+#. Type: boolean
+#. Description
+#: ../lxd.templates:13001 ../lxd.templates:17001
+msgid ""
+"If you want your containers to be able to talk to the outside world and you "
+"aren't using a routed subnet, then answer yes."
+msgstr ""
+
+#. Type: boolean
+#. Description
+#: ../lxd.templates:14001
 msgid "Do you want to setup an IPv6 subnet?"
+msgstr ""
+
+#. Type: boolean
+#. Description
+#: ../lxd.templates:14001
+msgid "Answer yes if you want your containers to have IPv6 connectivity."
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:14001
+#: ../lxd.templates:15001
 msgid "IPv6 address:"
 msgstr ""
 
 #. Type: string
 #. Description
 #: ../lxd.templates:15001
-msgid "IPv6 netmask:"
+msgid "A valid IPv6 address (e.g. 2001:470:b368:4242::1)"
 msgstr ""
 
-#. Type: boolean
+#. Type: string
 #. Description
 #: ../lxd.templates:16001
-msgid "Do you want to NAT the IPv6 traffic?"
+msgid "IPv6 CIDR mask:"
+msgstr ""
+
+#. Type: string
+#. Description
+#: ../lxd.templates:16001
+msgid "A valid IPv6 netmask (e.g. 64)"
 msgstr ""
 
 #. Type: boolean
 #. Description
 #: ../lxd.templates:17001
+msgid "Do you want to NAT the IPv6 traffic?"
+msgstr ""
+
+#. Type: boolean
+#. Description
+#: ../lxd.templates:18001
 msgid "Do you want to setup an HTTP proxy?"
+msgstr ""
+
+#. Type: boolean
+#. Description
+#: ../lxd.templates:18001
+msgid ""
+"LXD runs a minimal HTTP proxy on the bridge. This proxy is mostly useful in "
+"the default configuration where no IPv4 or IPv6 connectivity is available."
+msgstr ""
+
+#. Type: boolean
+#. Description
+#: ../lxd.templates:18001
+msgid ""
+"Once you have usable subnets configured, this is unlikely to be needed and "
+"can be turned off."
 msgstr ""
