@@ -14,6 +14,7 @@ TimeoutStopSec=40
 Restart=on-failure
 LimitNOFILE=infinity
 LimitNPROC=infinity
+TasksMax=infinity
 
 [Install]
 Also=lxd-containers.service lxd.socket
