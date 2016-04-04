@@ -60,12 +60,12 @@ else
 	debian/helpers/link-from-installed github.com/pborman/uuid
 	debian/helpers/link-from-installed github.com/syndtr/gocapability
 	debian/helpers/link-from-installed golang.org/x/crypto
+	debian/helpers/link-from-installed gopkg.in/flosch/pongo2.v3
+	debian/helpers/link-from-installed gopkg.in/inconshreveable/log15.v2
 	debian/helpers/link-from-installed gopkg.in/tomb.v2
 	debian/helpers/link-from-installed gopkg.in/yaml.v2
 
 	# Packages that aren't in the archive
-	debian/helpers/link-from-bundled gopkg.in/flosch/pongo2.v3
-	debian/helpers/link-from-bundled gopkg.in/inconshreveable/log15.v2
 	debian/helpers/link-from-bundled gopkg.in/lxc/go-lxc.v2
 endif
 
