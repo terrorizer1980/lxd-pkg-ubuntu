@@ -52,11 +52,11 @@ Architecture: any
 Pre-Depends: debconf
 Depends: acl,
          adduser,
-         gnupg,
+         dnsmasq-base,
+         iptables,
          liblxc1 (>= 1.1.0~),
          lxcfs,
          netcat-openbsd,
-         python3,
          rsync,
          uidmap,
          xz-utils,
