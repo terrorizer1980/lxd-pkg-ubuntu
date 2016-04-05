@@ -16,7 +16,7 @@ _Description: lxcbr0 is being replaced by lxdbr0
   - The user IS EXPECTED to configure the bridge to use an UNUSED subnet
     on their network.
  .
- To configure lxdbr0 to your liking, please run: dpkg-reconfigure lxd
+ To configure lxdbr0 to your liking, please run: dpkg-reconfigure -p medium lxd
  .
  To stay on the old lxcbr0 bridge, make sure you have the "lxc1"
  package installed, then select the "use an existing bridge" option.
