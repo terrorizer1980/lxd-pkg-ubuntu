@@ -576,6 +576,7 @@ func cmdInit() error {
 	var networkAddress string // Address
 	var networkPort int       // Port
 	var trustPassword string  // Trust password
+	var runReconfigure bool   // Whether to call dpkg-reconfigure
 
 	// Only root should run this
 	if os.Geteuid() != 0 {
@@ -783,6 +784,10 @@ func cmdInit() error {
 			networkPort = askInt("Port to bind LXD to (8443 recommended): ", 1, 65535)
 			trustPassword = askPassword("Trust password for new clients: ")
 		}
+
+		if askBool("Do you want to configure the LXD bridge (yes/no)? ") {
+			runReconfigure = true
+		}
 	}
 
 	if !shared.StringInSlice(storageBackend, []string{"dir", "zfs"}) {
@@ -851,6 +856,17 @@ func cmdInit() error {
 			if err != nil {
 				return err
 			}
+		}
+	}
+
+	if runReconfigure {
+		cmd := exec.Command("dpkg-reconfigure", "lxd")
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		err := cmd.Run()
+		if err != nil {
+			return fmt.Errorf("Failed to configure the bridge")
 		}
 	}
 
