@@ -1,4 +1,4 @@
-From b36febf4b5e83e50f765b474f0f22b80658e54da Mon Sep 17 00:00:00 2001
+From e9cec1910ce695112f614a5af77f846bfc3f6f37 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
 Date: Sat, 2 Apr 2016 18:28:38 -0400
 Subject: Run lxd-bridge's dnsmasq as the lxd user

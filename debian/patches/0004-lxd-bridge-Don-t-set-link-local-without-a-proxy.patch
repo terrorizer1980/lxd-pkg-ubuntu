@@ -1,4 +1,4 @@
-From aa58474c65a38f28b270294d53c59d3331820727 Mon Sep 17 00:00:00 2001
+From 36da54380915a70b72054099160de8d14d1c1fa5 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
 Date: Mon, 4 Apr 2016 15:56:06 -0400
 Subject: lxd-bridge: Don't set link-local without a proxy

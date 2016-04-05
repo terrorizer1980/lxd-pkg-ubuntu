@@ -860,7 +860,7 @@ func cmdInit() error {
 	}
 
 	if runReconfigure {
-		cmd := exec.Command("dpkg-reconfigure", "lxd")
+		cmd := exec.Command("dpkg-reconfigure", "-p", "medium", "lxd")
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
