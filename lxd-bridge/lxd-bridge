@@ -51,7 +51,7 @@ ifdown() {
 }
 
 ifup() {
-    [ "${HAS_IPV6}" = "true" ] && ip addr add fe80::1/64 dev "${1}"
+    [ "${HAS_IPV6}" = "true" ] && [ "${LXD_IPV6_PROXY}" = "true" ] && ip addr add fe80::1/64 dev "${1}"
     if [ -n "${LXD_IPV4_NETMASK}" ] && [ -n "${LXD_IPV4_ADDR}" ]; then
         MASK=$(_netmask2cidr ${LXD_IPV4_NETMASK})
         CIDR_ADDR="${LXD_IPV4_ADDR}/${MASK}"
@@ -155,7 +155,7 @@ start() {
     fi
 
     # https://lists.linuxcontainers.org/pipermail/lxc-devel/2014-October/010561.html
-    for DNSMASQ_USER in lxd-dnsmasq dnsmasq nobody
+    for DNSMASQ_USER in lxd dnsmasq nobody
     do
         if getent passwd "${DNSMASQ_USER}" >/dev/null; then
             break
@@ -168,7 +168,7 @@ start() {
     fi
 
     if [ "${HAS_IPV6}" = "true" ] && [ "${LXD_IPV6_PROXY}" = "true" ]; then
-        PATH="${PATH}:$(dirname "${0}")" lxd-bridge-proxy --addr="[fe80::1%${LXD_BRIDGE}]:3128" &
+        PATH="${PATH}:$(dirname "${0}")" lxd-bridge-proxy --addr="[fe80::1%${LXD_BRIDGE}]:13128" &
         PID=$!
         echo "${PID}" > "${varrun}/proxy.pid"
     fi
