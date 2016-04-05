@@ -1,3 +1,45 @@
+lxd (2.0.0~rc8-0ubuntu3) xenial; urgency=medium
+
+  * Switch from lxcbr0 to lxdbr0.
+    - Show upgrade warning telling users to configure lxdbr0.
+    - Force re-application of the bridge settings to move everyone off lxcbr0.
+    - Drop dependency on lxc (no longer needed).
+    - Properly stop/start the lxd bridge during reconfigure on systemd systems.
+    - Remove compatibility code.
+    - Add more details to existing debconf templates.
+    - Fix typo in cidr function name.
+    - Don't parse an empty netmask as a CIDR mask of 0.
+    - Fix logic when disabling IPv4 or IPv6 networking.
+    - Print a warning message about LXD networking from postinst.
+    - Make the tests depend on lxc1 (upstream testsuite uses lxcbr0)
+    - Cherry-pick lxd-bridge fixes from upstream:
+      + lxd-bridge-proxy: Bump port number to 13128
+      + Run lxd-bridge's dnsmasq as the lxd user
+      + lxd-bridge: Don't set link-local without a proxy
+    - Apply distro patch:
+      + Have lxd init offer to call dpkg-reconfigure
+
+    The reason for the switch away from lxcbr0 is to avoid masking the
+    10.0.3.0/24 subnet on a whole lot of Ubuntu systems which may not even
+    be using containers.
+
+    The new bridge provides basic http connectivity through a proxy out
+    of the box and requires manual configuration for anything else.
+
+    To reconfigure the bridge, run: dpkg-reconfigure lxd
+
+  * Bump standard to 3.9.7, no change required.
+  * Update systemd unit to not limit the number of threads.
+  * Switch to archive copies of:
+    - golang-gopkg-flosch-pongo2.v3-dev
+    - golang-gopkg-inconshreveable-log15.v2-dev
+  * Fix new lintian warnings:
+    - Add Documentation field to systemd units
+    - Change Vcs-Git to https
+    - Update overrides (typos and golang stuff)
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Mon, 04 Apr 2016 22:31:01 -0400
+
 lxd (2.0.0~rc8-0ubuntu2) xenial; urgency=medium
 
   * Use the archive version of gorilla-websocket.
