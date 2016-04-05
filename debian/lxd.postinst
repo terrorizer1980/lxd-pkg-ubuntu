@@ -115,7 +115,7 @@ if [ -z "${2}" ]; then
     echo ""
     echo "The default LXD bridge, lxdbr0, comes unconfigured by default."
     echo "Only limited HTTP connectivity through a PROXY will be available."
-    echo "To configure a valid subnet, run: dpkg-reconfigure -p medium lxd"
+    echo "To go through the initial LXD configuration, run: lxd init"
     echo ""
 fi
 
