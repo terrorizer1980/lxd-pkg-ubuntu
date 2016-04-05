@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: lxd\n"
 "Report-Msgid-Bugs-To: lxd@packages.debian.org\n"
-"POT-Creation-Date: 2016-04-02 02:29-0400\n"
+"POT-Creation-Date: 2016-04-04 21:45-0400\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -36,13 +36,9 @@ msgstr ""
 #: ../lxd.templates:1001
 msgid ""
 "The reason for this switch is:\n"
-" - Reduce the number of packages being pulled in, LXD will now only\n"
-"   depend on the LXC library but not on any of the other packages.\n"
-" - Don't have a bridge running on systems which aren't using containers.\n"
-"   The new bridge is started when LXD starts and LXD itself supports\n"
-"   systemd socket activation to only start when needed.\n"
-" - Avoid breaking connectivity by shipping a bridge which masks a\n"
-"   popular RFC1918 subnet."
+" - Drop the dependency on the old LXC (lxc1) package.\n"
+" - Only run the bridge when LXD is running.\n"
+" - Don't hardcode a subnet which may be used by the user."
 msgstr ""
 
 #. Type: note
@@ -67,9 +63,8 @@ msgstr ""
 #. Description
 #: ../lxd.templates:1001
 msgid ""
-"If you want to stay on the lxcbr0 bridge, you will need to make sure that "
-"the \"lxc1\" package doesn't get removed from your system and select the "
-"\"use an existing bridge\" option when running the command above."
+"To stay on the old lxcbr0 bridge, make sure you have the \"lxc1\" package "
+"installed, then select the \"use an existing bridge\" option."
 msgstr ""
 
 #. Type: boolean
@@ -177,7 +172,7 @@ msgstr ""
 #. Type: boolean
 #. Description
 #: ../lxd.templates:7001
-msgid "Answer yes if you want your containers to have IPv4 connectivity."
+msgid "This is needed to provide IPv4 connectivity for your containers."
 msgstr ""
 
 #. Type: string
@@ -248,12 +243,8 @@ msgstr ""
 
 #. Type: boolean
 #. Description
-#. Type: boolean
-#. Description
-#: ../lxd.templates:13001 ../lxd.templates:17001
-msgid ""
-"If you want your containers to be able to talk to the outside world and you "
-"aren't using a routed subnet, then answer yes."
+#: ../lxd.templates:13001
+msgid "This is needed unless you are using a routed IPv4 subnet."
 msgstr ""
 
 #. Type: boolean
@@ -265,7 +256,7 @@ msgstr ""
 #. Type: boolean
 #. Description
 #: ../lxd.templates:14001
-msgid "Answer yes if you want your containers to have IPv6 connectivity."
+msgid "This is needed to provide IPv6 connectivity for your containers."
 msgstr ""
 
 #. Type: string
@@ -296,6 +287,12 @@ msgstr ""
 #. Description
 #: ../lxd.templates:17001
 msgid "Do you want to NAT the IPv6 traffic?"
+msgstr ""
+
+#. Type: boolean
+#. Description
+#: ../lxd.templates:17001
+msgid "This is needed unless you are using a routed IPv6 subnet."
 msgstr ""
 
 #. Type: boolean
