@@ -7,7 +7,7 @@ Requires=lxd.socket
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/lxd activateifneeded
-ExecStop=/usr/bin/lxd shutdown
+ExecStop=/usr/lib/lxd/shutdown
 TimeoutStartSec=30s
 TimeoutStopSec=90s
 RemainAfterExit=yes
