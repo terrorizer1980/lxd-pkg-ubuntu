@@ -26,6 +26,7 @@ func cmdInit() error {
 	var networkAddress string // Address
 	var networkPort int64     // Port
 	var trustPassword string  // Trust password
+	var runReconfigure bool   // Whether to call dpkg-reconfigure
 
 	// Detect userns
 	defaultPrivileged = -1
@@ -167,6 +168,11 @@ func cmdInit() error {
 	}
 
 	if len(containers) > 0 || len(images) > 0 {
+		fmt.Printf(`LXD init cannot be used at this time.
++However if all you want to do is reconfigure the network,
++you can still do so by running "sudo dpkg-reconfigure -p medium lxd"
+
+`)
 		return fmt.Errorf("You have existing containers or images. lxd init requires an empty LXD.")
 	}
 
@@ -321,6 +327,10 @@ they otherwise would.
 			networkPort = askInt("Port to bind LXD to [default=8443]: ", 1, 65535, "8443")
 			trustPassword = askPassword("Trust password for new clients: ")
 		}
+
+		if askBool("Do you want to configure the LXD bridge (yes/no) [default=yes]? ", "yes") {
+			runReconfigure = true
+		}
 	}
 
 	if !shared.StringInSlice(storageBackend, []string{"dir", "zfs"}) {
@@ -403,6 +413,17 @@ they otherwise would.
 			if err != nil {
 				return err
 			}
+		}
+	}
+
+	if runReconfigure {
+		cmd := exec.Command("dpkg-reconfigure", "-p", "medium", "lxd")
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		err := cmd.Run()
+		if err != nil {
+			return fmt.Errorf("Failed to configure the bridge")
 		}
 	}
 
