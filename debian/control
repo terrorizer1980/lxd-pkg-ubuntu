@@ -4,7 +4,7 @@ Priority: optional
 Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
 Standards-Version: 3.9.7
 Homepage: https://linuxcontainers.org/
-Vcs-Git: git://github.com/lxc/lxd-pkg-ubuntu
+Vcs-Git: https://github.com/lxc/lxd-pkg-ubuntu
 Vcs-Browser: https://github.com/lxc/lxd-pkg-ubuntu
 Build-Depends: debhelper (>= 9),
                dh-golang,
@@ -48,6 +48,7 @@ Description: Container hypervisor based on LXC - client
 
 Package: lxd
 Architecture: any
+Pre-Depends: debconf
 Depends: acl,
          adduser,
          gnupg,
