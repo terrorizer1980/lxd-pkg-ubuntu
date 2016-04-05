@@ -53,7 +53,7 @@ _Description: Path to a dnsmasq configuration file:
  This allows you to include extra dnsmasq configuration options into the
  LXD managed bridge.
  .
- This must be a path to a valid configuration file.
+ If set, this must be a path to a valid configuration file.
 
 Template: lxd/bridge-domain
 Type: string

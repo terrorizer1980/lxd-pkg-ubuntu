@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: lxd\n"
 "Report-Msgid-Bugs-To: lxd@packages.debian.org\n"
-"POT-Creation-Date: 2016-04-04 22:11-0400\n"
+"POT-Creation-Date: 2016-04-05 15:00-0400\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -140,7 +140,7 @@ msgstr ""
 #. Type: string
 #. Description
 #: ../lxd.templates:5001
-msgid "This must be a path to a valid configuration file."
+msgid "If set, this must be a path to a valid configuration file."
 msgstr ""
 
 #. Type: string
