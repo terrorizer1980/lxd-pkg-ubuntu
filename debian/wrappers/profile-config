@@ -21,7 +21,7 @@ if [ "$(lxc profile device get default eth0 nictype --force-local 2>/dev/null)" 
         fi
 
         if [ "${LXD_IPV6_PROXY}" = "true" ]; then
-            lxc profile set default environment.http_proxy "http://[fe80::1%eth0]:3128" --force-local || true
+            lxc profile set default environment.http_proxy "http://[fe80::1%eth0]:13128" --force-local || true
         fi
     fi
 fi
