@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: lxd\n"
 "Report-Msgid-Bugs-To: lxd@packages.debian.org\n"
-"POT-Creation-Date: 2016-04-04 21:45-0400\n"
+"POT-Creation-Date: 2016-04-04 22:11-0400\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -304,9 +304,15 @@ msgstr ""
 #. Type: boolean
 #. Description
 #: ../lxd.templates:18001
+msgid "LXD runs a minimal HTTP proxy on the bridge."
+msgstr ""
+
+#. Type: boolean
+#. Description
+#: ../lxd.templates:18001
 msgid ""
-"LXD runs a minimal HTTP proxy on the bridge. This proxy is mostly useful in "
-"the default configuration where no IPv4 or IPv6 connectivity is available."
+"This proxy is mostly useful in the default configuration where no IPv4 or "
+"IPv6 connectivity is available."
 msgstr ""
 
 #. Type: boolean

@@ -127,9 +127,10 @@ Template: lxd/bridge-http-proxy
 Type: boolean
 Default: true
 _Description: Do you want to setup an HTTP proxy?
- LXD runs a minimal HTTP proxy on the bridge. This proxy is mostly
- useful in the default configuration where no IPv4 or IPv6 connectivity
- is available.
+ LXD runs a minimal HTTP proxy on the bridge.
+ .
+ This proxy is mostly useful in the default configuration where no IPv4
+ or IPv6 connectivity is available.
  .
  Once you have usable subnets configured, this is unlikely to be needed
  and can be turned off.
