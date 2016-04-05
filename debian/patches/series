@@ -1,3 +1,4 @@
 0001-lxd-bridge-proxy-Bump-port-number-to-13128.patch
 0002-Run-lxd-bridge-s-dnsmasq-as-the-lxd-user.patch
 0003-lxd-bridge-Don-t-set-link-local-without-a-proxy.patch
+0004-init-Allow-running-dpkg-reconfigure.patch
