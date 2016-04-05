@@ -1,3 +1,14 @@
+lxd (2.0.0~rc8-0ubuntu5) xenial; urgency=medium
+
+  * Update dependencies:
+    - Depend on dnsmasq-base for lxd-bridge
+    - Depend on iptables for lxd-bridge
+    - Drop dependency on python3 (lxd-images is no more)
+    - Drop dependency on gnupg (lxd-images is no more)
+  * Recommend "lxd init" at installation time rather than dpkg-reconfigure.
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Tue, 05 Apr 2016 17:31:07 -0400
+
 lxd (2.0.0~rc8-0ubuntu4) xenial; urgency=medium
 
   * Debconf configuration of lxdbr0
