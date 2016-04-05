@@ -64,7 +64,6 @@ case "$1" in
             . /usr/share/debconf/confmodule
             db_input critical lxd/bridge-upgrade-warning || true
             db_go
-            rm -f /var/lib/lxd-bridge/timestamp
         fi
     ;;
 

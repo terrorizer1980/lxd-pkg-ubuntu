@@ -1,7 +1,9 @@
 #!/bin/sh
 set -e
 
-if ([ "$1" = "configure" ] && [ ! -e /etc/default/lxd-bridge ]) || [ -n "${DEBCONF_RECONFIGURE}" ]; then
+if ([ "$1" = "configure" ] && [ ! -e /etc/default/lxd-bridge ]) || \
+        [ -n "${DEBCONF_RECONFIGURE}" ] || \
+        ([ -n "${2}" ] && dpkg --compare-versions "${2}" lt "2.0.0~rc8-0ubuntu3~"); then
     . /usr/share/debconf/confmodule
 
     cidrmask() {
