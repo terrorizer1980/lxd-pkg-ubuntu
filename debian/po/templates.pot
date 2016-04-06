@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: lxd\n"
 "Report-Msgid-Bugs-To: lxd@packages.debian.org\n"
-"POT-Creation-Date: 2016-04-05 15:02-0400\n"
+"POT-Creation-Date: 2016-04-06 09:43-0400\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -186,7 +186,7 @@ msgstr ""
 #. Type: string
 #. Description
 #: ../lxd.templates:8001
-msgid "A valid IPv4 address. (e.g. 10.0.4.1)"
+msgid "A valid IPv4 address. (e.g. 10.0.8.1)"
 msgstr ""
 
 #. Type: string
@@ -210,7 +210,7 @@ msgstr ""
 #. Type: string
 #. Description
 #: ../lxd.templates:10001
-msgid "The first address to be handed out over DHCP (e.g. 10.0.4.2)"
+msgid "The first address to be handed out over DHCP (e.g. 10.0.8.2)"
 msgstr ""
 
 #. Type: string
@@ -222,7 +222,7 @@ msgstr ""
 #. Type: string
 #. Description
 #: ../lxd.templates:11001
-msgid "The last address to be handed out over DHCP (e.g. 10.0.4.254)"
+msgid "The last address to be handed out over DHCP (e.g. 10.0.8.254)"
 msgstr ""
 
 #. Type: string

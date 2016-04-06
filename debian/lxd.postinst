@@ -64,16 +64,16 @@ LXD_CONFILE="${bridge_dnsmasq}"
 LXD_DOMAIN="${bridge_domain}"
 
 # IPv4
-## IPv4 address (e.g. 10.0.4.1)
+## IPv4 address (e.g. 10.0.8.1)
 LXD_IPV4_ADDR="${ipv4_address}"
 
 ## IPv4 netmask (e.g. 255.255.255.0)
 LXD_IPV4_NETMASK="${ipv4_netmask}"
 
-## IPv4 network (e.g. 10.0.4.0/24)
+## IPv4 network (e.g. 10.0.8.0/24)
 LXD_IPV4_NETWORK="${ipv4_network}"
 
-## IPv4 DHCP range (e.g. 10.0.4.2,10.0.4.254)
+## IPv4 DHCP range (e.g. 10.0.8.2,10.0.8.254)
 LXD_IPV4_DHCP_RANGE="${ipv4_dhcp_range}"
 
 ## IPv4 DHCP number of hosts (e.g. 250)
