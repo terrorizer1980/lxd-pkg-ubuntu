@@ -20,6 +20,7 @@ if ([ "$1" = "configure" ] && [ ! -e /etc/default/lxd-bridge ]) || \
     # Get values
     bridge=$(dbget lxd/setup-bridge)
     bridge_name=$(dbget lxd/bridge-name)
+    update_profile=$(dbget lxd/update-profile)
     ipv4_address=$(dbget lxd/bridge-ipv4-address)
     ipv4_cidr=$(dbget lxd/bridge-ipv4-netmask)
     ipv4_dhcp_first=$(dbget lxd/bridge-ipv4-dhcp-first)
@@ -56,6 +57,9 @@ USE_LXD_BRIDGE="${bridge}"
 # This is still used even if USE_LXD_BRIDGE is set to false
 # set to an empty value to fully disable
 LXD_BRIDGE="${bridge_name}"
+
+# Update the "default" LXD profile
+UPDATE_PROFILE="${update_profile}"
 
 # Path to an extra dnsmasq configuration file
 LXD_CONFILE="${bridge_dnsmasq}"

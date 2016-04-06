@@ -52,6 +52,18 @@ _Description: Do you want to use an existing bridge?
  If you would rather do everything by hand or not use a bridge at all,
  then answer no.
 
+Template: lxd/update-profile
+Type: boolean
+Default: true
+_Description: Would you like to have the default LXD profile use this bridge?
+ LXD uses configuration profiles to group configuration option for containers.
+ .
+ With this option, you can control whether the default LXD profile should be
+ automatically updated to use this bridge.
+ .
+ If set, the "eth0" device of the default profile will be set to use
+ the LXD bridge.
+
 Template: lxd/bridge-name
 Type: string
 Default: lxdbr0
