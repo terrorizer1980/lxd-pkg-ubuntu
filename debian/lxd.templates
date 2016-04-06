@@ -24,12 +24,16 @@ _Description: lxcbr0 is being replaced by lxdbr0
 Template: lxd/setup-bridge
 Type: boolean
 Default: true
-_Description: Do you want LXD to setup a network bridge for you?
+_Description: Would you like to setup a network bridge for LXD containers now?
  Containers need a bridge to connect them together and to the host for
  outside network connectivity.
  .
- LXD can manage a bridge for you, or you can choose to use your own
- existing one instead.
+ Choosing this option will let you configure the default LXD bridge to
+ your liking.
+ .
+ If you would rather not have LXD do this for you, then you will be
+ asked whether you want to use an existing bridge or just do everything
+ manually.
 
 Template: lxd/use-existing-bridge
 Type: boolean
