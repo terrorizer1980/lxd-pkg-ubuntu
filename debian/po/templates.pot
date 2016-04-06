@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: lxd\n"
 "Report-Msgid-Bugs-To: lxd@packages.debian.org\n"
-"POT-Creation-Date: 2016-04-06 12:32-0400\n"
+"POT-Creation-Date: 2016-04-06 12:39-0400\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -69,15 +69,33 @@ msgid ""
 "installed, then select the \"use an existing bridge\" option."
 msgstr ""
 
-#. Type: boolean
+#. Type: note
 #. Description
 #: ../lxd.templates:2001
+msgid "Empty values are not allowed."
+msgstr ""
+
+#. Type: note
+#. Description
+#: ../lxd.templates:2001
+msgid "The question you just answered requires you to provide a value."
+msgstr ""
+
+#. Type: note
+#. Description
+#: ../lxd.templates:2001
+msgid "An example value is usually provided in the question description."
+msgstr ""
+
+#. Type: boolean
+#. Description
+#: ../lxd.templates:3001
 msgid "Would you like to setup a network bridge for LXD containers now?"
 msgstr ""
 
 #. Type: boolean
 #. Description
-#: ../lxd.templates:2001
+#: ../lxd.templates:3001
 msgid ""
 "Containers need a bridge to connect them together and to the host for "
 "outside network connectivity."
@@ -85,7 +103,7 @@ msgstr ""
 
 #. Type: boolean
 #. Description
-#: ../lxd.templates:2001
+#: ../lxd.templates:3001
 msgid ""
 "Choosing this option will let you configure the default LXD bridge to your "
 "liking."
@@ -93,7 +111,7 @@ msgstr ""
 
 #. Type: boolean
 #. Description
-#: ../lxd.templates:2001
+#: ../lxd.templates:3001
 msgid ""
 "If you would rather not have LXD do this for you, then you will be asked "
 "whether you want to use an existing bridge or just do everything manually."
@@ -101,13 +119,13 @@ msgstr ""
 
 #. Type: boolean
 #. Description
-#: ../lxd.templates:3001
+#: ../lxd.templates:4001
 msgid "Do you want to use an existing bridge?"
 msgstr ""
 
 #. Type: boolean
 #. Description
-#: ../lxd.templates:3001
+#: ../lxd.templates:4001
 msgid ""
 "If you have an existing bridge you want to use for LXD containers, you will "
 "be asked for its name and LXD will be configured for you."
@@ -115,7 +133,7 @@ msgstr ""
 
 #. Type: boolean
 #. Description
-#: ../lxd.templates:3001
+#: ../lxd.templates:4001
 msgid ""
 "If you would rather do everything by hand or not use a bridge at all, then "
 "answer no."
@@ -123,25 +141,25 @@ msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:4001
+#: ../lxd.templates:5001
 msgid "Bridge interface name:"
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:4001
+#: ../lxd.templates:5001
 msgid "A valid network interface name (e.g. lxdbr0)."
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:5001
+#: ../lxd.templates:6001
 msgid "Path to a dnsmasq configuration file:"
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:5001
+#: ../lxd.templates:6001
 msgid ""
 "This allows you to include extra dnsmasq configuration options into the LXD "
 "managed bridge."
@@ -149,25 +167,25 @@ msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:5001
+#: ../lxd.templates:6001
 msgid "If set, this must be a path to a valid configuration file."
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:6001
+#: ../lxd.templates:7001
 msgid "Domain name:"
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:6001
+#: ../lxd.templates:7001
 msgid "This is used to resolve other containers on the bridge."
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:6001
+#: ../lxd.templates:7001
 msgid ""
 "You can then contact containers which used IPv4 DHCP to get their IP address "
 "by using <name>.<domain>."
@@ -175,151 +193,151 @@ msgstr ""
 
 #. Type: boolean
 #. Description
-#: ../lxd.templates:7001
+#: ../lxd.templates:8001
 msgid "Do you want to setup an IPv4 subnet?"
 msgstr ""
 
 #. Type: boolean
 #. Description
-#: ../lxd.templates:7001
+#: ../lxd.templates:8001
 msgid "This is needed to provide IPv4 connectivity for your containers."
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:8001
+#: ../lxd.templates:9001
 msgid "IPv4 address:"
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:8001
+#: ../lxd.templates:9001
 msgid "A valid IPv4 address. (e.g. 10.0.8.1)"
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:9001
+#: ../lxd.templates:10001
 msgid "IPv4 CIDR mask:"
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:9001
+#: ../lxd.templates:10001
 msgid "A valid CIDR mask. (e.g. 24)"
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:10001
+#: ../lxd.templates:11001
 msgid "First DHCP address:"
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:10001
+#: ../lxd.templates:11001
 msgid "The first address to be handed out over DHCP (e.g. 10.0.8.2)"
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:11001
+#: ../lxd.templates:12001
 msgid "Last DHCP address:"
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:11001
+#: ../lxd.templates:12001
 msgid "The last address to be handed out over DHCP (e.g. 10.0.8.254)"
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:12001
+#: ../lxd.templates:13001
 msgid "Max number of DHCP clients:"
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:12001
+#: ../lxd.templates:13001
 msgid "The maximum number of DHCP leases that can be obtained. (e.g. 250)"
 msgstr ""
 
 #. Type: boolean
 #. Description
-#: ../lxd.templates:13001
+#: ../lxd.templates:14001
 msgid "Do you want to NAT the IPv4 traffic?"
 msgstr ""
 
 #. Type: boolean
 #. Description
-#: ../lxd.templates:13001
+#: ../lxd.templates:14001
 msgid "This is needed unless you are using a routed IPv4 subnet."
 msgstr ""
 
 #. Type: boolean
 #. Description
-#: ../lxd.templates:14001
+#: ../lxd.templates:15001
 msgid "Do you want to setup an IPv6 subnet?"
 msgstr ""
 
 #. Type: boolean
 #. Description
-#: ../lxd.templates:14001
+#: ../lxd.templates:15001
 msgid "This is needed to provide IPv6 connectivity for your containers."
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:15001
+#: ../lxd.templates:16001
 msgid "IPv6 address:"
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:15001
+#: ../lxd.templates:16001
 msgid "A valid IPv6 address (e.g. 2001:470:b368:4242::1)"
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:16001
+#: ../lxd.templates:17001
 msgid "IPv6 CIDR mask:"
 msgstr ""
 
 #. Type: string
 #. Description
-#: ../lxd.templates:16001
+#: ../lxd.templates:17001
 msgid "A valid IPv6 netmask (e.g. 64)"
 msgstr ""
 
 #. Type: boolean
 #. Description
-#: ../lxd.templates:17001
+#: ../lxd.templates:18001
 msgid "Do you want to NAT the IPv6 traffic?"
 msgstr ""
 
 #. Type: boolean
 #. Description
-#: ../lxd.templates:17001
+#: ../lxd.templates:18001
 msgid "This is needed unless you are using a routed IPv6 subnet."
 msgstr ""
 
 #. Type: boolean
 #. Description
-#: ../lxd.templates:18001
+#: ../lxd.templates:19001
 msgid "Do you want to setup an HTTP proxy?"
 msgstr ""
 
 #. Type: boolean
 #. Description
-#: ../lxd.templates:18001
+#: ../lxd.templates:19001
 msgid "LXD runs a minimal HTTP proxy on the bridge."
 msgstr ""
 
 #. Type: boolean
 #. Description
-#: ../lxd.templates:18001
+#: ../lxd.templates:19001
 msgid ""
 "This proxy is mostly useful in the default configuration where no IPv4 or "
 "IPv6 connectivity is available."
@@ -327,7 +345,7 @@ msgstr ""
 
 #. Type: boolean
 #. Description
-#: ../lxd.templates:18001
+#: ../lxd.templates:19001
 msgid ""
 "Once you have usable subnets configured, this is unlikely to be needed and "
 "can be turned off."

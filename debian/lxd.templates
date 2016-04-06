@@ -21,6 +21,13 @@ _Description: lxcbr0 is being replaced by lxdbr0
  To stay on the old lxcbr0 bridge, make sure you have the "lxc1"
  package installed, then select the "use an existing bridge" option.
 
+Template: lxd/bridge-empty-error
+Type: note
+_Description: Empty values are not allowed.
+ The question you just answered requires you to provide a value.
+ .
+ An example value is usually provided in the question description.
+
 Template: lxd/setup-bridge
 Type: boolean
 Default: true
