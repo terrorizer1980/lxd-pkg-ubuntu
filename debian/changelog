@@ -1,3 +1,12 @@
+lxd (2.0.0~rc8-0ubuntu6) xenial; urgency=medium
+
+  * Change the suggested lxdbr0 IPv4 subnet to 10.0.8.0/24
+    The old suggested value of 10.0.4.0/24 happens to be what nested
+    containers would usually pick for their lxcbr0 bridge, causing yet
+    another network masking issue for users who don't check beforehands.
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 06 Apr 2016 09:46:39 -0400
+
 lxd (2.0.0~rc8-0ubuntu5) xenial; urgency=medium
 
   * Update dependencies:
