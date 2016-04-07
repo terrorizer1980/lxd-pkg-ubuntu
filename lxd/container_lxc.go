@@ -775,6 +775,15 @@ func (c *containerLXC) initLXC() error {
 
 			// Deal with a rootfs
 			if tgtPath == "" {
+				// Set the rootfs backend type if supported (must happen before any other lxc.rootfs)
+				err := lxcSetConfigItem(cc, "lxc.rootfs.backend", "dir")
+				if err == nil {
+					value := cc.ConfigItem("lxc.rootfs.backend")
+					if len(value) == 0 || value[0] != "dir" {
+						lxcSetConfigItem(cc, "lxc.rootfs.backend", "")
+					}
+				}
+
 				// Set the rootfs path
 				err = lxcSetConfigItem(cc, "lxc.rootfs", c.RootfsPath())
 				if err != nil {
@@ -963,6 +972,11 @@ func (c *containerLXC) startCommon() (string, error) {
 				return "", err
 			}
 		}
+
+		err = c.StorageStop()
+		if err != nil {
+			return "", err
+		}
 	}
 
 	err = c.ConfigKeySet("volatile.last_state.idmap", jsonIdmap)
@@ -1133,7 +1147,7 @@ func (c *containerLXC) Start(stateful bool) error {
 		}
 		CollectCRIULogFile(c, c.StatePath(), "snapshot", "restore")
 
-		if err != nil {
+		if err != nil && !c.IsRunning() {
 			return err
 		}
 
@@ -1168,7 +1182,7 @@ func (c *containerLXC) Start(stateful bool) error {
 		}
 	}
 
-	if err != nil {
+	if err != nil && !c.IsRunning() {
 		return fmt.Errorf(
 			"Error calling 'lxd forkstart %s %s %s': err='%v'",
 			c.name,
@@ -1202,7 +1216,7 @@ func (c *containerLXC) StartFromMigration(imagesDir string) error {
 		}
 	}
 
-	if err != nil {
+	if err != nil && !c.IsRunning() {
 		return fmt.Errorf(
 			"Error calling 'lxd forkmigrate %s %s %s %s': err='%v'",
 			c.name,

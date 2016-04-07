@@ -1,4 +1,4 @@
-From 043aeebead4d7b2e5c4cbc6b4681d58698d3e6d2 Mon Sep 17 00:00:00 2001
+From f0d06c8c75e10802a3fe2d6dccac07f37c69ff69 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
 Date: Mon, 4 Apr 2016 21:18:28 -0400
 Subject: init: Allow running dpkg-reconfigure
@@ -12,10 +12,10 @@ Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
  1 file changed, 16 insertions(+)
 
 diff --git a/lxd/main.go b/lxd/main.go
-index ca1245c..c483766 100644
+index 9f90613..f459ed7 100644
 --- a/lxd/main.go
 +++ b/lxd/main.go
-@@ -576,6 +576,7 @@ func cmdInit() error {
+@@ -583,6 +583,7 @@ func cmdInit() error {
  	var networkAddress string // Address
  	var networkPort int       // Port
  	var trustPassword string  // Trust password
@@ -23,7 +23,7 @@ index ca1245c..c483766 100644
  
  	// Only root should run this
  	if os.Geteuid() != 0 {
-@@ -783,6 +784,10 @@ func cmdInit() error {
+@@ -790,6 +791,10 @@ func cmdInit() error {
  			networkPort = askInt("Port to bind LXD to (8443 recommended): ", 1, 65535)
  			trustPassword = askPassword("Trust password for new clients: ")
  		}
@@ -34,7 +34,7 @@ index ca1245c..c483766 100644
  	}
  
  	if !shared.StringInSlice(storageBackend, []string{"dir", "zfs"}) {
-@@ -854,6 +859,17 @@ func cmdInit() error {
+@@ -861,6 +866,17 @@ func cmdInit() error {
  		}
  	}
  
