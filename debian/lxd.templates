@@ -133,7 +133,7 @@ _Description: Do you want to setup an IPv6 subnet?
 Template: lxd/bridge-ipv6-address
 Type: string
 _Description: IPv6 address:
- A valid IPv6 address (e.g. 2001:470:b368:4242::1)
+ A valid IPv6 address (e.g. fd98:9e0:3744::1)
 
 Template: lxd/bridge-ipv6-netmask
 Type: string

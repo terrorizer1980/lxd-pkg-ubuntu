@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: lxd\n"
 "Report-Msgid-Bugs-To: lxd@packages.debian.org\n"
-"POT-Creation-Date: 2016-04-06 16:04-0400\n"
+"POT-Creation-Date: 2016-04-07 09:43-0400\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -325,7 +325,7 @@ msgstr ""
 #. Type: string
 #. Description
 #: ../lxd.templates:17001
-msgid "A valid IPv6 address (e.g. 2001:470:b368:4242::1)"
+msgid "A valid IPv6 address (e.g. fd98:9e0:3744::1)"
 msgstr ""
 
 #. Type: string
