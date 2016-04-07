@@ -697,6 +697,11 @@ func cmdInit() error {
 	}
 
 	if len(containers) > 0 || len(images) > 0 {
+		fmt.Printf(`LXD init cannot be used at this time.
+However if all you want to do is reconfigure the network,
+you can still do so by running "sudo dpkg-reconfigure -p medium lxd"
+
+`)
 		return fmt.Errorf("You have existing containers or images. lxd init requires an empty LXD.")
 	}
 
