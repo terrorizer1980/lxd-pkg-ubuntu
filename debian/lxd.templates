@@ -23,7 +23,7 @@ _Description: lxcbr0 is being replaced by lxdbr0
 
 Template: lxd/bridge-empty-error
 Type: note
-_Description: Empty values are not allowed.
+_Description: Empty values are not allowed
  The question you just answered requires you to provide a value.
  .
  An example value is usually provided in the question description.
