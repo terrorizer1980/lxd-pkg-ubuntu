@@ -1,3 +1,12 @@
+lxd (2.0.0~rc9-0ubuntu3) xenial; urgency=medium
+
+  * More lxdbr0 tweaks:
+    - Generate a random IPv4 and IPv6 subnet and pre-fill the questions
+      with it at interactive configuration time. (LP: #1567440)
+    - Point users towards dpkg-reconfigure if lxd init can't be run.
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Thu, 07 Apr 2016 15:26:33 -0400
+
 lxd (2.0.0~rc9-0ubuntu2) xenial; urgency=medium
 
   * Fix the missing lxdbr0 bridge when running the tests.
