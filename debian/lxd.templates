@@ -21,6 +21,18 @@ _Description: lxcbr0 is being replaced by lxdbr0
  To stay on the old lxcbr0 bridge, make sure you have the "lxc1"
  package installed, then select the "use an existing bridge" option.
 
+Template: lxd/bridge-random-warning
+Type: note
+_Description: A random subnet was selected for you
+ This subnet was selected for your convenience and the next questions have been
+ pre-answered accordingly.
+ .
+ Please make sure this subnet isn't already in use somewhere on your
+ network, if it is, change it to one which isn't.
+ .
+ If you later notice network connectivty issues, re-configure lxd and
+ pick a different subnet.
+
 Template: lxd/bridge-empty-error
 Type: note
 _Description: Empty values are not allowed
