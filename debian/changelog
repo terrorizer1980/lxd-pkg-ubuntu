@@ -1,3 +1,14 @@
+lxd (2.0.0~rc9-0ubuntu2) xenial; urgency=medium
+
+  * Fix the missing lxdbr0 bridge when running the tests.
+  * Make sure the user is asked for input again when an invalid value is
+    detected on upgrade.
+  * Empty the bridge name when switching from a configured bridge to an
+    existing one.
+  * Suggest an IPv6 site-local subnet rather than an unused global one.
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Thu, 07 Apr 2016 09:13:02 -0400
+
 lxd (2.0.0~rc9-0ubuntu1) xenial; urgency=medium
 
   * New upstream release (2.0.0~rc9):
