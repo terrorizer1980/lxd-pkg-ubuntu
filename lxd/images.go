@@ -124,7 +124,14 @@ func untarImage(imagefname string, destpath string) error {
 }
 
 func compressFile(path string, compress string) (string, error) {
-	cmd := exec.Command(compress, path, "-c", "-n")
+	reproducible := []string{"gzip"}
+
+	args := []string{path, "-c"}
+	if shared.StringInSlice(compress, reproducible) {
+		args = append(args, "-n")
+	}
+
+	cmd := exec.Command(compress, args...)
 
 	outfile, err := os.Create(path + ".compressed")
 	if err != nil {
@@ -1147,6 +1154,10 @@ func aliasPut(d *Daemon, r *http.Request) Response {
 	req := aliasPutReq{}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return BadRequest(err)
+	}
+
+	if req.Target == "" {
+		return BadRequest(fmt.Errorf("The target field is required"))
 	}
 
 	id, _, err := dbImageAliasGet(d.db, name, true)

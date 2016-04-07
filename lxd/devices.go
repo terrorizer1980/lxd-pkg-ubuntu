@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"io/ioutil"
 	"math/big"
 	"os"
 	"os/exec"
@@ -24,7 +23,7 @@ import (
 	log "gopkg.in/inconshreveable/log15.v2"
 )
 
-var deviceSchedRebalance = make(chan []string, 0)
+var deviceSchedRebalance = make(chan []string, 2)
 
 type deviceBlockLimit struct {
 	readBps   int64
@@ -44,7 +43,7 @@ func (c deviceTaskCPUs) Len() int           { return len(c) }
 func (c deviceTaskCPUs) Less(i, j int) bool { return *c[i].count < *c[j].count }
 func (c deviceTaskCPUs) Swap(i, j int)      { c[i], c[j] = c[j], c[i] }
 
-func deviceNetlinkListener() (chan []string, error) {
+func deviceNetlinkListener() (chan []string, chan []string, error) {
 	NETLINK_KOBJECT_UEVENT := 15
 	UEVENT_BUFFER_SIZE := 2048
 
@@ -54,7 +53,7 @@ func deviceNetlinkListener() (chan []string, error) {
 	)
 
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	nl := syscall.SockaddrNetlink{
@@ -65,12 +64,13 @@ func deviceNetlinkListener() (chan []string, error) {
 
 	err = syscall.Bind(fd, &nl)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	ch := make(chan []string, 0)
+	chCPU := make(chan []string, 1)
+	chNetwork := make(chan []string, 0)
 
-	go func(ch chan []string) {
+	go func(chCPU chan []string, chNetwork chan []string) {
 		b := make([]byte, UEVENT_BUFFER_SIZE*2)
 		for {
 			_, err := syscall.Read(fd, b)
@@ -106,7 +106,12 @@ func deviceNetlinkListener() (chan []string, error) {
 					continue
 				}
 
-				ch <- []string{"cpu", path.Base(props["DEVPATH"]), props["ACTION"]}
+				// As CPU re-balancing affects all containers, no need to queue them
+				select {
+				case chCPU <- []string{path.Base(props["DEVPATH"]), props["ACTION"]}:
+				default:
+					// Channel is full, drop the event
+				}
 			}
 
 			if props["SUBSYSTEM"] == "net" {
@@ -114,12 +119,53 @@ func deviceNetlinkListener() (chan []string, error) {
 					continue
 				}
 
-				ch <- []string{"net", props["INTERFACE"], props["ACTION"]}
+				if !shared.PathExists(fmt.Sprintf("/sys/class/net/%s", props["INTERFACE"])) {
+					continue
+				}
+
+				// Network balancing is interface specific, so queue everything
+				chNetwork <- []string{props["INTERFACE"], props["ACTION"]}
 			}
 		}
-	}(ch)
+	}(chCPU, chNetwork)
 
-	return ch, nil
+	return chCPU, chNetwork, nil
+}
+
+func parseCpuset(cpu string) ([]int, error) {
+	cpus := []int{}
+	chunks := strings.Split(cpu, ",")
+	for _, chunk := range chunks {
+		if strings.Contains(chunk, "-") {
+			// Range
+			fields := strings.SplitN(chunk, "-", 2)
+			if len(fields) != 2 {
+				return nil, fmt.Errorf("Invalid cpuset value: %s", cpu)
+			}
+
+			low, err := strconv.Atoi(fields[0])
+			if err != nil {
+				return nil, fmt.Errorf("Invalid cpuset value: %s", cpu)
+			}
+
+			high, err := strconv.Atoi(fields[1])
+			if err != nil {
+				return nil, fmt.Errorf("Invalid cpuset value: %s", cpu)
+			}
+
+			for i := low; i <= high; i++ {
+				cpus = append(cpus, i)
+			}
+		} else {
+			// Simple entry
+			nr, err := strconv.Atoi(chunk)
+			if err != nil {
+				return nil, fmt.Errorf("Invalid cpuset value: %s", cpu)
+			}
+			cpus = append(cpus, nr)
+		}
+	}
+	return cpus, nil
 }
 
 func deviceTaskBalance(d *Daemon) {
@@ -135,40 +181,20 @@ func deviceTaskBalance(d *Daemon) {
 		return
 	}
 
-	// Count CPUs
-	cpus := []int{}
-	dents, err := ioutil.ReadDir("/sys/bus/cpu/devices/")
+	// Get effective cpus list - those are all guaranteed to be online
+	effectiveCpus, err := cGroupGet("cpuset", "/", "cpuset.effective_cpus")
 	if err != nil {
-		shared.Log.Error("balance: Unable to list CPUs", log.Ctx{"err": err})
+		shared.Log.Error("Error reading host's cpuset.effective_cpus")
 		return
 	}
-
-	for _, f := range dents {
-		id := -1
-		count, err := fmt.Sscanf(f.Name(), "cpu%d", &id)
-		if count != 1 || id == -1 {
-			shared.Log.Error("balance: Bad CPU", log.Ctx{"path": f.Name()})
-			continue
-		}
-
-		onlinePath := fmt.Sprintf("/sys/bus/cpu/devices/%s/online", f.Name())
-		if !shared.PathExists(onlinePath) {
-			// CPUs without an online file are non-hotplug so are always online
-			cpus = append(cpus, id)
-			continue
-		}
-
-		online, err := ioutil.ReadFile(onlinePath)
-		if err != nil {
-			shared.Log.Error("balance: Bad CPU", log.Ctx{"path": f.Name(), "err": err})
-			continue
-		}
-
-		if online[0] == byte('0') {
-			continue
-		}
-
-		cpus = append(cpus, id)
+	err = cGroupSet("cpuset", "/lxc", "cpuset.cpus", effectiveCpus)
+	if err != nil && shared.PathExists("/sys/fs/cgroup/cpuset/lxc") {
+		shared.Log.Warn("Error setting lxd's cpuset.cpus", log.Ctx{"err": err})
+	}
+	cpus, err := parseCpuset(effectiveCpus)
+	if err != nil {
+		shared.Log.Error("Error parsing host's cpuset.effective_cpus", log.Ctx{"cpuset": effectiveCpus, "err": err})
+		return
 	}
 
 	// Iterate through the containers
@@ -182,80 +208,36 @@ func deviceTaskBalance(d *Daemon) {
 		}
 
 		conf := c.ExpandedConfig()
-		cpu, ok := conf["limits.cpu"]
-		if !ok || cpu == "" {
-			currentCPUs, err := deviceGetCurrentCPUs()
-			if err != nil {
-				shared.Debugf("Couldn't get current CPU list: %s", err)
-				cpu = fmt.Sprintf("%d", len(cpus))
-			} else {
-				cpu = currentCPUs
-			}
+		cpulimit, ok := conf["limits.cpu"]
+		if !ok || cpulimit == "" {
+			cpulimit = effectiveCpus
 		}
 
 		if !c.IsRunning() {
 			continue
 		}
 
-		count, err := strconv.Atoi(cpu)
+		count, err := strconv.Atoi(cpulimit)
 		if err == nil {
 			// Load-balance
 			count = min(count, len(cpus))
 			balancedContainers[c] = count
 		} else {
 			// Pinned
-			chunks := strings.Split(cpu, ",")
-			for _, chunk := range chunks {
-				if strings.Contains(chunk, "-") {
-					// Range
-					fields := strings.SplitN(chunk, "-", 2)
-					if len(fields) != 2 {
-						shared.Log.Error("Invalid limits.cpu value.", log.Ctx{"container": c.Name(), "value": cpu})
-						continue
-					}
+			containerCpus, err := parseCpuset(cpulimit)
+			if err != nil {
+				return
+			}
+			for _, nr := range containerCpus {
+				if !shared.IntInSlice(nr, cpus) {
+					continue
+				}
 
-					low, err := strconv.Atoi(fields[0])
-					if err != nil {
-						shared.Log.Error("Invalid limits.cpu value.", log.Ctx{"container": c.Name(), "value": cpu})
-						continue
-					}
-
-					high, err := strconv.Atoi(fields[1])
-					if err != nil {
-						shared.Log.Error("Invalid limits.cpu value.", log.Ctx{"container": c.Name(), "value": cpu})
-						continue
-					}
-
-					for i := low; i <= high; i++ {
-						if !shared.IntInSlice(i, cpus) {
-							continue
-						}
-
-						_, ok := fixedContainers[i]
-						if ok {
-							fixedContainers[i] = append(fixedContainers[i], c)
-						} else {
-							fixedContainers[i] = []container{c}
-						}
-					}
+				_, ok := fixedContainers[nr]
+				if ok {
+					fixedContainers[nr] = append(fixedContainers[nr], c)
 				} else {
-					// Simple entry
-					nr, err := strconv.Atoi(chunk)
-					if err != nil {
-						shared.Log.Error("Invalid limits.cpu value.", log.Ctx{"container": c.Name(), "value": cpu})
-						continue
-					}
-
-					if !shared.IntInSlice(nr, cpus) {
-						continue
-					}
-
-					_, ok := fixedContainers[nr]
-					if ok {
-						fixedContainers[nr] = append(fixedContainers[nr], c)
-					} else {
-						fixedContainers[nr] = []container{c}
-					}
+					fixedContainers[nr] = []container{c}
 				}
 			}
 		}
@@ -263,7 +245,7 @@ func deviceTaskBalance(d *Daemon) {
 
 	// Balance things
 	pinning := map[container][]string{}
-	usage := make(deviceTaskCPUs, 0)
+	usage := map[int]deviceTaskCPU{}
 
 	for _, id := range cpus {
 		cpu := deviceTaskCPU{}
@@ -272,11 +254,16 @@ func deviceTaskBalance(d *Daemon) {
 		count := 0
 		cpu.count = &count
 
-		usage = append(usage, cpu)
+		usage[id] = cpu
 	}
 
 	for cpu, ctns := range fixedContainers {
-		id := usage[cpu].strId
+		c, ok := usage[cpu]
+		if !ok {
+			shared.Log.Error("Internal error: container using unavailable cpu")
+			continue
+		}
+		id := c.strId
 		for _, ctn := range ctns {
 			_, ok := pinning[ctn]
 			if ok {
@@ -284,13 +271,18 @@ func deviceTaskBalance(d *Daemon) {
 			} else {
 				pinning[ctn] = []string{id}
 			}
-			*usage[cpu].count += 1
+			*c.count += 1
 		}
 	}
 
+	sortedUsage := make(deviceTaskCPUs, 0)
+	for _, value := range usage {
+		sortedUsage = append(sortedUsage, value)
+	}
+
 	for ctn, count := range balancedContainers {
-		sort.Sort(usage)
-		for _, cpu := range usage {
+		sort.Sort(sortedUsage)
+		for _, cpu := range sortedUsage {
 			if count == 0 {
 				break
 			}
@@ -320,34 +312,6 @@ func deviceTaskBalance(d *Daemon) {
 			shared.Log.Error("balance: Unable to set cpuset", log.Ctx{"name": ctn.Name(), "err": err, "value": strings.Join(set, ",")})
 		}
 	}
-}
-
-func deviceGetCurrentCPUs() (string, error) {
-	// Open /proc/self/status
-	f, err := os.Open("/proc/self/status")
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-
-	// Read it line by line
-	scan := bufio.NewScanner(f)
-	for scan.Scan() {
-		line := scan.Text()
-
-		// We only care about MemTotal
-		if !strings.HasPrefix(line, "Cpus_allowed_list:") {
-			continue
-		}
-
-		// Extract the before last (value) and last (unit) fields
-		fields := strings.Split(line, "\t")
-		value := fields[len(fields)-1]
-
-		return value, nil
-	}
-
-	return "", fmt.Errorf("Couldn't find cpus_allowed_list")
 }
 
 func deviceNetworkPriority(d *Daemon, netif string) {
@@ -387,7 +351,7 @@ func deviceNetworkPriority(d *Daemon, netif string) {
 }
 
 func deviceEventListener(d *Daemon) {
-	chNetlink, err := deviceNetlinkListener()
+	chNetlinkCPU, chNetlinkNetwork, err := deviceNetlinkListener()
 	if err != nil {
 		shared.Log.Error("scheduler: couldn't setup netlink listener")
 		return
@@ -395,40 +359,53 @@ func deviceEventListener(d *Daemon) {
 
 	for {
 		select {
-		case e := <-chNetlink:
-			if len(e) != 3 {
-				shared.Log.Error("Scheduler: received an invalid hotplug event")
+		case e := <-chNetlinkCPU:
+			if len(e) != 2 {
+				shared.Log.Error("Scheduler: received an invalid cpu hotplug event")
 				continue
 			}
 
-			if e[0] == "cpu" && cgCpusetController {
-				shared.Debugf("Scheduler: %s: %s is now %s: re-balancing", e[0], e[1], e[2])
-				deviceTaskBalance(d)
+			if !cgCpusetController {
+				continue
 			}
 
-			if e[0] == "net" && e[2] == "add" && cgNetPrioController && shared.PathExists(fmt.Sprintf("/sys/class/net/%s", e[1])) {
-				shared.Debugf("Scheduler: %s: %s has been added: updating network priorities", e[0], e[1])
-				deviceNetworkPriority(d, e[1])
+			shared.Debugf("Scheduler: cpu: %s is now %s: re-balancing", e[0], e[1])
+			deviceTaskBalance(d)
+		case e := <-chNetlinkNetwork:
+			if len(e) != 2 {
+				shared.Log.Error("Scheduler: received an invalid network hotplug event")
+				continue
 			}
+
+			if !cgNetPrioController {
+				continue
+			}
+
+			shared.Debugf("Scheduler: network: %s has been added: updating network priorities", e[0])
+			deviceNetworkPriority(d, e[0])
 		case e := <-deviceSchedRebalance:
 			if len(e) != 3 {
 				shared.Log.Error("Scheduler: received an invalid rebalance event")
 				continue
 			}
 
-			if cgCpusetController {
-				shared.Debugf("Scheduler: %s %s %s: re-balancing", e[0], e[1], e[2])
-				deviceTaskBalance(d)
+			if !cgCpusetController {
+				continue
 			}
+
+			shared.Debugf("Scheduler: %s %s %s: re-balancing", e[0], e[1], e[2])
+			deviceTaskBalance(d)
 		}
 	}
 }
 
 func deviceTaskSchedulerTrigger(srcType string, srcName string, srcStatus string) {
 	// Spawn a go routine which then triggers the scheduler
-	go func() {
-		deviceSchedRebalance <- []string{srcType, srcName, srcStatus}
-	}()
+	select {
+	case deviceSchedRebalance <- []string{srcType, srcName, srcStatus}:
+	default:
+		// Channel is full, drop the event
+	}
 }
 
 func deviceIsBlockdev(path string) bool {
