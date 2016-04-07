@@ -1,3 +1,16 @@
+lxd (2.0.0~rc8-0ubuntu7) xenial; urgency=medium
+
+  * More lxdbr0 tweaks:
+    - Update wording of the initial question. (LP: #1566764)
+    - Refuse empty output for questions needing a value.
+    - Trigger lxd (through lxd-containers.service) so that it starts
+      again if it should be running.
+    - Make it possible to disable the profile update part of the lxdbr0
+      integration while keeping a working bridge.
+    - Fix preinst so that reading an empty /etc/default/lxd-bridge works.
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 06 Apr 2016 15:56:55 -0400
+
 lxd (2.0.0~rc8-0ubuntu6) xenial; urgency=medium
 
   * Change the suggested lxdbr0 IPv4 subnet to 10.0.8.0/24
