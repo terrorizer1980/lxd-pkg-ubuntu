@@ -12,5 +12,9 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 # Run the tests
+if [ -e /run/systemd/system ]; then
+    systemctl start lxd-bridge || true
+fi
+
 export LXD_OFFLINE=1
 (cd test/ && ./main.sh)
