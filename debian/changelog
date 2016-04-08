@@ -1,3 +1,14 @@
+lxd (2.0.0~rc9-0ubuntu4) xenial; urgency=medium
+
+  * More lxdbr0 tweaks:
+    - Fix logic so that on first "dpkg-reconfigure" run, IPv4 and IPv6
+      are actually set to "yes". (LP: #1567874)
+    - Add an extra check to the IPv4 and IPv6 subnet generators to
+      attempt to ping the usual default gateways on the subnet and use another
+      subnet if we get an answer.
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Fri, 08 Apr 2016 13:52:46 -0400
+
 lxd (2.0.0~rc9-0ubuntu3) xenial; urgency=medium
 
   * More lxdbr0 tweaks:
