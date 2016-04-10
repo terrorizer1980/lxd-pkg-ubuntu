@@ -5,4 +5,3 @@ hardening-no-bindnow usr/bin/lxc
 
 # Not coming directly from the lxd code
 spelling-error-in-binary usr/bin/lxc eror error
-spelling-error-in-binary usr/bin/lxc uknown unknown

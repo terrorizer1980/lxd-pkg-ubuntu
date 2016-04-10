@@ -20,3 +20,6 @@ spelling-error-in-binary usr/bin/lxd unsued unused
 spelling-error-in-binary usr/bin/lxd writeN written
 spelling-error-in-binary usr/bin/lxd pervious previous
 spelling-error-in-binary usr/bin/lxd uncomplete incomplete
+
+# The "random" warning should only be shown in interactive mode
+possible-debconf-note-abuse * lxd/bridge-random-warning
