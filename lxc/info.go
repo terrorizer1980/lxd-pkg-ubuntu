@@ -23,11 +23,13 @@ func (c *infoCmd) showByDefault() bool {
 
 func (c *infoCmd) usage() string {
 	return i18n.G(
-		`List information on containers.
+		`List information on LXD servers and containers.
 
-This will support remotes and images as well, but only containers for now.
+For a container:
+ lxc info [<remote>:]container [--show-log]
 
-lxc info [<remote>:]container [--show-log]`)
+For a server:
+ lxc info [<remote>:]`)
 }
 
 func (c *infoCmd) flags() {
@@ -191,7 +193,9 @@ func (c *infoCmd) containerInfo(d *lxd.Client, name string, showLog bool) error 
 		if first_snapshot {
 			fmt.Println(i18n.G("Snapshots:"))
 		}
-		fmt.Printf("  %s", snap.Name)
+
+		fields := strings.Split(snap.Name, shared.SnapshotDelimiter)
+		fmt.Printf("  %s", fields[len(fields)-1])
 
 		if snap.CreationDate.UTC().Unix() != 0 {
 			fmt.Printf(" ("+i18n.G("taken at %s")+")", snap.CreationDate.UTC().Format(layout))
