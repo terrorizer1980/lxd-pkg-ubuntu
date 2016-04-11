@@ -1,5 +1,7 @@
 #!/bin/sh -e
 
+[ ! -e /etc/default/lxd-bridge ] && exit 0
+
 . /etc/default/lxd-bridge
 
 # We only run LXD configuration if in setup mode
