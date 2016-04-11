@@ -575,6 +575,7 @@ func cmdWaitReady() error {
 }
 
 func cmdInit() error {
+	var defaultPrivileged int // controls whether we set security.privileged=true
 	var storageBackend string // dir or zfs
 	var storageMode string    // existing, loop or device
 	var storageLoopSize int   // Size in GB
@@ -584,6 +585,10 @@ func cmdInit() error {
 	var networkPort int       // Port
 	var trustPassword string  // Trust password
 	var runReconfigure bool   // Whether to call dpkg-reconfigure
+
+	// Detect userns
+	defaultPrivileged = -1
+	runningInUserns = shared.RunningInUserNS()
 
 	// Only root should run this
 	if os.Geteuid() != 0 {
@@ -791,6 +796,25 @@ you can still do so by running "sudo dpkg-reconfigure -p medium lxd"
 			}
 		}
 
+		if runningInUserns {
+			fmt.Printf(`
+We detected that you are running inside an unprivileged container.
+This means that unless you manually configured your host otherwise,
+you will not have enough uid and gid to allocate to your containers.
+
+LXD can re-use your container's own allocation to avoid the problem.
+Doing so makes your nested containers slightly less safe as they could
+in theory attack their parent container and gain more privileges than
+they otherwise would.
+
+`)
+			if askBool("Would you like to have your containers share their parent's allocation (yes/no)? ") {
+				defaultPrivileged = 1
+			} else {
+				defaultPrivileged = 0
+			}
+		}
+
 		if askBool("Would you like LXD to be available over the network (yes/no)? ") {
 			networkAddress = askString("Address to bind LXD to (not including port): ")
 			networkPort = askInt("Port to bind LXD to (8443 recommended): ", 1, 65535)
@@ -854,6 +878,17 @@ you can still do so by running "sudo dpkg-reconfigure -p medium lxd"
 		_, err = c.SetServerConfig("storage.zfs_pool_name", storagePool)
 		if err != nil {
 			return err
+		}
+	}
+
+	if defaultPrivileged == 0 {
+		err = c.SetProfileConfigItem("default", "security.privileged", "")
+		if err != nil {
+			return err
+		}
+	} else if defaultPrivileged == 1 {
+		err = c.SetProfileConfigItem("default", "security.privileged", "true")
+		if err != nil {
 		}
 	}
 
