@@ -1,3 +1,10 @@
+lxd (2.0.0~rc9-0ubuntu5) xenial; urgency=medium
+
+  * Fix debconf "seen" detection logic.
+  * Update lintian overrides.
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Sun, 10 Apr 2016 23:21:46 -0400
+
 lxd (2.0.0~rc9-0ubuntu4) xenial; urgency=medium
 
   * More lxdbr0 tweaks:
