@@ -87,6 +87,9 @@ override_dh_install:
 	cp -RL ${GOPATH}/src/github.com/lxc/lxd $(PKGDIR)/usr/share/gocode/src/github.com/lxc/
 	rm -Rf $(PKGDIR)/usr/share/gocode/src/github.com/lxc/lxd/dist
 
+	# Apparmor
+	dh_apparmor -p lxd --profile-name=usr.lib.lxd.lxd-bridge-proxy
+
 	# Trigger normal dh_install
 	dh_install
 
