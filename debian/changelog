@@ -1,3 +1,11 @@
+lxd (2.0.0-0ubuntu3) xenial; urgency=medium
+
+  * Raise the systemd timeout to match the LXD startup timeout.
+    This is needed on systems where TLS certificate generation takes a
+    long time. (LP: #1569698)
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 13 Apr 2016 12:43:54 -0400
+
 lxd (2.0.0-0ubuntu2) xenial; urgency=medium
 
   * Add apparmor profile for lxd-bridge-proxy (profile by Simon Deziel).
