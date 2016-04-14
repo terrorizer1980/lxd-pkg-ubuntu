@@ -1,7 +1,7 @@
 [Unit]
 Description=LXD - main daemon
-After=lxcfs.service lxd-bridge.service lxd.socket
-Requires=lxcfs.service lxd-bridge.service lxd.socket
+After=network-online.target lxcfs.service lxd-bridge.service lxd.socket
+Requires=network-online.target lxcfs.service lxd-bridge.service lxd.socket
 Documentation=man:lxd(1)
 
 [Service]
