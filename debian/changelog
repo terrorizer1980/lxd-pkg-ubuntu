@@ -1,3 +1,12 @@
+lxd (2.0.0-0ubuntu4) xenial; urgency=medium
+
+  * Only start lxd after network-online.target has been reached.
+    This avoids a cloud-init race at boot time and also makes it more
+    likely for whatever IP address or bridge LXD needs to have been properly
+    setup. (LP: #1569064)
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Thu, 14 Apr 2016 16:03:02 -0400
+
 lxd (2.0.0-0ubuntu3) xenial; urgency=medium
 
   * Raise the systemd timeout to match the LXD startup timeout.
