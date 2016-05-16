@@ -107,8 +107,8 @@ func untarImage(imagefname string, destpath string) error {
 		return err
 	}
 
+	rootfsPath := fmt.Sprintf("%s/rootfs", destpath)
 	if shared.PathExists(imagefname + ".rootfs") {
-		rootfsPath := fmt.Sprintf("%s/rootfs", destpath)
 		err = os.MkdirAll(rootfsPath, 0755)
 		if err != nil {
 			return fmt.Errorf("Error creating rootfs directory")
@@ -118,6 +118,10 @@ func untarImage(imagefname string, destpath string) error {
 		if err != nil {
 			return err
 		}
+	}
+
+	if !shared.PathExists(rootfsPath) {
+		return fmt.Errorf("Image is missing a rootfs: %s", imagefname)
 	}
 
 	return nil
@@ -226,17 +230,8 @@ func imgPostContInfo(d *Daemon, r *http.Request, req imagePostReq,
 	}
 	tarfile.Close()
 
-	compress, err := d.ConfigValueGet("images.compression_algorithm")
-	if err != nil {
-		return info, err
-	}
-
-	// Default to gzip for this
-	if compress == "" {
-		compress = "gzip"
-	}
-
 	var compressedPath string
+	compress := daemonConfig["images.compression_algorithm"].Get()
 	if compress != "none" {
 		compressedPath, err = compressFile(tarfile.Name(), compress)
 		if err != nil {
@@ -598,6 +593,9 @@ func getImgPostInfo(d *Daemon, r *http.Request,
 func imageBuildFromInfo(d *Daemon, info shared.ImageInfo) (metadata map[string]string, err error) {
 	err = d.Storage.ImageCreate(info.Fingerprint)
 	if err != nil {
+		os.Remove(shared.VarPath("images", info.Fingerprint))
+		os.Remove(shared.VarPath("images", info.Fingerprint) + ".rootfs")
+
 		return metadata, err
 	}
 
@@ -754,7 +752,7 @@ func getImageMetadata(fname string) (*imageMetadata, error) {
 
 	if err != nil {
 		outputLines := strings.Split(string(output), "\n")
-		return nil, fmt.Errorf("Could not extract image metadata %s from tar: %v (%s)", metadataName, err, outputLines[0])
+		return nil, fmt.Errorf("Could not extract image %s from tar: %v (%s)", metadataName, err, outputLines[0])
 	}
 
 	metadata := imageMetadata{}
@@ -762,6 +760,15 @@ func getImageMetadata(fname string) (*imageMetadata, error) {
 
 	if err != nil {
 		return nil, fmt.Errorf("Could not parse %s: %v", metadataName, err)
+	}
+
+	_, err = shared.ArchitectureId(metadata.Architecture)
+	if err != nil {
+		return nil, err
+	}
+
+	if metadata.CreationDate == 0 {
+		return nil, fmt.Errorf("Missing creation date.")
 	}
 
 	return &metadata, nil
@@ -841,6 +848,9 @@ func autoUpdateImages(d *Daemon) {
 		if hash == fp {
 			shared.Log.Debug("Already up to date", log.Ctx{"fp": fp})
 			continue
+		} else if err != nil {
+			shared.Log.Error("Failed to update the image", log.Ctx{"err": err, "fp": fp})
+			continue
 		}
 
 		newId, _, err := dbImageGet(d.db, hash, false, true)
@@ -866,37 +876,28 @@ func autoUpdateImages(d *Daemon) {
 			shared.Log.Error("Error deleting image", log.Ctx{"err": err, "fp": fp})
 		}
 	}
+
+	shared.Debugf("Done updating images")
 }
 
 func pruneExpiredImages(d *Daemon) {
 	shared.Debugf("Pruning expired images")
-	expiry, err := d.ConfigValueGet("images.remote_cache_expiry")
-	if err != nil {
-		shared.Log.Error("Unable to read the images.remote_cache_expiry key")
-		return
-	}
 
-	if expiry == "" {
-		expiry = "10"
-	}
-
-	expiryInt, err := strconv.Atoi(expiry)
-	if err != nil {
-		shared.Log.Error("Invalid value for images.remote_cache_expiry", log.Ctx{"err": err})
-		return
-	}
-
-	images, err := dbImagesGetExpired(d.db, expiryInt)
+	// Get the list of expires images
+	expiry := daemonConfig["images.remote_cache_expiry"].GetInt64()
+	images, err := dbImagesGetExpired(d.db, expiry)
 	if err != nil {
 		shared.Log.Error("Unable to retrieve the list of expired images", log.Ctx{"err": err})
 		return
 	}
 
+	// Delete them
 	for _, fp := range images {
 		if err := doDeleteImage(d, fp); err != nil {
 			shared.Log.Error("Error deleting image", log.Ctx{"err": err, "fp": fp})
 		}
 	}
+
 	shared.Debugf("Done pruning expired images")
 }
 
@@ -910,12 +911,12 @@ func doDeleteImage(d *Daemon, fingerprint string) error {
 	// look at the path
 	s, err := storageForImage(d, imgInfo)
 	if err != nil {
-		return err
-	}
-
-	// Remove the image from storage backend
-	if err = s.ImageDelete(imgInfo.Fingerprint); err != nil {
-		return err
+		shared.Log.Error("error detecting image storage backend", log.Ctx{"fingerprint": imgInfo.Fingerprint, "err": err})
+	} else {
+		// Remove the image from storage backend
+		if err = s.ImageDelete(imgInfo.Fingerprint); err != nil {
+			shared.Log.Error("error deleting the image from storage backend", log.Ctx{"fingerprint": imgInfo.Fingerprint, "err": err})
+		}
 	}
 
 	// Remove main image file
@@ -927,7 +928,7 @@ func doDeleteImage(d *Daemon, fingerprint string) error {
 		}
 	}
 
-	// Remote the rootfs file
+	// Remove the rootfs file
 	fname = shared.VarPath("images", imgInfo.Fingerprint) + ".rootfs"
 	if shared.PathExists(fname) {
 		err = os.Remove(fname)

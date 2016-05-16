@@ -70,12 +70,14 @@ func (c *listCmd) usage() string {
 lxc list [resource] [filters] [--format table|json] [-c columns] [--fast]
 
 The filters are:
-* A single keyword like "web" which will list any container with "web" in its name.
+* A single keyword like "web" which will list any container with a name starting by "web".
+* A regular expression on the container name. (e.g. .*web.*01$)
 * A key/value pair referring to a configuration item. For those, the namespace can be abreviated to the smallest unambiguous identifier:
-* "user.blah=abc" will list all containers with the "blah" user property set to "abc"
-* "u.blah=abc" will do the same
-* "security.privileged=1" will list all privileged containers
-* "s.privileged=1" will do the same
+ * "user.blah=abc" will list all containers with the "blah" user property set to "abc".
+ * "u.blah=abc" will do the same
+ * "security.privileged=1" will list all privileged containers
+ * "s.privileged=1" will do the same
+* A regular expression matching a configuration item or its value. (e.g. volatile.eth0.hwaddr=00:16:3e:.*)
 
 Columns for table format are:
 * 4 - IPv4 address
@@ -156,11 +158,25 @@ func (c *listCmd) shouldShow(filters []string, state *shared.ContainerInfo) bool
 				}
 			}
 
+			if state.ExpandedConfig[key] == value {
+				return true
+			}
+
 			if !found {
 				return false
 			}
 		} else {
-			if !strings.Contains(state.Name, filter) {
+			regexpValue := filter
+			if !(strings.Contains(filter, "^") || strings.Contains(filter, "$")) {
+				regexpValue = "^" + regexpValue + "$"
+			}
+
+			r, err := regexp.Compile(regexpValue)
+			if err == nil && r.MatchString(state.Name) == true {
+				return true
+			}
+
+			if !strings.HasPrefix(state.Name, filter) {
 				return false
 			}
 		}
@@ -233,10 +249,6 @@ func (c *listCmd) listContainers(d *lxd.Client, cinfos []shared.ContainerInfo, f
 	}
 
 	for _, cInfo := range cinfos {
-		if !c.shouldShow(filters, &cInfo) {
-			continue
-		}
-
 		for _, column := range columns {
 			if column.NeedsState && cInfo.IsActive() {
 				_, ok := cStates[cInfo.Name]
@@ -327,7 +339,7 @@ func (c *listCmd) run(config *lxd.Config, args []string) error {
 
 	if len(args) != 0 {
 		filters = args
-		if strings.Contains(args[0], ":") {
+		if strings.Contains(args[0], ":") && !strings.Contains(args[0], "=") {
 			remote, name = config.ParseRemoteAndContainer(args[0])
 			filters = args[1:]
 		} else if !strings.Contains(args[0], "=") {
@@ -335,6 +347,7 @@ func (c *listCmd) run(config *lxd.Config, args []string) error {
 			name = args[0]
 		}
 	}
+	filters = append(filters, name)
 
 	if remote == "" {
 		remote = config.DefaultRemote
@@ -351,14 +364,12 @@ func (c *listCmd) run(config *lxd.Config, args []string) error {
 		return err
 	}
 
-	if name == "" {
-		cts = ctslist
-	} else {
-		for _, cinfo := range ctslist {
-			if len(cinfo.Name) >= len(name) && cinfo.Name[0:len(name)] == name {
-				cts = append(cts, cinfo)
-			}
+	for _, cinfo := range ctslist {
+		if !c.shouldShow(filters, &cinfo) {
+			continue
 		}
+
+		cts = append(cts, cinfo)
 	}
 
 	columns_map := map[rune]column{
@@ -399,7 +410,7 @@ func (c *listCmd) statusColumnData(cInfo shared.ContainerInfo, cState *shared.Co
 }
 
 func (c *listCmd) IP4ColumnData(cInfo shared.ContainerInfo, cState *shared.ContainerState, cSnaps []shared.SnapshotInfo) string {
-	if cInfo.IsActive() && cState.Network != nil {
+	if cInfo.IsActive() && cState != nil && cState.Network != nil {
 		ipv4s := []string{}
 		for netName, net := range cState.Network {
 			if net.Type == "loopback" {
@@ -423,7 +434,7 @@ func (c *listCmd) IP4ColumnData(cInfo shared.ContainerInfo, cState *shared.Conta
 }
 
 func (c *listCmd) IP6ColumnData(cInfo shared.ContainerInfo, cState *shared.ContainerState, cSnaps []shared.SnapshotInfo) string {
-	if cInfo.IsActive() && cState.Network != nil {
+	if cInfo.IsActive() && cState != nil && cState.Network != nil {
 		ipv6s := []string{}
 		for netName, net := range cState.Network {
 			if net.Type == "loopback" {
@@ -455,11 +466,15 @@ func (c *listCmd) typeColumnData(cInfo shared.ContainerInfo, cState *shared.Cont
 }
 
 func (c *listCmd) numberSnapshotsColumnData(cInfo shared.ContainerInfo, cState *shared.ContainerState, cSnaps []shared.SnapshotInfo) string {
-	return fmt.Sprintf("%d", len(cSnaps))
+	if cSnaps != nil {
+		return fmt.Sprintf("%d", len(cSnaps))
+	}
+
+	return ""
 }
 
 func (c *listCmd) PIDColumnData(cInfo shared.ContainerInfo, cState *shared.ContainerState, cSnaps []shared.SnapshotInfo) string {
-	if cInfo.IsActive() {
+	if cInfo.IsActive() && cState != nil {
 		return fmt.Sprintf("%d", cState.Pid)
 	}
 

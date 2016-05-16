@@ -267,6 +267,11 @@ func (c *containerLXC) init() error {
 }
 
 func (c *containerLXC) initLXC() error {
+	// No need to go through all that for snapshots
+	if c.IsSnapshot() {
+		return nil
+	}
+
 	// Check if being called from a hook
 	if c.fromHook {
 		return fmt.Errorf("You can't use go-lxc from inside a LXC hook.")
@@ -414,12 +419,12 @@ func (c *containerLXC) initLXC() error {
 	}
 
 	// Setup the hooks
-	err = lxcSetConfigItem(cc, "lxc.hook.pre-start", fmt.Sprintf("%s callhook %s %d start", c.daemon.execPath, shared.VarPath(""), c.id))
+	err = lxcSetConfigItem(cc, "lxc.hook.pre-start", fmt.Sprintf("%s callhook %s %d start", execPath, shared.VarPath(""), c.id))
 	if err != nil {
 		return err
 	}
 
-	err = lxcSetConfigItem(cc, "lxc.hook.post-stop", fmt.Sprintf("%s callhook %s %d stop", c.daemon.execPath, shared.VarPath(""), c.id))
+	err = lxcSetConfigItem(cc, "lxc.hook.post-stop", fmt.Sprintf("%s callhook %s %d stop", execPath, shared.VarPath(""), c.id))
 	if err != nil {
 		return err
 	}
@@ -523,7 +528,7 @@ func (c *containerLXC) initLXC() error {
 					return err
 				}
 			} else {
-				if memorySwap != "false" && cgSwapAccounting {
+				if cgSwapAccounting && (memorySwap == "" || shared.IsTrue(memorySwap)) {
 					err = lxcSetConfigItem(cc, "lxc.cgroup.memory.limit_in_bytes", fmt.Sprintf("%d", valueInt))
 					if err != nil {
 						return err
@@ -542,7 +547,7 @@ func (c *containerLXC) initLXC() error {
 		}
 
 		// Configure the swappiness
-		if memorySwap == "false" {
+		if memorySwap != "" && !shared.IsTrue(memorySwap) {
 			err = lxcSetConfigItem(cc, "lxc.cgroup.memory.swappiness", "0")
 			if err != nil {
 				return err
@@ -768,9 +773,9 @@ func (c *containerLXC) initLXC() error {
 			devPath := filepath.Join(c.DevicesPath(), devName)
 
 			// Various option checks
-			isOptional := m["optional"] == "1" || m["optional"] == "true"
-			isReadOnly := m["readonly"] == "1" || m["readonly"] == "true"
-			isRecursive := m["recursive"] == "1" || m["recursive"] == "true"
+			isOptional := shared.IsTrue(m["optional"])
+			isReadOnly := shared.IsTrue(m["readonly"])
+			isRecursive := shared.IsTrue(m["recursive"])
 			isFile := !shared.IsDir(srcPath) && !deviceIsBlockdev(srcPath)
 
 			// Deal with a rootfs
@@ -1083,20 +1088,18 @@ func (c *containerLXC) startCommon() (string, error) {
 		delete(c.expandedConfig, k)
 	}
 
+	// Rotate the log file
+	logfile := c.LogFilePath()
+	if shared.PathExists(logfile) {
+		os.Remove(logfile + ".old")
+		err := os.Rename(logfile, logfile+".old")
+		if err != nil {
+			return "", err
+		}
+	}
+
 	// Generate the LXC config
-	f, err := ioutil.TempFile("", "lxd_lxc_startconfig_")
-	if err != nil {
-		return "", err
-	}
-
-	configPath := f.Name()
-	if err = f.Chmod(0600); err != nil {
-		f.Close()
-		os.Remove(configPath)
-		return "", err
-	}
-	f.Close()
-
+	configPath := filepath.Join(c.LogPath(), "lxc.conf")
 	err = c.c.SaveConfigFile(configPath)
 	if err != nil {
 		os.Remove(configPath)
@@ -1115,6 +1118,10 @@ func (c *containerLXC) Start(stateful bool) error {
 		wgStopping.Wait()
 	}
 
+	if err := setupSharedMounts(); err != nil {
+		return fmt.Errorf("Daemon failed to setup shared mounts base: %s.\nDoes security.nesting need to be turned on?", err)
+	}
+
 	// Run the shared start code
 	configPath, err := c.startCommon()
 	if err != nil {
@@ -1127,6 +1134,10 @@ func (c *containerLXC) Start(stateful bool) error {
 			return fmt.Errorf("Container has no existing state to restore.")
 		}
 
+		if err := findCriu("snapshot"); err != nil {
+			return err
+		}
+
 		if !c.IsPrivileged() {
 			if err := c.IdmapSet().ShiftRootfs(c.StatePath()); err != nil {
 				return err
@@ -1134,7 +1145,7 @@ func (c *containerLXC) Start(stateful bool) error {
 		}
 
 		out, err := exec.Command(
-			c.daemon.execPath,
+			execPath,
 			"forkmigrate",
 			c.name,
 			c.daemon.lxcpath,
@@ -1170,7 +1181,7 @@ func (c *containerLXC) Start(stateful bool) error {
 
 	// Start the LXC container
 	out, err := exec.Command(
-		c.daemon.execPath,
+		execPath,
 		"forkstart",
 		c.name,
 		c.daemon.lxcpath,
@@ -1203,7 +1214,7 @@ func (c *containerLXC) StartFromMigration(imagesDir string) error {
 
 	// Start the LXC container
 	out, err := exec.Command(
-		c.daemon.execPath,
+		execPath,
 		"forkmigrate",
 		c.name,
 		c.daemon.lxcpath,
@@ -1337,6 +1348,10 @@ func (c *containerLXC) setupStopping() *sync.WaitGroup {
 func (c *containerLXC) Stop(stateful bool) error {
 	// Handle stateful stop
 	if stateful {
+		if err := findCriu("snapshot"); err != nil {
+			return err
+		}
+
 		// Cleanup any existing state
 		stateDir := c.StatePath()
 		os.RemoveAll(stateDir)
@@ -1546,6 +1561,10 @@ var LxcMonitorStateError = fmt.Errorf("Monitor is hung")
 // Get lxc container state, with 1 second timeout
 // If we don't get a reply, assume the lxc monitor is hung
 func (c *containerLXC) getLxcState() (lxc.State, error) {
+	if c.IsSnapshot() {
+		return lxc.StateMap["STOPPED"], nil
+	}
+
 	monitor := make(chan lxc.State, 1)
 
 	go func(c *lxc.Container) {
@@ -1665,6 +1684,15 @@ func (c *containerLXC) Restore(sourceContainer container) error {
 		return err
 	}
 
+	/* let's also check for CRIU if necessary, before doing a bunch of
+	 * filesystem manipulations
+	 */
+	if shared.PathExists(c.StatePath()) {
+		if err := findCriu("snapshot"); err != nil {
+			return err
+		}
+	}
+
 	// Stop the container
 	wasRunning := false
 	if c.IsRunning() {
@@ -1723,7 +1751,7 @@ func (c *containerLXC) Restore(sourceContainer container) error {
 		}
 
 		out, err := exec.Command(
-			c.daemon.execPath,
+			execPath,
 			"forkmigrate",
 			c.name,
 			c.daemon.lxcpath,
@@ -1772,7 +1800,7 @@ func (c *containerLXC) cleanup() {
 	SeccompDeleteProfile(c)
 
 	// Remove the devices path
-	os.RemoveAll(c.DevicesPath())
+	os.Remove(c.DevicesPath())
 
 	// Remove the shmounts path
 	os.RemoveAll(shared.VarPath("shmounts", c.Name()))
@@ -1826,9 +1854,11 @@ func (c *containerLXC) Rename(newName string) error {
 
 	// Rename the logging path
 	os.RemoveAll(shared.LogPath(newName))
-	err := os.Rename(c.LogPath(), shared.LogPath(newName))
-	if err != nil {
-		return err
+	if shared.PathExists(c.LogPath()) {
+		err := os.Rename(c.LogPath(), shared.LogPath(newName))
+		if err != nil {
+			return err
+		}
 	}
 
 	// Rename the storage entry
@@ -2268,7 +2298,7 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 						return err
 					}
 				} else {
-					if memorySwap != "false" && cgSwapAccounting {
+					if cgSwapAccounting && (memorySwap == "" || shared.IsTrue(memorySwap)) {
 						err = c.CGroupSet("memory.limit_in_bytes", memory)
 						if err != nil {
 							undoChanges()
@@ -2292,7 +2322,7 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 				if key == "limits.memory.swap" || key == "limits.memory.swap.priority" {
 					memorySwap := c.expandedConfig["limits.memory.swap"]
 					memorySwapPriority := c.expandedConfig["limits.memory.swap.priority"]
-					if memorySwap == "false" {
+					if memorySwap != "" && !shared.IsTrue(memorySwap) {
 						err = c.CGroupSet("memory.swappiness", "0")
 						if err != nil {
 							undoChanges()
@@ -2828,7 +2858,7 @@ func (c *containerLXC) FilePull(srcpath string, dstpath string) (int, int, os.Fi
 
 	// Get the file from the container
 	out, err := exec.Command(
-		c.daemon.execPath,
+		execPath,
 		"forkgetfile",
 		c.RootfsPath(),
 		fmt.Sprintf("%d", c.InitPID()),
@@ -2914,7 +2944,10 @@ func (c *containerLXC) FilePull(srcpath string, dstpath string) (int, int, os.Fi
 	return uid, gid, os.FileMode(mode), nil
 }
 
-func (c *containerLXC) FilePush(srcpath string, dstpath string, uid int, gid int, mode os.FileMode) error {
+func (c *containerLXC) FilePush(srcpath string, dstpath string, uid int, gid int, mode int) error {
+	var rootUid = 0
+	var rootGid = 0
+
 	// Map uid and gid if needed
 	idmapset, err := c.LastIdmapSet()
 	if err != nil {
@@ -2923,6 +2956,7 @@ func (c *containerLXC) FilePush(srcpath string, dstpath string, uid int, gid int
 
 	if idmapset != nil {
 		uid, gid = idmapset.ShiftIntoNs(uid, gid)
+		rootUid, rootGid = idmapset.ShiftIntoNs(0, 0)
 	}
 
 	// Setup container storage if needed
@@ -2935,7 +2969,7 @@ func (c *containerLXC) FilePush(srcpath string, dstpath string, uid int, gid int
 
 	// Push the file to the container
 	out, err := exec.Command(
-		c.daemon.execPath,
+		execPath,
 		"forkputfile",
 		c.RootfsPath(),
 		fmt.Sprintf("%d", c.InitPID()),
@@ -2943,7 +2977,10 @@ func (c *containerLXC) FilePush(srcpath string, dstpath string, uid int, gid int
 		dstpath,
 		fmt.Sprintf("%d", uid),
 		fmt.Sprintf("%d", gid),
-		fmt.Sprintf("%d", mode&os.ModePerm),
+		fmt.Sprintf("%d", mode),
+		fmt.Sprintf("%d", rootUid),
+		fmt.Sprintf("%d", rootGid),
+		fmt.Sprintf("%d", int(os.FileMode(0640)&os.ModePerm)),
 	).CombinedOutput()
 
 	// Tear down container storage if needed
@@ -2987,7 +3024,7 @@ func (c *containerLXC) Exec(command []string, env map[string]string, stdin *os.F
 		envSlice = append(envSlice, fmt.Sprintf("%s=%s", k, v))
 	}
 
-	args := []string{c.daemon.execPath, "forkexec", c.name, c.daemon.lxcpath, filepath.Join(c.LogPath(), "lxc.conf")}
+	args := []string{execPath, "forkexec", c.name, c.daemon.lxcpath, filepath.Join(c.LogPath(), "lxc.conf")}
 
 	args = append(args, "--")
 	args = append(args, "env")
@@ -2998,7 +3035,7 @@ func (c *containerLXC) Exec(command []string, env map[string]string, stdin *os.F
 	args = append(args, command...)
 
 	cmd := exec.Cmd{}
-	cmd.Path = c.daemon.execPath
+	cmd.Path = execPath
 	cmd.Args = args
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
@@ -3100,7 +3137,7 @@ func (c *containerLXC) networkState() map[string]shared.ContainerStateNetwork {
 
 	// Get the network state from the container
 	out, err := exec.Command(
-		c.daemon.execPath,
+		execPath,
 		"forkgetnet",
 		fmt.Sprintf("%d", pid)).CombinedOutput()
 
@@ -3297,7 +3334,7 @@ func (c *containerLXC) insertMount(source, target, fstype string, flags int) err
 	mntsrc := filepath.Join("/dev/.lxd-mounts", filepath.Base(tmpMount))
 	pidStr := fmt.Sprintf("%d", pid)
 
-	out, err := exec.Command(c.daemon.execPath, "forkmount", pidStr, mntsrc, target).CombinedOutput()
+	out, err := exec.Command(execPath, "forkmount", pidStr, mntsrc, target).CombinedOutput()
 
 	if string(out) != "" {
 		for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
@@ -3327,7 +3364,7 @@ func (c *containerLXC) removeMount(mount string) error {
 
 	// Remove the mount from the container
 	pidStr := fmt.Sprintf("%d", pid)
-	out, err := exec.Command(c.daemon.execPath, "forkumount", pidStr, mount).CombinedOutput()
+	out, err := exec.Command(execPath, "forkumount", pidStr, mount).CombinedOutput()
 
 	if string(out) != "" {
 		for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
@@ -3552,9 +3589,10 @@ func (c *containerLXC) removeUnixDevices() error {
 		}
 
 		// Remove the entry
-		err := os.Remove(filepath.Join(c.DevicesPath(), f.Name()))
+		devicePath := filepath.Join(c.DevicesPath(), f.Name())
+		err := os.Remove(devicePath)
 		if err != nil {
-			return err
+			shared.Log.Error("failed removing unix device", log.Ctx{"err": err, "path": devicePath})
 		}
 	}
 
@@ -3860,9 +3898,9 @@ func (c *containerLXC) createDiskDevice(name string, m shared.Device) (string, e
 	devPath := filepath.Join(c.DevicesPath(), devName)
 
 	// Check if read-only
-	isOptional := m["optional"] == "1" || m["optional"] == "true"
-	isReadOnly := m["readonly"] == "1" || m["readonly"] == "true"
-	isRecursive := m["recursive"] == "1" || m["recursive"] == "true"
+	isOptional := shared.IsTrue(m["optional"])
+	isReadOnly := shared.IsTrue(m["readonly"])
+	isRecursive := shared.IsTrue(m["recursive"])
 	isFile := !shared.IsDir(srcPath) && !deviceIsBlockdev(srcPath)
 
 	// Check if the source exists
@@ -3919,7 +3957,7 @@ func (c *containerLXC) insertDiskDevice(name string, m shared.Device) error {
 		return fmt.Errorf("Can't insert device into stopped container")
 	}
 
-	isRecursive := m["recursive"] == "1" || m["recursive"] == "true"
+	isRecursive := shared.IsTrue(m["recursive"])
 
 	// Create the device on the host
 	devPath, err := c.createDiskDevice(name, m)
@@ -4002,9 +4040,10 @@ func (c *containerLXC) removeDiskDevices() error {
 		_ = syscall.Unmount(filepath.Join(c.DevicesPath(), f.Name()), syscall.MNT_DETACH)
 
 		// Remove the entry
-		err := os.Remove(filepath.Join(c.DevicesPath(), f.Name()))
+		diskPath := filepath.Join(c.DevicesPath(), f.Name())
+		err := os.Remove(diskPath)
 		if err != nil {
-			return err
+			shared.Log.Error("Failed to remove disk device path", log.Ctx{"err": err, "path": diskPath})
 		}
 	}
 
@@ -4341,23 +4380,11 @@ func (c *containerLXC) IsFrozen() bool {
 }
 
 func (c *containerLXC) IsNesting() bool {
-	switch strings.ToLower(c.expandedConfig["security.nesting"]) {
-	case "1":
-		return true
-	case "true":
-		return true
-	}
-	return false
+	return shared.IsTrue(c.expandedConfig["security.nesting"])
 }
 
 func (c *containerLXC) IsPrivileged() bool {
-	switch strings.ToLower(c.expandedConfig["security.privileged"]) {
-	case "1":
-		return true
-	case "true":
-		return true
-	}
-	return false
+	return shared.IsTrue(c.expandedConfig["security.privileged"])
 }
 
 func (c *containerLXC) IsRunning() bool {
@@ -4484,5 +4511,13 @@ func (c *containerLXC) TemplatesPath() string {
 }
 
 func (c *containerLXC) StatePath() string {
-	return filepath.Join(c.RootfsPath(), "state")
+	/* FIXME: backwards compatibility: we used to use Join(RootfsPath(),
+	 * "state"), which was bad. Let's just check to see if that directory
+	 * exists.
+	 */
+	oldStatePath := filepath.Join(c.RootfsPath(), "state")
+	if shared.IsDir(oldStatePath) {
+		return oldStatePath
+	}
+	return filepath.Join(c.Path(), "state")
 }

@@ -580,27 +580,25 @@ func (c *Client) CopyImage(image string, dest *Client, copy_aliases bool, aliase
 		return err
 	}
 
-	if c.Remote.Protocol != "simplestreams" {
-		if !info.Public {
-			var secret string
+	if c.Remote.Protocol != "simplestreams" && !info.Public {
+		var secret string
 
-			resp, err := c.post("images/"+image+"/secret", nil, Async)
-			if err != nil {
-				return err
-			}
-
-			op, err := resp.MetadataAsOperation()
-			if err != nil {
-				return err
-			}
-
-			secret, err = op.Metadata.GetString("secret")
-			if err != nil {
-				return err
-			}
-
-			source["secret"] = secret
+		resp, err := c.post("images/"+image+"/secret", nil, Async)
+		if err != nil {
+			return err
 		}
+
+		op, err := resp.MetadataAsOperation()
+		if err != nil {
+			return err
+		}
+
+		secret, err = op.Metadata.GetString("secret")
+		if err != nil {
+			return err
+		}
+
+		source["secret"] = secret
 		source["fingerprint"] = image
 	}
 
@@ -1662,7 +1660,7 @@ func (c *Client) PushFile(container string, p string, gid int, uid int, mode os.
 	return err
 }
 
-func (c *Client) PullFile(container string, p string) (int, int, os.FileMode, io.ReadCloser, error) {
+func (c *Client) PullFile(container string, p string) (int, int, int, io.ReadCloser, error) {
 	if c.Remote.Public {
 		return 0, 0, 0, nil, fmt.Errorf("This function isn't supported by public remotes.")
 	}
@@ -1815,6 +1813,31 @@ func (c *Client) ListSnapshots(container string) ([]shared.SnapshotInfo, error) 
 	}
 
 	return result, nil
+}
+
+func (c *Client) SnapshotInfo(snapName string) (*shared.SnapshotInfo, error) {
+	if c.Remote.Public {
+		return nil, fmt.Errorf("This function isn't supported by public remotes.")
+	}
+
+	pieces := strings.SplitN(snapName, shared.SnapshotDelimiter, 2)
+	if len(pieces) != 2 {
+		return nil, fmt.Errorf("invalid snapshot name %s", snapName)
+	}
+
+	qUrl := fmt.Sprintf("containers/%s/snapshots/%s", pieces[0], pieces[1])
+	resp, err := c.get(qUrl)
+	if err != nil {
+		return nil, err
+	}
+
+	var result shared.SnapshotInfo
+
+	if err := json.Unmarshal(resp.Metadata, &result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
 }
 
 func (c *Client) GetServerConfigString() ([]string, error) {
