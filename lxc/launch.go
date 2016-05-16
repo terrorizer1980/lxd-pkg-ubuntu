@@ -30,7 +30,7 @@ Not specifying -p will result in the default profile.
 Specifying "-p" with no argument will result in no profile.
 
 Example:
-lxc launch ubuntu u1`)
+lxc launch ubuntu:16.04 u1`)
 }
 
 func (c *launchCmd) flags() {
@@ -74,6 +74,8 @@ func (c *launchCmd) run(config *lxd.Config, args []string) error {
 	for _, p := range c.init.profArgs {
 		profiles = append(profiles, p)
 	}
+
+	iremote, image = c.init.guessImage(config, d, remote, iremote, image)
 
 	if !initRequestedEmptyProfiles && len(profiles) == 0 {
 		resp, err = d.Init(name, iremote, image, nil, configMap, c.init.ephem)

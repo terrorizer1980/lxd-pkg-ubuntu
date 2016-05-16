@@ -50,9 +50,15 @@ var argVersion = gnuflag.Bool("version", false, "")
 // Global variables
 var debug bool
 var verbose bool
+var execPath string
 
 func init() {
 	rand.Seed(time.Now().UTC().UnixNano())
+	absPath, err := os.Readlink("/proc/self/exe")
+	if err != nil {
+		absPath = "bad-exec-path"
+	}
+	execPath = absPath
 }
 
 func main() {
@@ -152,6 +158,8 @@ func run() error {
 		fmt.Printf("        Start a container\n")
 		fmt.Printf("    callhook\n")
 		fmt.Printf("        Call a container hook\n")
+		fmt.Printf("    netcat\n")
+		fmt.Printf("        Mirror a unix socket to stdin/stdout")
 	}
 
 	// Parse the arguments
@@ -227,6 +235,8 @@ func run() error {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			}
 			os.Exit(ret)
+		case "netcat":
+			return Netcat(os.Args[1:])
 		}
 	}
 
@@ -473,12 +483,14 @@ func cmdActivateIfNeeded() error {
 		return err
 	}
 
-	// Look for network socket
-	value, err := d.ConfigValueGet("core.https_address")
+	/* Load all config values from the database */
+	err = daemonConfigInit(d.db)
 	if err != nil {
 		return err
 	}
 
+	// Look for network socket
+	value := daemonConfig["core.https_address"].Get()
 	if value != "" {
 		shared.Debugf("Daemon has core.https_address set, activating...")
 		_, err := lxd.NewClient(&lxd.DefaultConfig, "local")
@@ -512,7 +524,7 @@ func cmdActivateIfNeeded() error {
 			return err
 		}
 
-		if lastState == "RUNNING" || lastState == "Running" || autoStart == "true" {
+		if lastState == "RUNNING" || lastState == "Running" || shared.IsTrue(autoStart) {
 			shared.Debugf("Daemon has auto-started containers, activating...")
 			_, err := lxd.NewClient(&lxd.DefaultConfig, "local")
 			return err
@@ -611,9 +623,9 @@ func cmdInit() error {
 			fmt.Printf(question)
 			input, _ := reader.ReadString('\n')
 			input = strings.TrimSuffix(input, "\n")
-			if shared.StringInSlice(strings.ToLower(input), []string{"yes", "y", "true"}) {
+			if shared.StringInSlice(strings.ToLower(input), []string{"yes", "y"}) {
 				return true
-			} else if shared.StringInSlice(strings.ToLower(input), []string{"no", "n", "false"}) {
+			} else if shared.StringInSlice(strings.ToLower(input), []string{"no", "n"}) {
 				return false
 			}
 
