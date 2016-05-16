@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"database/sql"
@@ -10,6 +9,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"net/http"
 	"net/url"
@@ -55,11 +55,6 @@ var cgSwapAccounting = false
 // UserNS
 var runningInUserns = false
 
-const (
-	pwSaltBytes = 32
-	pwHashBytes = 64
-)
-
 type Socket struct {
 	Socket      net.Listener
 	CloseOnExit bool
@@ -80,7 +75,6 @@ type Daemon struct {
 	pruneChan           chan bool
 	shutdownChan        chan bool
 	resetAutoUpdateChan chan bool
-	execPath            string
 
 	Storage storage
 
@@ -88,8 +82,6 @@ type Daemon struct {
 	UnixSocket *Socket
 
 	devlxd *net.UnixListener
-
-	configValues map[string]string
 
 	MockMode  bool
 	SetupMode bool
@@ -111,14 +103,6 @@ type Command struct {
 	put           func(d *Daemon, r *http.Request) Response
 	post          func(d *Daemon, r *http.Request) Response
 	delete        func(d *Daemon, r *http.Request) Response
-}
-
-func (d *Daemon) updateProxy() {
-	d.proxy = shared.ProxyFromConfig(
-		d.configValues["core.proxy_https"],
-		d.configValues["core.proxy_http"],
-		d.configValues["core.proxy_ignore_hosts"],
-	)
 }
 
 func (d *Daemon) httpGetSync(url string, certificate string) (*lxd.Response, error) {
@@ -361,15 +345,10 @@ func (d *Daemon) createCmd(version string, c Command) {
 }
 
 func (d *Daemon) SetupStorageDriver() error {
-	lvmVgName, err := d.ConfigValueGet("storage.lvm_vg_name")
-	if err != nil {
-		return fmt.Errorf("Couldn't read config: %s", err)
-	}
+	var err error
 
-	zfsPoolName, err := d.ConfigValueGet("storage.zfs_pool_name")
-	if err != nil {
-		return fmt.Errorf("Couldn't read config: %s", err)
-	}
+	lvmVgName := daemonConfig["storage.lvm_vg_name"].Get()
+	zfsPoolName := daemonConfig["storage.zfs_pool_name"].Get()
 
 	if lvmVgName != "" {
 		d.Storage, err = newStorage(d, storageTypeLvm)
@@ -399,7 +378,22 @@ func (d *Daemon) SetupStorageDriver() error {
 	return err
 }
 
+// have we setup shared mounts?
+var sharedMounted bool
+var sharedMountsLock sync.Mutex
+
 func setupSharedMounts() error {
+	if sharedMounted {
+		return nil
+	}
+
+	sharedMountsLock.Lock()
+	defer sharedMountsLock.Unlock()
+
+	if sharedMounted {
+		return nil
+	}
+
 	path := shared.VarPath("shmounts")
 
 	isShared, err := shared.IsOnSharedMount(path)
@@ -410,6 +404,7 @@ func setupSharedMounts() error {
 	if isShared {
 		// / may already be ms-shared, or shmounts may have
 		// been mounted by a previous lxd run
+		sharedMounted = true
 		return nil
 	}
 
@@ -422,15 +417,16 @@ func setupSharedMounts() error {
 		return err
 	}
 
+	sharedMounted = true
 	return nil
 }
 
 func (d *Daemon) ListenAddresses() ([]string, error) {
 	addresses := make([]string, 0)
 
-	value, err := d.ConfigValueGet("core.https_address")
-	if err != nil || value == "" {
-		return addresses, err
+	value := daemonConfig["core.https_address"].Get()
+	if value == "" {
+		return addresses, nil
 	}
 
 	localHost, localPort, err := net.SplitHostPort(value)
@@ -485,7 +481,9 @@ func (d *Daemon) ListenAddresses() ([]string, error) {
 	return addresses, nil
 }
 
-func (d *Daemon) UpdateHTTPsPort(oldAddress string, newAddress string) error {
+func (d *Daemon) UpdateHTTPsPort(newAddress string) error {
+	oldAddress := daemonConfig["core.https_address"].Get()
+
 	if oldAddress == newAddress {
 		return nil
 	}
@@ -545,14 +543,8 @@ func (d *Daemon) Init() error {
 	d.shutdownChan = make(chan bool)
 
 	/* Set the executable path */
-	absPath, err := os.Readlink("/proc/self/exe")
-	if err != nil {
-		return err
-	}
-	d.execPath = absPath
-
 	/* Set the LVM environment */
-	err = os.Setenv("LVM_SUPPRESS_FD_WARNINGS", "1")
+	err := os.Setenv("LVM_SUPPRESS_FD_WARNINGS", "1")
 	if err != nil {
 		return err
 	}
@@ -737,6 +729,12 @@ func (d *Daemon) Init() error {
 		return err
 	}
 
+	/* Load all config values from the database */
+	err = daemonConfigInit(d.db)
+	if err != nil {
+		return err
+	}
+
 	/* Setup the storage driver */
 	if !d.MockMode {
 		err = d.SetupStorageDriver()
@@ -745,22 +743,32 @@ func (d *Daemon) Init() error {
 		}
 	}
 
-	/* Load all config values from the database */
-	_, err = d.ConfigValuesGet()
-	if err != nil {
-		return err
-	}
+	/* Log expiry */
+	go func() {
+		t := time.NewTicker(24 * time.Hour)
+		for {
+			shared.Debugf("Expiring log files")
+
+			err := d.ExpireLogs()
+			if err != nil {
+				shared.Log.Error("Failed to expire logs", log.Ctx{"err": err})
+			}
+
+			shared.Debugf("Done expiring log files")
+			<-t.C
+		}
+	}()
 
 	/* set the initial proxy function based on config values in the DB */
-	d.updateProxy()
+	d.proxy = shared.ProxyFromConfig(
+		daemonConfig["core.proxy_https"].Get(),
+		daemonConfig["core.proxy_http"].Get(),
+		daemonConfig["core.proxy_ignore_hosts"].Get(),
+	)
 
 	/* Setup /dev/lxd */
 	d.devlxd, err = createAndBindDevLxd()
 	if err != nil {
-		return err
-	}
-
-	if err := setupSharedMounts(); err != nil {
 		return err
 	}
 
@@ -889,11 +897,7 @@ func (d *Daemon) Init() error {
 		d.UnixSocket = &Socket{Socket: unixl, CloseOnExit: true}
 	}
 
-	listenAddr, err := d.ConfigValueGet("core.https_address")
-	if err != nil {
-		return err
-	}
-
+	listenAddr := daemonConfig["core.https_address"].Get()
 	if listenAddr != "" {
 		_, _, err := net.SplitHostPort(listenAddr)
 		if err != nil {
@@ -967,18 +971,9 @@ func (d *Daemon) Ready() error {
 		autoUpdateImages(d)
 
 		for {
-			interval, _ := d.ConfigValueGet("images.auto_update_interval")
-			if interval == "" {
-				interval = "6"
-			}
-
-			intervalInt, err := strconv.Atoi(interval)
-			if err != nil {
-				intervalInt = 0
-			}
-
-			if intervalInt > 0 {
-				timer := time.NewTimer(time.Duration(intervalInt) * time.Hour)
+			interval := daemonConfig["images.auto_update_interval"].GetInt64()
+			if interval > 0 {
+				timer := time.NewTimer(time.Duration(interval) * time.Hour)
 				timeChan := timer.C
 
 				select {
@@ -1088,160 +1083,113 @@ func (d *Daemon) Stop() error {
 	return err
 }
 
-// ConfigKeyIsValid returns if the given key is a known config value.
-func (d *Daemon) ConfigKeyIsValid(key string) bool {
-	switch key {
-	case "core.https_address":
-		return true
-	case "core.https_allowed_origin":
-		return true
-	case "core.https_allowed_methods":
-		return true
-	case "core.https_allowed_headers":
-		return true
-	case "core.proxy_https":
-		return true
-	case "core.proxy_http":
-		return true
-	case "core.proxy_ignore_hosts":
-		return true
-	case "core.trust_password":
-		return true
-	case "storage.lvm_vg_name":
-		return true
-	case "storage.lvm_thinpool_name":
-		return true
-	case "storage.lvm_fstype":
-		return true
-	case "storage.lvm_volume_size":
-		return true
-	case "storage.zfs_pool_name":
-		return true
-	case "images.remote_cache_expiry":
-		return true
-	case "images.compression_algorithm":
-		return true
-	case "images.auto_update_interval":
-		return true
-	case "images.auto_update_cached":
-		return true
-	}
-
-	return false
-}
-
-// ConfigValueGet returns a config value from the memory,
-// calls ConfigValuesGet if required.
-// It returns a empty result if the config key isn't given.
-func (d *Daemon) ConfigValueGet(key string) (string, error) {
-	if d.configValues == nil {
-		if _, err := d.ConfigValuesGet(); err != nil {
-			return "", err
-		}
-	}
-
-	if val, ok := d.configValues[key]; ok {
-		return val, nil
-	}
-
-	return "", nil
-}
-
-// ConfigValuesGet fetches all config values and stores them in memory.
-func (d *Daemon) ConfigValuesGet() (map[string]string, error) {
-	if d.configValues == nil {
-		var err error
-		d.configValues, err = dbConfigValuesGet(d.db)
-		if err != nil {
-			return d.configValues, err
-		}
-	}
-
-	return d.configValues, nil
-}
-
-// ConfigValueSet sets a new or updates a config value,
-// it updates the value in the DB and in memory.
-func (d *Daemon) ConfigValueSet(key string, value string) error {
-	if err := dbConfigValueSet(d.db, key, value); err != nil {
-		return err
-	}
-
-	if d.configValues == nil {
-		if _, err := d.ConfigValuesGet(); err != nil {
-			return err
-		}
-	}
-
-	if value == "" {
-		delete(d.configValues, key)
-	} else {
-		d.configValues[key] = value
-	}
-
-	return nil
-}
-
-// PasswordSet sets the password to the new value.
-func (d *Daemon) PasswordSet(password string) error {
-	shared.Log.Info("Setting new https password")
-	var value = password
-	if password != "" {
-		buf := make([]byte, pwSaltBytes)
-		_, err := io.ReadFull(rand.Reader, buf)
-		if err != nil {
-			return err
-		}
-
-		hash, err := scrypt.Key([]byte(password), buf, 1<<14, 8, 1, pwHashBytes)
-		if err != nil {
-			return err
-		}
-
-		buf = append(buf, hash...)
-		value = hex.EncodeToString(buf)
-	}
-
-	err := d.ConfigValueSet("core.trust_password", value)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// PasswordCheck checks if the given password is the same
-// as we have in the DB.
-func (d *Daemon) PasswordCheck(password string) bool {
-	value, err := d.ConfigValueGet("core.trust_password")
-	if err != nil {
-		shared.Log.Error("verifyAdminPwd", log.Ctx{"err": err})
-		return false
-	}
+func (d *Daemon) PasswordCheck(password string) error {
+	value := daemonConfig["core.trust_password"].Get()
 
 	// No password set
 	if value == "" {
-		return false
+		return fmt.Errorf("No password is set")
 	}
 
+	// Compare the password
 	buff, err := hex.DecodeString(value)
 	if err != nil {
-		shared.Log.Error("hex decode failed", log.Ctx{"err": err})
-		return false
+		return err
 	}
 
-	salt := buff[0:pwSaltBytes]
-	hash, err := scrypt.Key([]byte(password), salt, 1<<14, 8, 1, pwHashBytes)
+	salt := buff[0:32]
+	hash, err := scrypt.Key([]byte(password), salt, 1<<14, 8, 1, 64)
 	if err != nil {
-		shared.Log.Error("Failed to create hash to check", log.Ctx{"err": err})
-		return false
+		return err
 	}
-	if !bytes.Equal(hash, buff[pwSaltBytes:]) {
-		shared.Log.Error("Bad password received", log.Ctx{"err": err})
-		return false
+
+	if !bytes.Equal(hash, buff[32:]) {
+		return fmt.Errorf("Bad password provided")
 	}
-	shared.Log.Debug("Verified the admin password")
-	return true
+
+	return nil
+}
+
+func (d *Daemon) ExpireLogs() error {
+	entries, err := ioutil.ReadDir(shared.LogPath())
+	if err != nil {
+		return err
+	}
+
+	result, err := dbContainersList(d.db, cTypeRegular)
+	if err != nil {
+		return err
+	}
+
+	newestFile := func(path string, dir os.FileInfo) time.Time {
+		newest := dir.ModTime()
+
+		entries, err := ioutil.ReadDir(path)
+		if err != nil {
+			return newest
+		}
+
+		for _, entry := range entries {
+			if entry.ModTime().After(newest) {
+				newest = entry.ModTime()
+			}
+		}
+
+		return newest
+	}
+
+	for _, entry := range entries {
+		// Check if the container still exists
+		if shared.StringInSlice(entry.Name(), result) {
+			// Remove any log file which wasn't modified in the past 48 hours
+			logs, err := ioutil.ReadDir(shared.LogPath(entry.Name()))
+			if err != nil {
+				return err
+			}
+
+			for _, logfile := range logs {
+				path := shared.LogPath(entry.Name(), logfile.Name())
+
+				// Always keep the LXC config
+				if logfile.Name() == "lxc.conf" {
+					continue
+				}
+
+				// Deal with directories (snapshots)
+				if logfile.IsDir() {
+					newest := newestFile(path, logfile)
+					if time.Since(newest).Hours() >= 48 {
+						os.RemoveAll(path)
+						if err != nil {
+							return err
+						}
+					}
+
+					continue
+				}
+
+				// Individual files
+				if time.Since(logfile.ModTime()).Hours() >= 48 {
+					err := os.Remove(path)
+					if err != nil {
+						return err
+					}
+				}
+			}
+		} else {
+			// Empty directory if unchanged in the past 24 hours
+			path := shared.LogPath(entry.Name())
+			newest := newestFile(path, entry)
+			if time.Since(newest).Hours() >= 24 {
+				err := os.RemoveAll(path)
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
 type lxdHttpServer struct {
@@ -1250,18 +1198,18 @@ type lxdHttpServer struct {
 }
 
 func (s *lxdHttpServer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	allowedOrigin, _ := s.d.ConfigValueGet("core.https_allowed_origin")
+	allowedOrigin := daemonConfig["core.https_allowed_origin"].Get()
 	origin := req.Header.Get("Origin")
 	if allowedOrigin != "" && origin != "" {
 		rw.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
 	}
 
-	allowedMethods, _ := s.d.ConfigValueGet("core.https_allowed_methods")
+	allowedMethods := daemonConfig["core.https_allowed_methods"].Get()
 	if allowedMethods != "" && origin != "" {
 		rw.Header().Set("Access-Control-Allow-Methods", allowedMethods)
 	}
 
-	allowedHeaders, _ := s.d.ConfigValueGet("core.https_allowed_headers")
+	allowedHeaders := daemonConfig["core.https_allowed_headers"].Get()
 	if allowedHeaders != "" && origin != "" {
 		rw.Header().Set("Access-Control-Allow-Headers", allowedHeaders)
 	}
