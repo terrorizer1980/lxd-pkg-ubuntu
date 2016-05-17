@@ -110,7 +110,7 @@ func containersRestart(d *Daemon) error {
 		autoStart := config["boot.autostart"]
 		autoStartDelay := config["boot.autostart.delay"]
 
-		if lastState == "RUNNING" || autoStart == "true" {
+		if lastState == "RUNNING" || shared.IsTrue(autoStart) {
 			if c.IsRunning() {
 				continue
 			}
@@ -239,9 +239,6 @@ func startContainer(args []string) error {
 		syscall.Dup3(int(logFile.Fd()), 1, 0)
 		syscall.Dup3(int(logFile.Fd()), 2, 0)
 	}
-
-	// Move the config so we can inspect it on failure
-	shared.FileMove(configPath, shared.LogPath(name, "lxc.conf"))
 
 	return c.Start()
 }
