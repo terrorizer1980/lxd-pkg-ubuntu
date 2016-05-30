@@ -71,9 +71,22 @@ add_groups()
     done
 }
 
+fix_permissions() {
+    for entry in /var/lib/lxd/containers/*; do
+        [ ! -d "${entry}" ] && continue
+        [ ! -d "${entry}/rootfs" ] && continue
+
+        [ "$(stat -c "%u" "${entry}/rootfs")" != "0" ] && continue
+
+        chown root:root "${entry}"
+        chmod 700 "${entry}"
+    done
+}
+
 case "$1" in
     configure)
         add_groups
+        fix_permissions
     ;;
 
     abort-upgrade|abort-remove|abort-deconfigure)
