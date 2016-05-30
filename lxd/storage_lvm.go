@@ -228,6 +228,12 @@ func (s *storageLvm) ContainerCreate(container container) error {
 		return err
 	}
 
+	destPath := container.PathGet("")
+	err = os.Chmod(destPath, 0700)
+	if err != nil {
+		return err
+	}
+
 	dst := shared.VarPath("containers", fmt.Sprintf("%s.lv", container.NameGet()))
 	err = os.Symlink(lvpath, dst)
 	if err != nil {
@@ -261,28 +267,45 @@ func (s *storageLvm) ContainerCreateFromImage(
 		return fmt.Errorf("Error creating container directory: %v", err)
 	}
 
+	err = os.Chmod(destPath, 0700)
+	if err != nil {
+		return err
+	}
+
 	dst := shared.VarPath("containers", fmt.Sprintf("%s.lv", container.NameGet()))
 	err = os.Symlink(lvpath, dst)
 	if err != nil {
 		return err
 	}
 
-	if !container.IsPrivileged() {
-		output, err := exec.Command("mount", "-o", "discard", lvpath, destPath).CombinedOutput()
-		if err != nil {
-			s.ContainerDelete(container)
-			return fmt.Errorf("Error mounting snapshot LV: %v\noutput:'%s'", err, string(output))
-		}
+	output, err := exec.Command("mount", "-o", "discard", lvpath, destPath).CombinedOutput()
+	if err != nil {
+		s.ContainerDelete(container)
+		return fmt.Errorf("Error mounting snapshot LV: %v\noutput:'%s'", err, string(output))
+	}
 
+	var mode os.FileMode
+	if container.IsPrivileged() {
+		mode = 0700
+	} else {
+		mode = 0755
+	}
+
+	err = os.Chmod(destPath, mode)
+	if err != nil {
+		return err
+	}
+
+	if !container.IsPrivileged() {
 		if err = s.shiftRootfs(container); err != nil {
 			s.ContainerDelete(container)
 			return fmt.Errorf("Error in shiftRootfs: %v", err)
 		}
+	}
 
-		output, err = exec.Command("umount", destPath).CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("Error unmounting '%s' after shiftRootfs: %v", destPath, err)
-		}
+	output, err = exec.Command("umount", destPath).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("Error unmounting '%s' after shiftRootfs: %v", destPath, err)
 	}
 
 	return container.TemplateApply("create")

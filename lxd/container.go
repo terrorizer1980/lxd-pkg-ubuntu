@@ -986,6 +986,29 @@ func (c *containerLXD) Start() error {
 				return err
 			}
 		}
+
+		var mode os.FileMode
+		var uid int
+		var gid int
+
+		if c.IsPrivileged() {
+			mode = 0700
+		} else {
+			mode = 0755
+			if idmap != nil {
+				uid, gid = idmap.ShiftIntoNs(0, 0)
+			}
+		}
+
+		err = os.Chmod(c.PathGet(""), mode)
+		if err != nil {
+			return err
+		}
+
+		err = os.Chown(c.PathGet(""), uid, gid)
+		if err != nil {
+			return err
+		}
 	}
 
 	err = c.ConfigKeySet("volatile.last_state.idmap", jsonIdmap)
