@@ -1,3 +1,10 @@
+lxd (0.20-0ubuntu4.2) wily; urgency=medium
+
+  * Cherry-pick fix from upstream security release (2.0.2) (LP: #1584230)
+    - CVE-2016-1582: Fix bad container permisisons after remap
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Mon, 30 May 2016 17:51:08 -0400
+
 lxd (0.20-0ubuntu4.1) wily-security; urgency=medium
 
   * SECURITY UPDATE: Fix the mode of /var/lib/lxd/unix.socket when
