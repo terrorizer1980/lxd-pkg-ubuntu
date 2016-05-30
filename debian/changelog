@@ -1,3 +1,11 @@
+lxd (2.0.2-0ubuntu1) yakkety; urgency=medium
+
+  * New upstream security release (2.0.2) (LP: #1584230)
+    - CVE-2016-1581: Fix bad permissions on zfs.img
+    - CVE-2016-1582: Fix bad container permisisons after remap
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Mon, 30 May 2016 14:16:21 -0400
+
 lxd (2.0.1-0ubuntu1) yakkety; urgency=medium
 
   * New upstream bugfix release (2.0.1)
