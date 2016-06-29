@@ -79,6 +79,13 @@ func (s *storageZfs) Init(config map[string]interface{}) (storage, error) {
 
 // Things we don't need to care about
 func (s *storageZfs) ContainerStart(container container) error {
+	fs := fmt.Sprintf("containers/%s", container.Name())
+
+	// Just in case the container filesystem got unmounted
+	if !shared.IsMountPoint(shared.VarPath(fs)) {
+		s.zfsMount(fs)
+	}
+
 	return nil
 }
 
@@ -596,7 +603,7 @@ func (s *storageZfs) ImageCreate(fingerprint string) error {
 		return err
 	}
 
-	err = untarImage(imagePath, subvol)
+	err = unpackImage(imagePath, subvol)
 	if err != nil {
 		s.zfsDestroy(fs)
 		return err
@@ -1198,7 +1205,7 @@ func (s *zfsMigrationSourceDriver) send(conn *websocket.Conn, zfsName string, zf
 		return err
 	}
 
-	<-shared.WebsocketSendStream(conn, stdout)
+	<-shared.WebsocketSendStream(conn, stdout, 4*1024*1024)
 
 	output, err := ioutil.ReadAll(stderr)
 	if err != nil {

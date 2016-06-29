@@ -1,4 +1,4 @@
-From 773a0a537cbf7a48afe44dbde5872833ea2b529e Mon Sep 17 00:00:00 2001
+From 1a972f53eb42ba88f20419989eea37d39880f424 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
 Date: Mon, 4 Apr 2016 21:18:28 -0400
 Subject: init: Allow running dpkg-reconfigure
@@ -12,7 +12,7 @@ Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
  1 file changed, 21 insertions(+)
 
 diff --git a/lxd/main.go b/lxd/main.go
-index 156decb..ec83495 100644
+index ec20ed2..3a47bc5 100644
 --- a/lxd/main.go
 +++ b/lxd/main.go
 @@ -596,6 +596,7 @@ func cmdInit() error {

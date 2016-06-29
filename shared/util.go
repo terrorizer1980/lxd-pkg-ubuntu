@@ -70,6 +70,16 @@ func IsDir(name string) bool {
 	return stat.IsDir()
 }
 
+// IsUnixSocket returns true if the given path is either a Unix socket
+// or a symbolic link pointing at a Unix socket.
+func IsUnixSocket(path string) bool {
+	stat, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return (stat.Mode() & os.ModeSocket) == os.ModeSocket
+}
+
 // VarPath returns the provided path elements joined by a slash and
 // appended to the end of $LXD_DIR, which defaults to /var/lib/lxd.
 func VarPath(path ...string) string {
@@ -129,16 +139,26 @@ func ReadToJSON(r io.Reader, req interface{}) error {
 	return json.Unmarshal(buf, req)
 }
 
-func ReaderToChannel(r io.Reader) <-chan []byte {
+func ReaderToChannel(r io.Reader, bufferSize int) <-chan []byte {
+	if bufferSize <= 128*1024 {
+		bufferSize = 128 * 1024
+	}
+
 	ch := make(chan ([]byte))
 
 	go func() {
+		readSize := 128 * 1024
+		offset := 0
+		buf := make([]byte, bufferSize)
+
 		for {
-			/* io.Copy uses a 32KB buffer, so we might as well too. */
-			buf := make([]byte, 32*1024)
-			nr, err := r.Read(buf)
-			if nr > 0 {
-				ch <- buf[0:nr]
+			read := buf[offset : offset+readSize]
+			nr, err := r.Read(read)
+			offset += nr
+			if offset > 0 && (offset+readSize >= bufferSize || err != nil) {
+				ch <- buf[0:offset]
+				offset = 0
+				buf = make([]byte, bufferSize)
 			}
 
 			if err != nil {
