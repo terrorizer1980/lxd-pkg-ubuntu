@@ -2,6 +2,7 @@ package lxd
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -19,6 +20,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/gorilla/websocket"
 
@@ -241,11 +243,7 @@ func connectViaUnix(c *Client, remote *RemoteConfig) error {
 		//   unix:///path/to/socket
 		//   unix:/path/to/socket
 		//   unix:path/to/socket
-		path := strings.TrimPrefix(remote.Addr, "unix:")
-		if strings.HasPrefix(path, "///") {
-			// translate unix:///path/to, to just "/path/to"
-			path = path[2:]
-		}
+		path := strings.TrimPrefix(strings.TrimPrefix(remote.Addr, "unix:"), "//")
 		raddr, err := net.ResolveUnixAddr("unix", path)
 		if err != nil {
 			return nil, err
@@ -478,17 +476,33 @@ func (c *Client) websocket(operation string, secret string) (*websocket.Conn, er
 }
 
 func (c *Client) url(elem ...string) string {
+	// Normalize the URL
 	path := strings.Join(elem, "/")
+	entries := []string{}
+	fields := strings.Split(path, "/")
+	for i, entry := range fields {
+		if entry == "" && i+1 < len(fields) {
+			continue
+		}
+
+		entries = append(entries, entry)
+	}
+	path = strings.Join(entries, "/")
+
+	// Assemble the final URL
 	uri := c.BaseURL + "/" + path
 
+	// Aliases may contain a trailing slash
 	if strings.HasPrefix(path, "1.0/images/aliases") {
 		return uri
 	}
 
+	// File paths may contain a trailing slash
 	if strings.Contains(path, "?") {
 		return uri
 	}
 
+	// Nothing else should contain a trailing slash
 	return strings.TrimSuffix(uri, "/")
 }
 
@@ -498,6 +512,47 @@ func (c *Client) GetServerConfig() (*Response, error) {
 	}
 
 	return c.baseGet(c.url(shared.APIVersion))
+}
+
+// GetLocalLXDErr determines whether or not an error is likely due to a
+// local LXD configuration issue, and if so, returns the underlying error.
+// GetLocalLXDErr can be used to provide customized error messages to help
+// the user identify basic system issues, e.g. LXD daemon not running.
+//
+// Returns syscall.ENOENT, syscall.ECONNREFUSED or syscall.EACCES when a
+// local LXD configuration issue is detected, nil otherwise.
+func GetLocalLXDErr(err error) error {
+	t, ok := err.(*url.Error)
+	if !ok {
+		return nil
+	}
+
+	u, ok := t.Err.(*net.OpError)
+	if !ok {
+		return nil
+	}
+
+	if u.Op == "dial" && u.Net == "unix" {
+		var lxdErr error
+
+		sysErr, ok := u.Err.(*os.SyscallError)
+		if ok {
+			lxdErr = sysErr.Err
+		} else {
+			// syscall.Errno may be returned on some systems, e.g. CentOS
+			lxdErr, ok = u.Err.(syscall.Errno)
+			if !ok {
+				return nil
+			}
+		}
+
+		switch lxdErr {
+		case syscall.ENOENT, syscall.ECONNREFUSED, syscall.EACCES:
+			return lxdErr
+		}
+	}
+
+	return nil
 }
 
 func (c *Client) AmTrusted() bool {
@@ -642,6 +697,8 @@ func (c *Client) CopyImage(image string, dest *Client, copy_aliases bool, aliase
 		go dest.Monitor([]string{"operation"}, handler)
 	}
 
+	fingerprint := info.Fingerprint
+
 	for _, addr := range addresses {
 		sourceUrl := "https://" + addr
 
@@ -655,9 +712,16 @@ func (c *Client) CopyImage(image string, dest *Client, copy_aliases bool, aliase
 
 		operation = resp.Operation
 
-		err = dest.WaitForSuccess(resp.Operation)
+		op, err := dest.WaitForSuccessOp(resp.Operation)
 		if err != nil {
 			return err
+		}
+
+		if op.Metadata != nil {
+			value, err := op.Metadata.GetString("fingerprint")
+			if err == nil {
+				fingerprint = value
+			}
 		}
 
 		break
@@ -671,7 +735,7 @@ func (c *Client) CopyImage(image string, dest *Client, copy_aliases bool, aliase
 	if copy_aliases {
 		for _, alias := range info.Aliases {
 			dest.DeleteAlias(alias.Name)
-			err = dest.PostAlias(alias.Name, alias.Description, info.Fingerprint)
+			err = dest.PostAlias(alias.Name, alias.Description, fingerprint)
 			if err != nil {
 				return fmt.Errorf("Error adding alias %s: %s", alias.Name, err)
 			}
@@ -681,7 +745,7 @@ func (c *Client) CopyImage(image string, dest *Client, copy_aliases bool, aliase
 	/* add new aliases */
 	for _, alias := range aliases {
 		dest.DeleteAlias(alias)
-		err = dest.PostAlias(alias, alias, info.Fingerprint)
+		err = dest.PostAlias(alias, alias, fingerprint)
 		if err != nil {
 			return fmt.Errorf("Error adding alias %s: %s\n", alias, err)
 		}
@@ -747,7 +811,7 @@ func (c *Client) ExportImage(image string, target string) (string, error) {
 			return "", fmt.Errorf("Invalid multipart image")
 		}
 
-		rootfsTarf, err := os.OpenFile(filepath.Join(part.FileName()), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+		rootfsTarf, err := os.OpenFile(filepath.Join(target, part.FileName()), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 		if err != nil {
 			return "", err
 		}
@@ -1446,7 +1510,7 @@ func (c *Client) Exec(name string, cmd []string, env map[string]string,
 			return -1, err
 		}
 
-		shared.WebsocketSendStream(conn, stdin)
+		shared.WebsocketSendStream(conn, stdin, -1)
 		<-shared.WebsocketRecvStream(stdout, conn)
 		conn.Close()
 
@@ -1460,7 +1524,7 @@ func (c *Client) Exec(name string, cmd []string, env map[string]string,
 		}
 		defer conns[0].Close()
 
-		dones[0] = shared.WebsocketSendStream(conns[0], stdin)
+		dones[0] = shared.WebsocketSendStream(conns[0], stdin, -1)
 
 		outputs := []io.WriteCloser{stdout, stderr}
 		for i := 1; i < 3; i++ {
@@ -1559,6 +1623,15 @@ func (c *Client) ServerStatus() (*shared.ServerState, error) {
 		return nil, err
 	}
 
+	// Fill in certificate fingerprint if not provided
+	if ss.Environment.CertificateFingerprint == "" && ss.Environment.Certificate != "" {
+		pemCertificate, _ := pem.Decode([]byte(ss.Environment.Certificate))
+		if pemCertificate != nil {
+			digest := sha256.Sum256(pemCertificate.Bytes)
+			ss.Environment.CertificateFingerprint = fmt.Sprintf("%x", digest)
+		}
+	}
+
 	return &ss, nil
 }
 
@@ -1633,7 +1706,7 @@ func (c *Client) ProfileConfig(name string) (*shared.ProfileConfig, error) {
 	return &ct, nil
 }
 
-func (c *Client) PushFile(container string, p string, gid int, uid int, mode os.FileMode, buf io.ReadSeeker) error {
+func (c *Client) PushFile(container string, p string, gid int, uid int, mode string, buf io.ReadSeeker) error {
 	if c.Remote.Public {
 		return fmt.Errorf("This function isn't supported by public remotes.")
 	}
@@ -1647,9 +1720,15 @@ func (c *Client) PushFile(container string, p string, gid int, uid int, mode os.
 	}
 	req.Header.Set("User-Agent", shared.UserAgent)
 
-	req.Header.Set("X-LXD-mode", fmt.Sprintf("%04o", mode.Perm()))
-	req.Header.Set("X-LXD-uid", strconv.FormatUint(uint64(uid), 10))
-	req.Header.Set("X-LXD-gid", strconv.FormatUint(uint64(gid), 10))
+	if mode != "" {
+		req.Header.Set("X-LXD-mode", mode)
+	}
+	if uid != -1 {
+		req.Header.Set("X-LXD-uid", strconv.FormatUint(uint64(uid), 10))
+	}
+	if gid != -1 {
+		req.Header.Set("X-LXD-gid", strconv.FormatUint(uint64(gid), 10))
+	}
 
 	raw, err := c.Http.Do(req)
 	if err != nil {
@@ -1775,6 +1854,19 @@ func (c *Client) WaitForSuccess(waitURL string) error {
 	}
 
 	return fmt.Errorf(op.Err)
+}
+
+func (c *Client) WaitForSuccessOp(waitURL string) (*shared.Operation, error) {
+	op, err := c.WaitFor(waitURL)
+	if err != nil {
+		return nil, err
+	}
+
+	if op.StatusCode == shared.Success {
+		return op, nil
+	}
+
+	return op, fmt.Errorf(op.Err)
 }
 
 func (c *Client) RestoreSnapshot(container string, snapshotName string, stateful bool) (*Response, error) {

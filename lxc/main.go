@@ -2,8 +2,6 @@ package main
 
 import (
 	"fmt"
-	"net"
-	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -21,28 +19,16 @@ var configPath string
 
 func main() {
 	if err := run(); err != nil {
-		// The action we take depends on the error we get.
 		msg := fmt.Sprintf(i18n.G("error: %v"), err)
-		switch t := err.(type) {
-		case *url.Error:
-			switch u := t.Err.(type) {
-			case *net.OpError:
-				if u.Op == "dial" && u.Net == "unix" {
-					switch errno := u.Err.(type) {
-					case syscall.Errno:
-						switch errno {
-						case syscall.ENOENT:
-							msg = i18n.G("LXD socket not found; is LXD running?")
-						case syscall.ECONNREFUSED:
-							msg = i18n.G("Connection refused; is LXD running?")
-						case syscall.EACCES:
-							msg = i18n.G("Permisson denied, are you in the lxd group?")
-						default:
-							msg = fmt.Sprintf("%d %s", uintptr(errno), errno.Error())
-						}
-					}
-				}
-			}
+
+		lxdErr := lxd.GetLocalLXDErr(err)
+		switch lxdErr {
+		case syscall.ENOENT:
+			msg = i18n.G("LXD socket not found; is LXD installed and running?")
+		case syscall.ECONNREFUSED:
+			msg = i18n.G("Connection refused; is LXD running?")
+		case syscall.EACCES:
+			msg = i18n.G("Permisson denied, are you in the lxd group?")
 		}
 
 		fmt.Fprintln(os.Stderr, fmt.Sprintf("%s", msg))
@@ -204,26 +190,19 @@ func expandAlias(config *lxd.Config, origArgs []string) ([]string, bool) {
 	aliasValue := []string{}
 
 	for k, v := range config.Aliases {
-		matches := false
-		for i, key := range strings.Split(k, " ") {
-			if len(origArgs) <= i+1 {
-				break
-			}
-
-			if origArgs[i+1] == key {
-				matches = true
-				aliasKey = strings.Split(k, " ")
-				aliasValue = strings.Split(v, " ")
-				break
-			}
-		}
-
-		if !matches {
-			continue
-		}
-
 		foundAlias = true
-		break
+		for i, key := range strings.Split(k, " ") {
+			if len(origArgs) <= i+1 || origArgs[i+1] != key {
+				foundAlias = false
+				break
+			}
+		}
+
+		if foundAlias {
+			aliasKey = strings.Split(k, " ")
+			aliasValue = strings.Split(v, " ")
+			break
+		}
 	}
 
 	if !foundAlias {

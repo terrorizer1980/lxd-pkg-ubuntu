@@ -25,6 +25,7 @@
 package sdjournal
 
 // #include <systemd/sd-journal.h>
+// #include <systemd/sd-id128.h>
 // #include <stdlib.h>
 // #include <syslog.h>
 //
@@ -155,12 +156,39 @@ package sdjournal
 // }
 //
 // int
+// my_sd_journal_get_cursor(void *f, sd_journal *j, char **cursor)
+// {
+//   int (*sd_journal_get_cursor)(sd_journal *, char **);
+//
+//   sd_journal_get_cursor = f;
+//   return sd_journal_get_cursor(j, cursor);
+// }
+//
+// int
+// my_sd_journal_test_cursor(void *f, sd_journal *j, const char *cursor)
+// {
+//   int (*sd_journal_test_cursor)(sd_journal *, const char *);
+//
+//   sd_journal_test_cursor = f;
+//   return sd_journal_test_cursor(j, cursor);
+// }
+//
+// int
 // my_sd_journal_get_realtime_usec(void *f, sd_journal *j, uint64_t *usec)
 // {
 //   int (*sd_journal_get_realtime_usec)(sd_journal *, uint64_t *);
 //
 //   sd_journal_get_realtime_usec = f;
 //   return sd_journal_get_realtime_usec(j, usec);
+// }
+//
+// int
+// my_sd_journal_get_monotonic_usec(void *f, sd_journal *j, uint64_t *usec, sd_id128_t *boot_id)
+// {
+//   int (*sd_journal_get_monotonic_usec)(sd_journal *, uint64_t *, sd_id128_t *);
+//
+//   sd_journal_get_monotonic_usec = f;
+//   return sd_journal_get_monotonic_usec(j, usec, boot_id);
 // }
 //
 // int
@@ -181,6 +209,16 @@ package sdjournal
 //   return sd_journal_seek_tail(j);
 // }
 //
+//
+// int
+// my_sd_journal_seek_cursor(void *f, sd_journal *j, const char *cursor)
+// {
+//   int (*sd_journal_seek_cursor)(sd_journal *, const char *);
+//
+//   sd_journal_seek_cursor = f;
+//   return sd_journal_seek_cursor(j, cursor);
+// }
+//
 // int
 // my_sd_journal_seek_realtime_usec(void *f, sd_journal *j, uint64_t usec)
 // {
@@ -197,6 +235,24 @@ package sdjournal
 //
 //   sd_journal_wait = f;
 //   return sd_journal_wait(j, timeout_usec);
+// }
+//
+// void
+// my_sd_journal_restart_data(void *f, sd_journal *j)
+// {
+//   void (*sd_journal_restart_data)(sd_journal *);
+//
+//   sd_journal_restart_data = f;
+//   sd_journal_restart_data(j);
+// }
+//
+// int
+// my_sd_journal_enumerate_data(void *f, sd_journal *j, const void **data, size_t *length)
+// {
+//   int (*sd_journal_enumerate_data)(sd_journal *, const void **, size_t *);
+//
+//   sd_journal_enumerate_data = f;
+//   return sd_journal_enumerate_data(j, data, length);
 // }
 //
 import "C"
@@ -217,14 +273,45 @@ var libsystemdFunctions = map[string]unsafe.Pointer{}
 // Journal entry field strings which correspond to:
 // http://www.freedesktop.org/software/systemd/man/systemd.journal-fields.html
 const (
-	SD_JOURNAL_FIELD_SYSTEMD_UNIT = "_SYSTEMD_UNIT"
-	SD_JOURNAL_FIELD_MESSAGE      = "MESSAGE"
-	SD_JOURNAL_FIELD_PID          = "_PID"
-	SD_JOURNAL_FIELD_UID          = "_UID"
-	SD_JOURNAL_FIELD_GID          = "_GID"
-	SD_JOURNAL_FIELD_HOSTNAME     = "_HOSTNAME"
-	SD_JOURNAL_FIELD_MACHINE_ID   = "_MACHINE_ID"
-	SD_JOURNAL_FIELD_TRANSPORT    = "_TRANSPORT"
+	// User Journal Fields
+	SD_JOURNAL_FIELD_MESSAGE           = "MESSAGE"
+	SD_JOURNAL_FIELD_MESSAGE_ID        = "MESSAGE_ID"
+	SD_JOURNAL_FIELD_PRIORITY          = "PRIORITY"
+	SD_JOURNAL_FIELD_CODE_FILE         = "CODE_FILE"
+	SD_JOURNAL_FIELD_CODE_LINE         = "CODE_LINE"
+	SD_JOURNAL_FIELD_CODE_FUNC         = "CODE_FUNC"
+	SD_JOURNAL_FIELD_ERRNO             = "ERRNO"
+	SD_JOURNAL_FIELD_SYSLOG_FACILITY   = "SYSLOG_FACILITY"
+	SD_JOURNAL_FIELD_SYSLOG_IDENTIFIER = "SYSLOG_IDENTIFIER"
+	SD_JOURNAL_FIELD_SYSLOG_PID        = "SYSLOG_PID"
+
+	// Trusted Journal Fields
+	SD_JOURNAL_FIELD_PID                       = "_PID"
+	SD_JOURNAL_FIELD_UID                       = "_UID"
+	SD_JOURNAL_FIELD_GID                       = "_GID"
+	SD_JOURNAL_FIELD_COMM                      = "_COMM"
+	SD_JOURNAL_FIELD_EXE                       = "_EXE"
+	SD_JOURNAL_FIELD_CMDLINE                   = "_CMDLINE"
+	SD_JOURNAL_FIELD_CAP_EFFECTIVE             = "_CAP_EFFECTIVE"
+	SD_JOURNAL_FIELD_AUDIT_SESSION             = "_AUDIT_SESSION"
+	SD_JOURNAL_FIELD_AUDIT_LOGINUID            = "_AUDIT_LOGINUID"
+	SD_JOURNAL_FIELD_SYSTEMD_CGROUP            = "_SYSTEMD_CGROUP"
+	SD_JOURNAL_FIELD_SYSTEMD_SESSION           = "_SYSTEMD_SESSION"
+	SD_JOURNAL_FIELD_SYSTEMD_UNIT              = "_SYSTEMD_UNIT"
+	SD_JOURNAL_FIELD_SYSTEMD_USER_UNIT         = "_SYSTEMD_USER_UNIT"
+	SD_JOURNAL_FIELD_SYSTEMD_OWNER_UID         = "_SYSTEMD_OWNER_UID"
+	SD_JOURNAL_FIELD_SYSTEMD_SLICE             = "_SYSTEMD_SLICE"
+	SD_JOURNAL_FIELD_SELINUX_CONTEXT           = "_SELINUX_CONTEXT"
+	SD_JOURNAL_FIELD_SOURCE_REALTIME_TIMESTAMP = "_SOURCE_REALTIME_TIMESTAMP"
+	SD_JOURNAL_FIELD_BOOT_ID                   = "_BOOT_ID"
+	SD_JOURNAL_FIELD_MACHINE_ID                = "_MACHINE_ID"
+	SD_JOURNAL_FIELD_HOSTNAME                  = "_HOSTNAME"
+	SD_JOURNAL_FIELD_TRANSPORT                 = "_TRANSPORT"
+
+	// Address Fields
+	SD_JOURNAL_FIELD_CURSOR              = "__CURSOR"
+	SD_JOURNAL_FIELD_REALTIME_TIMESTAMP  = "__REALTIME_TIMESTAMP"
+	SD_JOURNAL_FIELD_MONOTONIC_TIMESTAMP = "__MONOTONIC_TIMESTAMP"
 )
 
 // Journal event constants
@@ -257,6 +344,14 @@ type Journal struct {
 	cjournal *C.sd_journal
 	mu       sync.Mutex
 	lib      *dlopen.LibHandle
+}
+
+// JournalEntry represents all fields of a journal entry plus address fields.
+type JournalEntry struct {
+	Fields             map[string]string
+	Cursor             string
+	RealtimeTimestamp  uint64
+	MonotonicTimestamp uint64
 }
 
 // Match is a convenience wrapper to describe filters supplied to AddMatch.
@@ -371,7 +466,9 @@ func (j *Journal) Close() error {
 	C.my_sd_journal_close(sd_journal_close, j.cjournal)
 	j.mu.Unlock()
 
-	return j.lib.Close()
+	// we don't close the handle to reuse the symbol cache between Journal
+	// instances. It will go away when the process exits.
+	return nil
 }
 
 // AddMatch adds a match by which to filter the entries of the journal.
@@ -554,6 +651,93 @@ func (j *Journal) GetDataValue(field string) (string, error) {
 	return strings.SplitN(val, "=", 2)[1], nil
 }
 
+// GetEntry returns a full representation of a journal entry with
+// all key-value pairs of data as well as address fields (cursor, realtime
+// timestamp and monotonic timestamp)
+func (j *Journal) GetEntry() (*JournalEntry, error) {
+	sd_journal_get_realtime_usec, err := j.getFunction("sd_journal_get_realtime_usec")
+	if err != nil {
+		return nil, err
+	}
+
+	sd_journal_get_monotonic_usec, err := j.getFunction("sd_journal_get_monotonic_usec")
+	if err != nil {
+		return nil, err
+	}
+
+	sd_journal_get_cursor, err := j.getFunction("sd_journal_get_cursor")
+	if err != nil {
+		return nil, err
+	}
+
+	sd_journal_restart_data, err := j.getFunction("sd_journal_restart_data")
+	if err != nil {
+		return nil, err
+	}
+
+	sd_journal_enumerate_data, err := j.getFunction("sd_journal_enumerate_data")
+	if err != nil {
+		return nil, err
+	}
+
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	var r C.int
+	entry := &JournalEntry{Fields: make(map[string]string)}
+
+	var realtimeUsec C.uint64_t
+	r = C.my_sd_journal_get_realtime_usec(sd_journal_get_realtime_usec, j.cjournal, &realtimeUsec)
+	if r < 0 {
+		return nil, fmt.Errorf("failed to get realtime timestamp: %d", syscall.Errno(-r))
+	}
+
+	entry.RealtimeTimestamp = uint64(realtimeUsec)
+
+	var monotonicUsec C.uint64_t
+	var boot_id C.sd_id128_t
+
+	r = C.my_sd_journal_get_monotonic_usec(sd_journal_get_monotonic_usec, j.cjournal, &monotonicUsec, &boot_id)
+	if r < 0 {
+		return nil, fmt.Errorf("failed to get monotonic timestamp: %d", syscall.Errno(-r))
+	}
+
+	entry.MonotonicTimestamp = uint64(monotonicUsec)
+
+	var c *C.char
+	r = C.my_sd_journal_get_cursor(sd_journal_get_cursor, j.cjournal, &c)
+	if r < 0 {
+		return nil, fmt.Errorf("failed to get cursor: %d", syscall.Errno(-r))
+	}
+
+	entry.Cursor = C.GoString(c)
+
+	// Implements the JOURNAL_FOREACH_DATA_RETVAL macro from journal-internal.h
+	var d unsafe.Pointer
+	var l C.size_t
+	C.my_sd_journal_restart_data(sd_journal_restart_data, j.cjournal)
+	for {
+		r = C.my_sd_journal_enumerate_data(sd_journal_enumerate_data, j.cjournal, &d, &l)
+		if r == 0 {
+			break
+		}
+
+		if r < 0 {
+			return nil, fmt.Errorf("failed to read message field: %d", syscall.Errno(-r))
+		}
+
+		msg := C.GoStringN((*C.char)(d), C.int(l))
+		kv := strings.SplitN(msg, "=", 2)
+		if len(kv) < 2 {
+			return nil, fmt.Errorf("failed to parse field")
+		}
+
+		entry.Fields[kv[0]] = kv[1]
+	}
+
+	return entry, nil
+}
+
 // SetDataThresold sets the data field size threshold for data returned by
 // GetData. To retrieve the complete data fields this threshold should be
 // turned off by setting it to 0, so that the library always returns the
@@ -590,10 +774,75 @@ func (j *Journal) GetRealtimeUsec() (uint64, error) {
 	j.mu.Unlock()
 
 	if r < 0 {
-		return 0, fmt.Errorf("error getting timestamp for entry: %d", syscall.Errno(-r))
+		return 0, fmt.Errorf("failed to get realtime timestamp: %d", syscall.Errno(-r))
 	}
 
 	return uint64(usec), nil
+}
+
+// GetMonotonicUsec gets the monotonic timestamp of the current journal entry.
+func (j *Journal) GetMonotonicUsec() (uint64, error) {
+	var usec C.uint64_t
+	var boot_id C.sd_id128_t
+
+	sd_journal_get_monotonic_usec, err := j.getFunction("sd_journal_get_monotonic_usec")
+	if err != nil {
+		return 0, err
+	}
+
+	j.mu.Lock()
+	r := C.my_sd_journal_get_monotonic_usec(sd_journal_get_monotonic_usec, j.cjournal, &usec, &boot_id)
+	j.mu.Unlock()
+
+	if r < 0 {
+		return 0, fmt.Errorf("failed to get monotonic timestamp: %d", syscall.Errno(-r))
+	}
+
+	return uint64(usec), nil
+}
+
+// GetCursor gets the cursor of the current journal entry.
+func (j *Journal) GetCursor() (string, error) {
+	var d *C.char
+
+	sd_journal_get_cursor, err := j.getFunction("sd_journal_get_cursor")
+	if err != nil {
+		return "", err
+	}
+
+	j.mu.Lock()
+	r := C.my_sd_journal_get_cursor(sd_journal_get_cursor, j.cjournal, &d)
+	j.mu.Unlock()
+
+	if r < 0 {
+		return "", fmt.Errorf("failed to get cursor: %d", syscall.Errno(-r))
+	}
+
+	cursor := C.GoString(d)
+
+	return cursor, nil
+}
+
+// TestCursor checks whether the current position in the journal matches the
+// specified cursor
+func (j *Journal) TestCursor(cursor string) error {
+	sd_journal_test_cursor, err := j.getFunction("sd_journal_test_cursor")
+	if err != nil {
+		return err
+	}
+
+	c := C.CString(cursor)
+	defer C.free(unsafe.Pointer(c))
+
+	j.mu.Lock()
+	r := C.my_sd_journal_test_cursor(sd_journal_test_cursor, j.cjournal, c)
+	j.mu.Unlock()
+
+	if r < 0 {
+		return fmt.Errorf("failed to test to cursor %q: %d", cursor, syscall.Errno(-r))
+	}
+
+	return nil
 }
 
 // SeekHead seeks to the beginning of the journal, i.e. the oldest available
@@ -648,6 +897,27 @@ func (j *Journal) SeekRealtimeUsec(usec uint64) error {
 
 	if r < 0 {
 		return fmt.Errorf("failed to seek to %d: %d", usec, syscall.Errno(-r))
+	}
+
+	return nil
+}
+
+// SeekCursor seeks to a concrete journal cursor.
+func (j *Journal) SeekCursor(cursor string) error {
+	sd_journal_seek_cursor, err := j.getFunction("sd_journal_seek_cursor")
+	if err != nil {
+		return err
+	}
+
+	c := C.CString(cursor)
+	defer C.free(unsafe.Pointer(c))
+
+	j.mu.Lock()
+	r := C.my_sd_journal_seek_cursor(sd_journal_seek_cursor, j.cjournal, c)
+	j.mu.Unlock()
+
+	if r < 0 {
+		return fmt.Errorf("failed to seek to cursor %q: %d", cursor, syscall.Errno(-r))
 	}
 
 	return nil
