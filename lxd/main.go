@@ -159,7 +159,7 @@ func run() error {
 		fmt.Printf("    callhook\n")
 		fmt.Printf("        Call a container hook\n")
 		fmt.Printf("    netcat\n")
-		fmt.Printf("        Mirror a unix socket to stdin/stdout")
+		fmt.Printf("        Mirror a unix socket to stdin/stdout\n")
 	}
 
 	// Parse the arguments
@@ -333,7 +333,7 @@ func cmdDaemon() error {
 		go memProfiler(*argMemProfile)
 	}
 
-	neededPrograms := []string{"setfacl", "rsync", "tar", "xz"}
+	neededPrograms := []string{"setfacl", "rsync", "tar", "unsquashfs", "xz"}
 	for _, p := range neededPrograms {
 		_, err := exec.LookPath(p)
 		if err != nil {
@@ -833,7 +833,7 @@ they otherwise would.
 	}
 
 	// Unset all storage keys, core.https_address and core.trust_password
-	for _, key := range []string{"core.https_address", "core.trust_password"} {
+	for _, key := range []string{"storage.zfs_pool_name", "core.https_address", "core.trust_password"} {
 		_, err = c.SetServerConfig(key, "")
 		if err != nil {
 			return err
