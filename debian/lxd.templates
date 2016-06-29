@@ -30,7 +30,7 @@ _Description: A random subnet was selected for you
  Please make sure this subnet isn't already in use somewhere on your
  network, if it is, change it to one which isn't.
  .
- If you later notice network connectivty issues, re-configure lxd and
+ If you later notice network connectivity issues, re-configure lxd and
  pick a different subnet.
 
 Template: lxd/bridge-empty-error
