@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: lxd\n"
 "Report-Msgid-Bugs-To: lxd@packages.debian.org\n"
-"POT-Creation-Date: 2016-04-07 14:14-0400\n"
+"POT-Creation-Date: 2016-06-29 17:45-0400\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -95,7 +95,7 @@ msgstr ""
 #. Description
 #: ../lxd.templates:2001
 msgid ""
-"If you later notice network connectivty issues, re-configure lxd and pick a "
+"If you later notice network connectivity issues, re-configure lxd and pick a "
 "different subnet."
 msgstr ""
 
