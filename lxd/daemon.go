@@ -111,6 +111,9 @@ func (d *Daemon) httpGetSync(url string, certificate string) (*lxd.Response, err
 	var cert *x509.Certificate
 	if certificate != "" {
 		certBlock, _ := pem.Decode([]byte(certificate))
+		if certBlock == nil {
+			return nil, fmt.Errorf("Invalid certificate")
+		}
 
 		cert, err = x509.ParseCertificate(certBlock.Bytes)
 		if err != nil {
@@ -163,6 +166,9 @@ func (d *Daemon) httpGetFile(url string, certificate string) (*http.Response, er
 	var cert *x509.Certificate
 	if certificate != "" {
 		certBlock, _ := pem.Decode([]byte(certificate))
+		if certBlock == nil {
+			return nil, fmt.Errorf("Invalid certificate")
+		}
 
 		cert, err = x509.ParseCertificate(certBlock.Bytes)
 		if err != nil {
@@ -735,11 +741,17 @@ func (d *Daemon) Init() error {
 		return err
 	}
 
-	/* Setup the storage driver */
 	if !d.MockMode {
+		/* Setup the storage driver */
 		err = d.SetupStorageDriver()
 		if err != nil {
 			return fmt.Errorf("Failed to setup storage: %s", err)
+		}
+
+		/* Apply all patches */
+		err = patchesApplyAll(d)
+		if err != nil {
+			return err
 		}
 	}
 
@@ -794,8 +806,8 @@ func (d *Daemon) Init() error {
 			MinVersion:         tls.VersionTLS12,
 			MaxVersion:         tls.VersionTLS12,
 			CipherSuites: []uint16{
-				tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256},
+				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+				tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA},
 			PreferServerCipherSuites: true,
 		}
 		tlsConfig.BuildNameToCertificate()

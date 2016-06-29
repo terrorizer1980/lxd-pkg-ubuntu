@@ -39,7 +39,9 @@ func initTLSConfig() *tls.Config {
 		MaxVersion: tls.VersionTLS12,
 		CipherSuites: []uint16{
 			tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256},
+			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+			tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,
+			tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA},
 		PreferServerCipherSuites: true,
 	}
 }
@@ -100,6 +102,10 @@ func GetTLSConfigMem(tlsClientCert string, tlsClientKey string, tlsRemoteCertPEM
 	if tlsRemoteCertPEM != "" {
 		// Ignore any content outside of the PEM bytes we care about
 		certBlock, _ := pem.Decode([]byte(tlsRemoteCertPEM))
+		if certBlock == nil {
+			return nil, fmt.Errorf("Invalid remote certificate")
+		}
+
 		var err error
 		tlsRemoteCert, err = x509.ParseCertificate(certBlock.Bytes)
 		if err != nil {
@@ -115,7 +121,7 @@ func IsLoopback(iface *net.Interface) bool {
 	return int(iface.Flags&net.FlagLoopback) > 0
 }
 
-func WebsocketSendStream(conn *websocket.Conn, r io.Reader) chan bool {
+func WebsocketSendStream(conn *websocket.Conn, r io.Reader, bufferSize int) chan bool {
 	ch := make(chan bool)
 
 	if r == nil {
@@ -124,7 +130,7 @@ func WebsocketSendStream(conn *websocket.Conn, r io.Reader) chan bool {
 	}
 
 	go func(conn *websocket.Conn, r io.Reader) {
-		in := ReaderToChannel(r)
+		in := ReaderToChannel(r, bufferSize)
 		for {
 			buf, ok := <-in
 			if !ok {
@@ -244,14 +250,18 @@ func WebsocketMirror(conn *websocket.Conn, w io.WriteCloser, r io.ReadCloser) (c
 	}(conn, w)
 
 	go func(conn *websocket.Conn, r io.ReadCloser) {
-		in := ReaderToChannel(r)
+		/* For now, we don't need to adjust buffer sizes in
+		 * WebsocketMirror, since it's used for interactive things like
+		 * exec.
+		 */
+		in := ReaderToChannel(r, -1)
 		for {
 			buf, ok := <-in
 			if !ok {
-				readDone <- true
 				r.Close()
 				Debugf("sending write barrier")
 				conn.WriteMessage(websocket.TextMessage, []byte{})
+				readDone <- true
 				return
 			}
 			w, err := conn.NextWriter(websocket.BinaryMessage)

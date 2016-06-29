@@ -233,7 +233,7 @@ gid         | int       | 0                 | no        | GID of the device owne
 mode        | int       | 0660              | no        | Mode of the device in the container
 
 ### Type: unix-block
-Unix block device entries simply make the requested character device
+Unix block device entries simply make the requested block device
 appear in the container's /dev and allow read/write operations to it.
 
 The following properties exist:
@@ -263,42 +263,3 @@ network interface connected to LXD's default bridge (lxdbr0).
 
 The "default" profile is set for any new container created which doesn't
 specify a different profiles list.
-
-## JSON representation
-A representation of a container using all the different types of
-configurations would look like:
-
-    {
-        'name': "my-container",
-        'profiles': ["default"],
-        'architecture': 'x86_64',
-        'config': {
-            'limits.cpu': '3',
-            'security.privileged': 'true'
-        },
-        'devices': {
-            'nic-lxdbr0': {
-                'type': 'none'
-            },
-            'nic-mybr0': {
-                'type': 'nic',
-                'mtu': '9000',
-                'parent': 'mybr0'
-            },
-            'rootfs': {
-                'type': 'disk',
-                'path': '/',
-                'source': 'UUID=8f7fdf5e-dc60-4524-b9fe-634f82ac2fb6'
-            },
-        },
-        'status': {
-                    'status': "Running",
-                    'status_code': 103,
-                    'ips': [{'interface': "eth0",
-                             'protocol': "INET6",
-                             'address': "2001:470:b368:1020:1::2"},
-                            {'interface': "eth0",
-                             'protocol': "INET",
-                             'address': "172.16.15.30"}]}
-    }
-

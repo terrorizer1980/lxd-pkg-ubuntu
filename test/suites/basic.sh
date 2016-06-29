@@ -24,7 +24,7 @@ test_basic_usage() {
     name=${sum}.tar.xz
   fi
   [ "${sum}" = "$(sha256sum "${LXD_DIR}/${name}" | cut -d' ' -f1)" ]
-
+  
   # Test an alias with slashes
   lxc image show "${sum}"
   lxc image alias create a/b/ "${sum}"
@@ -57,6 +57,34 @@ test_basic_usage() {
   lxc image export testimage "${LXD_DIR}/"
   [ "${sum}" = "$(sha256sum "${LXD_DIR}/testimage.tar.xz" | cut -d' ' -f1)" ]
   rm "${LXD_DIR}/testimage.tar.xz"
+
+
+  # Test image export with a split image.
+  deps/import-busybox --split --alias splitimage
+
+  sum=$(lxc image info splitimage | grep ^Fingerprint | cut -d' ' -f2)
+
+  lxc image export splitimage "${LXD_DIR}"
+  [ "${sum}" = "$(cat "${LXD_DIR}/meta-${sum}.tar.xz" "${LXD_DIR}/${sum}.tar.xz" | sha256sum | cut -d' ' -f1)" ]
+  
+  # Delete the split image and exported files
+  rm "${LXD_DIR}/${sum}.tar.xz"
+  rm "${LXD_DIR}/meta-${sum}.tar.xz"
+  lxc image delete splitimage
+
+  # Redo the split image export test, this time with the --filename flag
+  # to tell import-busybox to set the 'busybox' filename in the upload.
+  # The sum should remain the same as its the same image.
+  deps/import-busybox --split --filename --alias splitimage
+
+  lxc image export splitimage "${LXD_DIR}"
+  [ "${sum}" = "$(cat "${LXD_DIR}/meta-busybox.tar.xz" "${LXD_DIR}/busybox.tar.xz" | sha256sum | cut -d' ' -f1)" ]
+  
+  # Delete the split image and exported files
+  rm "${LXD_DIR}/busybox.tar.xz"
+  rm "${LXD_DIR}/meta-busybox.tar.xz"
+  lxc image delete splitimage
+
 
   # Test container creation
   lxc init testimage foo
@@ -211,6 +239,14 @@ test_basic_usage() {
   lxc file push "${LXD_DIR}/in" foo/root/in1
   lxc exec foo /bin/cat /root/in1 | grep abc
   lxc exec foo -- /bin/rm -f root/in1
+
+  # test lxc file edit doesn't change target file's owner and permissions
+  echo "content" | lxc file push - foo/tmp/edit_test
+  lxc exec foo -- chown 55.55 /tmp/edit_test
+  lxc exec foo -- chmod 555 /tmp/edit_test
+  echo "new content" | lxc file edit foo/tmp/edit_test
+  [ "$(lxc exec foo -- cat /tmp/edit_test)" = "new content" ]
+  [ "$(lxc exec foo -- stat -c \"%u %g %a\" /tmp/edit_test)" = "55 55 555" ]
 
   # make sure stdin is chowned to our container root uid (Issue #590)
   [ -t 0 ] && [ -t 1 ] && lxc exec foo -- chown 1000:1000 /proc/self/fd/0
