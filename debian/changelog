@@ -1,3 +1,10 @@
+lxd (2.0.3-0ubuntu2) yakkety; urgency=medium
+
+  * Cherry-pick squashfs fix from upstream:
+    - simplestreams: list images available as both squashfs and tar.xz
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Thu, 30 Jun 2016 13:56:29 -0400
+
 lxd (2.0.3-0ubuntu1) yakkety; urgency=medium
 
   * New upstream bugfix release (2.0.3)
