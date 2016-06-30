@@ -1,3 +1,10 @@
+lxd (2.0.3-0ubuntu1~ubuntu16.04.2) xenial; urgency=medium
+
+  * Cherry-pick squashfs fix from upstream (LP: #1597544)
+    - simplestreams: list images available as both squashfs and tar.xz
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Thu, 30 Jun 2016 14:02:45 -0400
+
 lxd (2.0.3-0ubuntu1~ubuntu16.04.1) xenial; urgency=medium
 
   * New upstream bugfix release (2.0.3) (LP: #1597544)
