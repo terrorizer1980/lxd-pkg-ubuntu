@@ -469,7 +469,7 @@ func (c *Client) delete(base string, args interface{}, rtype ResponseType) (*Res
 	return HoistResponse(resp, rtype)
 }
 
-func (c *Client) websocket(operation string, secret string) (*websocket.Conn, error) {
+func (c *Client) Websocket(operation string, secret string) (*websocket.Conn, error) {
 	query := url.Values{"secret": []string{secret}}
 	url := c.BaseWSURL + path.Join(operation, "websocket") + "?" + query.Encode()
 	return WebsocketDial(c.websocketDialer, url)
@@ -832,74 +832,109 @@ func (c *Client) ExportImage(image string, target string) (string, error) {
 	if target == "-" {
 		wr = os.Stdout
 		destpath = "stdout"
-	} else if fi, err := os.Stat(target); err == nil {
-		// file exists, so check if folder
-		switch mode := fi.Mode(); {
-		case mode.IsDir():
-			// save in directory, header content-disposition can not be null
-			// and will have a filename
-			cd := strings.Split(raw.Header["Content-Disposition"][0], "=")
-
-			// write filename from header
-			destpath = filepath.Join(target, cd[1])
-			f, err := os.Create(destpath)
-			defer f.Close()
-
-			if err != nil {
-				return "", err
-			}
-
-			wr = f
-
-		default:
-			// overwrite file
-			destpath = target
-			f, err := os.OpenFile(destpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-			defer f.Close()
-
-			if err != nil {
-				return "", err
-			}
-
-			wr = f
-		}
 	} else {
-		// write as simple file
-		destpath = target
-		f, err := os.Create(destpath)
-		defer f.Close()
-
-		wr = f
+		_, cdParams, err := mime.ParseMediaType(raw.Header.Get("Content-Disposition"))
 		if err != nil {
 			return "", err
 		}
+		filename, ok := cdParams["filename"]
+		if !ok {
+			return "", fmt.Errorf("No filename in Content-Disposition header.")
+		}
+
+		if shared.IsDir(target) {
+			// The target is a directory, use the filename verbatim from the
+			// Content-Disposition header
+			destpath = filepath.Join(target, filename)
+		} else {
+			// The target is a file, parse the extension from the source filename
+			// and append it to the target filename.
+			ext := filepath.Ext(filename)
+			if strings.HasSuffix(filename, fmt.Sprintf(".tar%s", ext)) {
+				ext = fmt.Sprintf(".tar%s", ext)
+			}
+			destpath = fmt.Sprintf("%s%s", target, ext)
+		}
+
+		f, err := os.OpenFile(destpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+		if err != nil {
+			return "", err
+		}
+		defer f.Close()
+
+		wr = f
 	}
 
 	_, err = io.Copy(wr, raw.Body)
-
 	if err != nil {
 		return "", err
 	}
 
-	// it streams to stdout or file, so no response returned
 	return destpath, nil
 }
 
-func (c *Client) PostImageURL(imageFile string, public bool, aliases []string) (string, error) {
+func (c *Client) PostImageURL(imageFile string, properties []string, public bool, aliases []string, progressHandler func(progress string)) (string, error) {
 	if c.Remote.Public {
 		return "", fmt.Errorf("This function isn't supported by public remotes.")
+	}
+
+	imgProperties := map[string]string{}
+	for _, entry := range properties {
+		fields := strings.SplitN(entry, "=", 2)
+		if len(fields) != 2 {
+			return "", fmt.Errorf("Invalid image property: %s", entry)
+		}
+
+		imgProperties[fields[0]] = fields[1]
 	}
 
 	source := shared.Jmap{
 		"type": "url",
 		"mode": "pull",
 		"url":  imageFile}
-	body := shared.Jmap{"public": public, "source": source}
+	body := shared.Jmap{"public": public, "properties": imgProperties, "source": source}
+
+	operation := ""
+	handler := func(msg interface{}) {
+		if msg == nil {
+			return
+		}
+
+		event := msg.(map[string]interface{})
+		if event["type"].(string) != "operation" {
+			return
+		}
+
+		if event["metadata"] == nil {
+			return
+		}
+
+		md := event["metadata"].(map[string]interface{})
+		if !strings.HasSuffix(operation, md["id"].(string)) {
+			return
+		}
+
+		if md["metadata"] == nil {
+			return
+		}
+
+		opMd := md["metadata"].(map[string]interface{})
+		_, ok := opMd["download_progress"]
+		if ok {
+			progressHandler(opMd["download_progress"].(string))
+		}
+	}
+
+	if progressHandler != nil {
+		go c.Monitor([]string{"operation"}, handler)
+	}
 
 	resp, err := c.post("images", body, Async)
 	if err != nil {
 		return "", err
 	}
+
+	operation = resp.Operation
 
 	op, err := c.WaitFor(resp.Operation)
 	if err != nil {
@@ -1496,7 +1531,7 @@ func (c *Client) Exec(name string, cmd []string, env map[string]string,
 	if controlHandler != nil {
 		var control *websocket.Conn
 		if wsControl, ok := fds["control"]; ok {
-			control, err = c.websocket(resp.Operation, wsControl.(string))
+			control, err = c.Websocket(resp.Operation, wsControl.(string))
 			if err != nil {
 				return -1, err
 			}
@@ -1505,7 +1540,7 @@ func (c *Client) Exec(name string, cmd []string, env map[string]string,
 			go controlHandler(c, control)
 		}
 
-		conn, err := c.websocket(resp.Operation, fds["0"].(string))
+		conn, err := c.Websocket(resp.Operation, fds["0"].(string))
 		if err != nil {
 			return -1, err
 		}
@@ -1518,7 +1553,7 @@ func (c *Client) Exec(name string, cmd []string, env map[string]string,
 		conns := make([]*websocket.Conn, 3)
 		dones := make([]chan bool, 3)
 
-		conns[0], err = c.websocket(resp.Operation, fds[strconv.Itoa(0)].(string))
+		conns[0], err = c.Websocket(resp.Operation, fds[strconv.Itoa(0)].(string))
 		if err != nil {
 			return -1, err
 		}
@@ -1528,7 +1563,7 @@ func (c *Client) Exec(name string, cmd []string, env map[string]string,
 
 		outputs := []io.WriteCloser{stdout, stderr}
 		for i := 1; i < 3; i++ {
-			conns[i], err = c.websocket(resp.Operation, fds[strconv.Itoa(i)].(string))
+			conns[i], err = c.Websocket(resp.Operation, fds[strconv.Itoa(i)].(string))
 			if err != nil {
 				return -1, err
 			}
@@ -2180,9 +2215,14 @@ func (c *Client) ContainerDeviceDelete(container, devname string) (*Response, er
 		return nil, err
 	}
 
-	delete(st.Devices, devname)
+	for n, _ := range st.Devices {
+		if n == devname {
+			delete(st.Devices, n)
+			return c.put(fmt.Sprintf("containers/%s", container), st, Async)
+		}
+	}
 
-	return c.put(fmt.Sprintf("containers/%s", container), st, Async)
+	return nil, fmt.Errorf("Device doesn't exist.")
 }
 
 func (c *Client) ContainerDeviceAdd(container, devname, devtype string, props []string) (*Response, error) {
@@ -2249,10 +2289,11 @@ func (c *Client) ProfileDeviceDelete(profile, devname string) (*Response, error)
 	for n, _ := range st.Devices {
 		if n == devname {
 			delete(st.Devices, n)
+			return c.put(fmt.Sprintf("profiles/%s", profile), st, Sync)
 		}
 	}
 
-	return c.put(fmt.Sprintf("profiles/%s", profile), st, Sync)
+	return nil, fmt.Errorf("Device doesn't exist.")
 }
 
 func (c *Client) ProfileDeviceAdd(profile, devname, devtype string, props []string) (*Response, error) {

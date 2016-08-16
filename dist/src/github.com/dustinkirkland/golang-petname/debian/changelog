@@ -1,14 +1,47 @@
-golang-petname (1.11) unreleased; urgency=medium
+golang-petname (2.3) unreleased; urgency=medium
 
-  [ Dustin Kirkland ]
-  * petname.go, README.md:
-    - remove some non-words
+  * UNRELEASED
+
+ -- Dustin Kirkland <kirkland@ubuntu.com>  Tue, 09 Aug 2016 18:04:32 -0500
+
+golang-petname (2.2-0ubuntu1) yakkety; urgency=medium
+
+  * debian/rules, === removed directory usr, === removed directory
+    usr/lib:
+    - fix shared library build on yakkety while maintaining xenial
+      no-shared-lib build
+
+ -- Dustin Kirkland <kirkland@ubuntu.com>  Tue, 09 Aug 2016 18:04:30 -0500
+
+golang-petname (2.1-0ubuntu1) yakkety; urgency=medium
 
   [ Michael Hudson-Doyle ]
   * debian/control, debian/golang-petname-dev.install:
     - Build shared lib package.
 
- -- Dustin Kirkland <kirkland@ubuntu.com>  Mon, 01 Feb 2016 11:14:52 -0600
+  [ Dustin Kirkland ]
+  * === added directory usr, === added directory usr/lib,
+    debian/control, debian/golang-petname-dev.install:
+    - add a couple of hacks, to not break the build on releases before
+      yakkety
+      + namely, use a dummy (dh-apparmor) to ensure we can meet a
+        build-dependency on xenial
+      + create the usr/lib dir, and always install it
+
+ -- Dustin Kirkland <kirkland@ubuntu.com>  Tue, 09 Aug 2016 16:25:53 -0500
+
+golang-petname (2.0-0ubuntu1) yakkety; urgency=medium
+
+  [ Dustin Kirkland ]
+  * petname.go, README.md:
+    - remove some non-words
+  * debian/control, debian/golang-petname-dev.install:
+    - reverting Michael's shared library changes, as it's breaking the build
+  * petname.go, README.md:
+    - bump to petname 2.0, using animals instead of people names, major change
+    - rebuild with simplest, smallest wordlist
+
+ -- Dustin Kirkland <kirkland@ubuntu.com>  Tue, 09 Aug 2016 14:17:20 -0500
 
 golang-petname (1.10-0ubuntu1) xenial; urgency=medium
 

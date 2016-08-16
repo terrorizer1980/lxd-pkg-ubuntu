@@ -209,6 +209,12 @@ func (c *listCmd) listContainers(d *lxd.Client, cinfos []shared.ContainerInfo, f
 	for i := 0; i < threads; i++ {
 		cStatesWg.Add(1)
 		go func() {
+			d, err := lxd.NewClient(&d.Config, d.Name)
+			if err != nil {
+				cStatesWg.Done()
+				return
+			}
+
 			for {
 				cName, more := <-cStatesQueue
 				if !more {
@@ -229,6 +235,12 @@ func (c *listCmd) listContainers(d *lxd.Client, cinfos []shared.ContainerInfo, f
 
 		cSnapshotsWg.Add(1)
 		go func() {
+			d, err := lxd.NewClient(&d.Config, d.Name)
+			if err != nil {
+				cSnapshotsWg.Done()
+				return
+			}
+
 			for {
 				cName, more := <-cSnapshotsQueue
 				if !more {
@@ -251,7 +263,9 @@ func (c *listCmd) listContainers(d *lxd.Client, cinfos []shared.ContainerInfo, f
 	for _, cInfo := range cinfos {
 		for _, column := range columns {
 			if column.NeedsState && cInfo.IsActive() {
+				cStatesLock.Lock()
 				_, ok := cStates[cInfo.Name]
+				cStatesLock.Unlock()
 				if ok {
 					continue
 				}
@@ -264,7 +278,9 @@ func (c *listCmd) listContainers(d *lxd.Client, cinfos []shared.ContainerInfo, f
 			}
 
 			if column.NeedsSnapshots {
+				cSnapshotsLock.Lock()
 				_, ok := cSnapshots[cInfo.Name]
+				cSnapshotsLock.Unlock()
 				if ok {
 					continue
 				}
