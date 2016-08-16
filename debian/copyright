@@ -7,6 +7,14 @@ Files: *
 Copyright: 2014-2015 LXD contributors
 License: Apache-2
 
+Files: dist/src/github.com/PuerkitoBio/goquery/*
+Copyright: 2012-2016, Martin Angers & Contributors
+License: BSD-3-clause
+
+Files: dist/src/github.com/andybalholm/cascadia/*
+Copyright: 2011 Andy Balholm
+License: BSD-2-clause
+
 Files: dist/src/github.com/dustinkirkland/golang-petname/*
 Copyright: 2014 Dustin Kirkland <dustin.kirkland@gmail.com>
 License: Apache-2
@@ -75,6 +83,14 @@ Files: dist/src/golang.org/x/crypto/*
 Copyright: 2009 The Go Authors.
 License: BSD-3-clause
 
+Files: dist/src/golang.org/x/net/*
+Copyright: 2009 The Go Authors.
+License: BSD-3-clause
+
+Files: dist/src/golang.org/x/text/*
+Copyright: 2009 The Go Authors.
+License: BSD-3-clause
+
 Files: dist/src/gopkg.in/check.v1/*
 Copyright: 2010-2013 Gustavo Niemeyer <gustavo@niemeyer.net>
 License: BSD-2-clause
@@ -94,6 +110,10 @@ License: LGPL-2.1 with static linking exception
 Files: dist/src/gopkg.in/tomb.v2/*
 Copyright: 2010-2011 - Gustavo Niemeyer <gustavo@niemeyer.net>
 License: BSD-3-clause
+
+Files: dist/src/gopkg.in/yaml.v1/*
+Copyright: 2011-2014 - Canonical Inc.
+License: LGPL-3 with static linking exception
 
 Files: dist/src/gopkg.in/yaml.v2/*
 Copyright: 2011-2014 - Canonical Inc.
