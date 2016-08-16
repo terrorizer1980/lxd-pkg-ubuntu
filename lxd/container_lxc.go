@@ -117,7 +117,8 @@ func containerLXCCreate(d *Daemon, args containerArgs) (container, error) {
 
 	// Look for a rootfs entry
 	rootfs := false
-	for _, m := range c.expandedDevices {
+	for _, name := range c.expandedDevices.DeviceNames() {
+		m := c.expandedDevices[name]
 		if m["type"] == "disk" && m["path"] == "/" {
 			rootfs = true
 			break
@@ -326,6 +327,7 @@ func (c *containerLXC) initLXC() error {
 
 	bindMounts := []string{
 		"/dev/fuse",
+		"/dev/net/tun",
 		"/proc/sys/fs/binfmt_misc",
 		"/sys/firmware/efi/efivars",
 		"/sys/fs/fuse/connections",
@@ -393,6 +395,7 @@ func (c *containerLXC) initLXC() error {
 			"c 5:1 rwm",    // /dev/console
 			"c 5:2 rwm",    // /dev/ptmx
 			"c 10:229 rwm", // /dev/fuse
+			"c 10:200 rwm", // /dev/net/tun
 		}
 
 		for _, dev := range devices {
@@ -634,14 +637,21 @@ func (c *containerLXC) initLXC() error {
 				return err
 			}
 
-			err = lxcSetConfigItem(cc, "lxc.cgroup.blkio.weight", fmt.Sprintf("%d", priorityInt*100))
+			// Minimum valid value is 10
+			priority := priorityInt * 100
+			if priority == 0 {
+				priority = 10
+			}
+
+			err = lxcSetConfigItem(cc, "lxc.cgroup.blkio.weight", fmt.Sprintf("%d", priority))
 			if err != nil {
 				return err
 			}
 		}
 
 		hasDiskLimits := false
-		for _, m := range c.expandedDevices {
+		for _, name := range c.expandedDevices.DeviceNames() {
+			m := c.expandedDevices[name]
 			if m["type"] != "disk" {
 				continue
 			}
@@ -707,7 +717,8 @@ func (c *containerLXC) initLXC() error {
 	}
 
 	// Setup devices
-	for k, m := range c.expandedDevices {
+	for _, k := range c.expandedDevices.DeviceNames() {
+		m := c.expandedDevices[k]
 		if shared.StringInSlice(m["type"], []string{"unix-char", "unix-block"}) {
 			// Prepare all the paths
 			srcPath := m["path"]
@@ -951,6 +962,25 @@ func (c *containerLXC) startCommon() (string, error) {
 		return "", fmt.Errorf("The container is already running")
 	}
 
+	// Sanity checks for devices
+	for _, name := range c.expandedDevices.DeviceNames() {
+		m := c.expandedDevices[name]
+		switch m["type"] {
+		case "disk":
+			if m["source"] != "" && !shared.PathExists(m["source"]) {
+				return "", fmt.Errorf("Missing source '%s' for disk '%s'", m["source"], name)
+			}
+		case "nic":
+			if m["parent"] != "" && !shared.PathExists(fmt.Sprintf("/sys/class/net/%s", m["parent"])) {
+				return "", fmt.Errorf("Missing parent '%s' for nic '%s'", m["parent"], name)
+			}
+		case "unix-char", "unix-block":
+			if m["path"] != "" && m["major"] == "" && m["minor"] == "" && !shared.PathExists(m["path"]) {
+				return "", fmt.Errorf("Missing source '%s' for device '%s'", m["path"], name)
+			}
+		}
+	}
+
 	// Load any required kernel modules
 	kernelModules := c.expandedConfig["linux.kernel_modules"]
 	if kernelModules != "" {
@@ -1050,23 +1080,26 @@ func (c *containerLXC) startCommon() (string, error) {
 	c.removeDiskDevices()
 
 	// Create the devices
-	for k, m := range c.expandedDevices {
+	for _, k := range c.expandedDevices.DeviceNames() {
+		m := c.expandedDevices[k]
 		if shared.StringInSlice(m["type"], []string{"unix-char", "unix-block"}) {
 			// Unix device
-			devPath, err := c.createUnixDevice(k, m)
+			devPath, err := c.createUnixDevice(m)
 			if err != nil {
 				return "", err
 			}
 
-			// Add the new device cgroup rule
-			dType, dMajor, dMinor, err := deviceGetAttributes(devPath)
-			if err != nil {
-				return "", err
-			}
+			if c.IsPrivileged() && !runningInUserns && cgDevicesController {
+				// Add the new device cgroup rule
+				dType, dMajor, dMinor, err := deviceGetAttributes(devPath)
+				if err != nil {
+					return "", err
+				}
 
-			err = lxcSetConfigItem(c.c, "lxc.cgroup.devices.allow", fmt.Sprintf("%s %d:%d rwm", dType, dMajor, dMinor))
-			if err != nil {
-				return "", fmt.Errorf("Failed to add cgroup rule for device")
+				err = lxcSetConfigItem(c.c, "lxc.cgroup.devices.allow", fmt.Sprintf("%s %d:%d rwm", dType, dMajor, dMinor))
+				if err != nil {
+					return "", fmt.Errorf("Failed to add cgroup rule for device")
+				}
 			}
 		} else if m["type"] == "disk" {
 			// Disk device
@@ -1097,7 +1130,8 @@ func (c *containerLXC) startCommon() (string, error) {
 
 	// Cleanup any leftover volatile entries
 	netNames := []string{}
-	for k, v := range c.expandedDevices {
+	for _, k := range c.expandedDevices.DeviceNames() {
+		v := c.expandedDevices[k]
 		if v["type"] == "nic" {
 			netNames = append(netNames, k)
 		}
@@ -1215,6 +1249,7 @@ func (c *containerLXC) Start(stateful bool) error {
 		c.daemon.lxcpath,
 		configPath).CombinedOutput()
 
+	// Capture debug output
 	if string(out) != "" {
 		for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
 			shared.Debugf("forkstart: %s", line)
@@ -1222,12 +1257,40 @@ func (c *containerLXC) Start(stateful bool) error {
 	}
 
 	if err != nil && !c.IsRunning() {
+		// Attempt to extract the LXC errors
+		log := ""
+		logPath := filepath.Join(c.LogPath(), "lxc.log")
+		if shared.PathExists(logPath) {
+			logContent, err := ioutil.ReadFile(logPath)
+			if err == nil {
+				for _, line := range strings.Split(string(logContent), "\n") {
+					fields := strings.Fields(line)
+					if len(fields) < 4 {
+						continue
+					}
+
+					// We only care about errors
+					if fields[2] != "ERROR" {
+						continue
+					}
+
+					// Prepend the line break
+					if len(log) == 0 {
+						log += "\n"
+					}
+
+					log += fmt.Sprintf("  %s\n", strings.Join(fields[0:], " "))
+				}
+			}
+		}
+
+		// Return the actual error
 		return fmt.Errorf(
-			"Error calling 'lxd forkstart %s %s %s': err='%v'",
+			"Error calling 'lxd forkstart %s %s %s': err='%v'%s",
 			c.name,
 			c.daemon.lxcpath,
 			filepath.Join(c.LogPath(), "lxc.conf"),
-			err)
+			err, log)
 	}
 
 	return nil
@@ -1289,7 +1352,8 @@ func (c *containerLXC) OnStart() error {
 	}
 
 	// Apply network limits
-	for name, m := range c.expandedDevices {
+	for _, name := range c.expandedDevices.DeviceNames() {
+		m := c.expandedDevices[name]
 		if m["type"] != "nic" {
 			continue
 		}
@@ -2139,7 +2203,8 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 		}
 
 		var newRootfs shared.Device
-		for _, m := range c.expandedDevices {
+		for _, name := range c.expandedDevices.DeviceNames() {
+			m := c.expandedDevices[name]
 			if m["type"] == "disk" && m["path"] == "/" {
 				newRootfs = m
 				break
@@ -2182,7 +2247,13 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 					}
 				}
 
-				err = c.CGroupSet("blkio.weight", fmt.Sprintf("%d", priorityInt*100))
+				// Minimum valid value is 10
+				priority := priorityInt * 100
+				if priority == 0 {
+					priority = 10
+				}
+
+				err = c.CGroupSet("blkio.weight", fmt.Sprintf("%d", priority))
 				if err != nil {
 					return err
 				}
@@ -2348,7 +2419,7 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 		// Live update the devices
 		for k, m := range removeDevices {
 			if shared.StringInSlice(m["type"], []string{"unix-char", "unix-block"}) {
-				err = c.removeUnixDevice(k, m)
+				err = c.removeUnixDevice(m)
 				if err != nil {
 					return err
 				}
@@ -3116,7 +3187,8 @@ func (c *containerLXC) Exec(command []string, env map[string]string, stdin *os.F
 func (c *containerLXC) diskState() map[string]shared.ContainerStateDisk {
 	disk := map[string]shared.ContainerStateDisk{}
 
-	for name, d := range c.expandedDevices {
+	for _, name := range c.expandedDevices.DeviceNames() {
+		d := c.expandedDevices[name]
 		if d["type"] != "disk" {
 			continue
 		}
@@ -3440,7 +3512,7 @@ func (c *containerLXC) removeMount(mount string) error {
 }
 
 // Unix devices handling
-func (c *containerLXC) createUnixDevice(name string, m shared.Device) (string, error) {
+func (c *containerLXC) createUnixDevice(m shared.Device) (string, error) {
 	var err error
 	var major, minor int
 
@@ -3450,15 +3522,24 @@ func (c *containerLXC) createUnixDevice(name string, m shared.Device) (string, e
 	devName := fmt.Sprintf("unix.%s", strings.Replace(tgtPath, "/", "-", -1))
 	devPath := filepath.Join(c.DevicesPath(), devName)
 
+	// Extra checks for nesting
+	if runningInUserns {
+		for key, value := range m {
+			if shared.StringInSlice(key, []string{"major", "minor", "mode", "uid", "gid"}) && value != "" {
+				return "", fmt.Errorf("The \"%s\" property may not be set when adding a device to a nested container", key)
+			}
+		}
+	}
+
 	// Get the major/minor of the device we want to create
 	if m["major"] == "" && m["minor"] == "" {
 		// If no major and minor are set, use those from the device on the host
 		_, major, minor, err = deviceGetAttributes(srcPath)
 		if err != nil {
-			return "", fmt.Errorf("Failed to get device attributes: %s", err)
+			return "", fmt.Errorf("Failed to get device attributes for %s: %s", m["path"], err)
 		}
 	} else if m["major"] == "" || m["minor"] == "" {
-		return "", fmt.Errorf("Both major and minor must be supplied for devices")
+		return "", fmt.Errorf("Both major and minor must be supplied for device: %s", m["path"])
 	} else {
 		major, err = strconv.Atoi(m["major"])
 		if err != nil {
@@ -3515,6 +3596,10 @@ func (c *containerLXC) createUnixDevice(name string, m shared.Device) (string, e
 
 	// Clean any existing entry
 	if shared.PathExists(devPath) {
+		if runningInUserns {
+			syscall.Unmount(devPath, syscall.MNT_DETACH)
+		}
+
 		err = os.Remove(devPath)
 		if err != nil {
 			return "", fmt.Errorf("Failed to remove existing entry: %s", err)
@@ -3522,23 +3607,36 @@ func (c *containerLXC) createUnixDevice(name string, m shared.Device) (string, e
 	}
 
 	// Create the new entry
-	if err := syscall.Mknod(devPath, uint32(mode), minor|(major<<8)); err != nil {
-		return "", fmt.Errorf("Failed to create device %s for %s: %s", devPath, m["path"], err)
-	}
+	if !runningInUserns {
+		if err := syscall.Mknod(devPath, uint32(mode), minor|(major<<8)); err != nil {
+			return "", fmt.Errorf("Failed to create device %s for %s: %s", devPath, m["path"], err)
+		}
 
-	if err := os.Chown(devPath, uid, gid); err != nil {
-		return "", fmt.Errorf("Failed to chown device %s: %s", devPath, err)
-	}
+		if err := os.Chown(devPath, uid, gid); err != nil {
+			return "", fmt.Errorf("Failed to chown device %s: %s", devPath, err)
+		}
 
-	// Needed as mknod respects the umask
-	if err := os.Chmod(devPath, mode); err != nil {
-		return "", fmt.Errorf("Failed to chmod device %s: %s", devPath, err)
-	}
+		// Needed as mknod respects the umask
+		if err := os.Chmod(devPath, mode); err != nil {
+			return "", fmt.Errorf("Failed to chmod device %s: %s", devPath, err)
+		}
 
-	if c.idmapset != nil {
-		if err := c.idmapset.ShiftFile(devPath); err != nil {
-			// uidshift failing is weird, but not a big problem.  Log and proceed
-			shared.Debugf("Failed to uidshift device %s: %s\n", m["path"], err)
+		if c.idmapset != nil {
+			if err := c.idmapset.ShiftFile(devPath); err != nil {
+				// uidshift failing is weird, but not a big problem.  Log and proceed
+				shared.Debugf("Failed to uidshift device %s: %s\n", m["path"], err)
+			}
+		}
+	} else {
+		f, err := os.Create(devPath)
+		if err != nil {
+			return "", err
+		}
+		f.Close()
+
+		err = deviceMountDisk(srcPath, devPath, false, false)
+		if err != nil {
+			return "", err
 		}
 	}
 
@@ -3552,7 +3650,7 @@ func (c *containerLXC) insertUnixDevice(name string, m shared.Device) error {
 	}
 
 	// Create the device on the host
-	devPath, err := c.createUnixDevice(name, m)
+	devPath, err := c.createUnixDevice(m)
 	if err != nil {
 		return fmt.Errorf("Failed to setup device: %s", err)
 	}
@@ -3570,14 +3668,16 @@ func (c *containerLXC) insertUnixDevice(name string, m shared.Device) error {
 		return fmt.Errorf("Failed to get device attributes: %s", err)
 	}
 
-	if err := c.CGroupSet("devices.allow", fmt.Sprintf("%s %d:%d rwm", dType, dMajor, dMinor)); err != nil {
-		return fmt.Errorf("Failed to add cgroup rule for device")
+	if c.IsPrivileged() && !runningInUserns && cgDevicesController {
+		if err := c.CGroupSet("devices.allow", fmt.Sprintf("%s %d:%d rwm", dType, dMajor, dMinor)); err != nil {
+			return fmt.Errorf("Failed to add cgroup rule for device")
+		}
 	}
 
 	return nil
 }
 
-func (c *containerLXC) removeUnixDevice(name string, m shared.Device) error {
+func (c *containerLXC) removeUnixDevice(m shared.Device) error {
 	// Check that the container is running
 	pid := c.InitPID()
 	if pid == -1 {
@@ -3596,9 +3696,11 @@ func (c *containerLXC) removeUnixDevice(name string, m shared.Device) error {
 		return err
 	}
 
-	err = c.CGroupSet("devices.deny", fmt.Sprintf("%s %d:%d rwm", dType, dMajor, dMinor))
-	if err != nil {
-		return err
+	if c.IsPrivileged() && !runningInUserns && cgDevicesController {
+		err = c.CGroupSet("devices.deny", fmt.Sprintf("%s %d:%d rwm", dType, dMajor, dMinor))
+		if err != nil {
+			return err
+		}
 	}
 
 	// Remove the bind-mount from the container
@@ -3617,6 +3719,10 @@ func (c *containerLXC) removeUnixDevice(name string, m shared.Device) error {
 	}
 
 	// Remove the host side
+	if runningInUserns {
+		syscall.Unmount(devPath, syscall.MNT_DETACH)
+	}
+
 	err = os.Remove(devPath)
 	if err != nil {
 		return err
@@ -3683,10 +3789,18 @@ func (c *containerLXC) createNetworkDevice(name string, m shared.Device) (string
 		}
 
 		if m["nictype"] == "bridged" {
-			err = exec.Command("ip", "link", "set", n1, "master", m["parent"]).Run()
-			if err != nil {
-				deviceRemoveInterface(n2)
-				return "", fmt.Errorf("Failed to add interface to bridge: %s", err)
+			if shared.PathExists(fmt.Sprintf("/sys/class/net/%s/bridge", m["parent"])) {
+				err = exec.Command("ip", "link", "set", n1, "master", m["parent"]).Run()
+				if err != nil {
+					deviceRemoveInterface(n2)
+					return "", fmt.Errorf("Failed to add interface to bridge: %s", err)
+				}
+			} else {
+				err = exec.Command("ovs-vsctl", "add-port", m["parent"], n1).Run()
+				if err != nil {
+					deviceRemoveInterface(n2)
+					return "", fmt.Errorf("Failed to add interface to bridge: %s", err)
+				}
 			}
 		}
 
@@ -3740,7 +3854,8 @@ func (c *containerLXC) fillNetworkDevice(name string, m shared.Device) (shared.D
 		devNames := []string{}
 
 		// Include all static interface names
-		for _, v := range c.expandedDevices {
+		for _, k := range c.expandedDevices.DeviceNames() {
+			v := c.expandedDevices[k]
 			if v["name"] != "" && !shared.StringInSlice(v["name"], devNames) {
 				devNames = append(devNames, v["name"])
 			}
@@ -3875,8 +3990,8 @@ func (c *containerLXC) insertNetworkDevice(name string, m shared.Device) error {
 		return nil
 	}
 
-	if m["hwaddr"] == "" || m["name"] == "" {
-		return fmt.Errorf("wtf? hwaddr=%s name=%s", m["hwaddr"], m["name"])
+	if m["parent"] != "" && !shared.PathExists(fmt.Sprintf("/sys/class/net/%s", m["parent"])) {
+		return fmt.Errorf("Parent device '%s' doesn't exist", m["parent"])
 	}
 
 	// Return empty list if not running
@@ -4138,7 +4253,8 @@ func (c *containerLXC) getDiskLimits() (map[string]deviceBlockLimit, error) {
 
 	// Process all the limits
 	blockLimits := map[string][]deviceBlockLimit{}
-	for _, m := range c.expandedDevices {
+	for _, k := range c.expandedDevices.DeviceNames() {
+		m := c.expandedDevices[k]
 		if m["type"] != "disk" {
 			continue
 		}
@@ -4312,7 +4428,8 @@ func (c *containerLXC) getHostInterface(name string) string {
 		}
 	}
 
-	for k, dev := range c.expandedDevices {
+	for _, k := range c.expandedDevices.DeviceNames() {
+		dev := c.expandedDevices[k]
 		if dev["type"] != "nic" {
 			continue
 		}

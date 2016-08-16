@@ -120,15 +120,12 @@ func (s *SimpleStreamsManifest) ToLXD() ([]ImageInfo, map[string][][]string) {
 				}
 				found += 1
 
-				size += item.Size
 				if fingerprint == "" {
 					if item.LXDHashSha256SquashFs != "" {
 						fingerprint = item.LXDHashSha256SquashFs
-					}
-					if item.LXDHashSha256RootXz != "" {
+					} else if item.LXDHashSha256RootXz != "" {
 						fingerprint = item.LXDHashSha256RootXz
-					}
-					if item.LXDHashSha256 != "" {
+					} else if item.LXDHashSha256 != "" {
 						fingerprint = item.LXDHashSha256
 					}
 				}
@@ -138,6 +135,8 @@ func (s *SimpleStreamsManifest) ToLXD() ([]ImageInfo, map[string][][]string) {
 					filename = fields[len(fields)-1]
 					metaPath = item.Path
 					metaHash = item.HashSha256
+
+					size += item.Size
 				}
 
 				if rootfsPath == "" || rootfsHash == "" {
@@ -150,6 +149,8 @@ func (s *SimpleStreamsManifest) ToLXD() ([]ImageInfo, map[string][][]string) {
 						rootfsPath = item.Path
 						rootfsHash = item.HashSha256
 					}
+
+					size += item.Size
 				}
 			}
 
@@ -159,6 +160,12 @@ func (s *SimpleStreamsManifest) ToLXD() ([]ImageInfo, map[string][][]string) {
 			}
 
 			// Generate the actual image entry
+			description := fmt.Sprintf("%s %s %s", product.OperatingSystem, product.ReleaseTitle, product.Architecture)
+			if version.Label != "" {
+				description = fmt.Sprintf("%s (%s)", description, version.Label)
+			}
+			description = fmt.Sprintf("%s (%s)", description, name)
+
 			image := ImageInfo{}
 			image.Architecture = architectureName
 			image.Public = true
@@ -175,10 +182,11 @@ func (s *SimpleStreamsManifest) ToLXD() ([]ImageInfo, map[string][][]string) {
 				"architecture": product.Architecture,
 				"label":        version.Label,
 				"serial":       name,
-				"description":  fmt.Sprintf("%s %s %s (%s) (%s)", product.OperatingSystem, product.ReleaseTitle, product.Architecture, version.Label, name),
+				"description":  description,
 			}
 
 			// Attempt to parse the EOL
+			image.ExpiryDate = time.Unix(0, 0).UTC()
 			if product.SupportedEOL != "" {
 				eolDate, err := time.Parse(eolLayout, product.SupportedEOL)
 				if err == nil {
@@ -494,8 +502,15 @@ func (s *SimpleStreams) downloadFile(path string, hash string, target string, pr
 		}
 		defer out.Close()
 
-		resp, err := s.http.Get(url)
+		req, err := http.NewRequest("GET", url, nil)
 		if err != nil {
+			return err
+		}
+		req.Header.Set("User-Agent", UserAgent)
+
+		resp, err := s.http.Do(req)
+		if err != nil {
+			return err
 		}
 		defer resp.Body.Close()
 

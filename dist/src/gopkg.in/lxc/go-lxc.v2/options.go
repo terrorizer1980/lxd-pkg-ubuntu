@@ -194,4 +194,6 @@ type MigrateOptions struct {
 	Stop            bool
 	PredumpDir      string
 	PreservesInodes bool
+	ActionScript    string
+	GhostLimit      uint64
 }
