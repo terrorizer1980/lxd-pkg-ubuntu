@@ -868,7 +868,7 @@ they otherwise would.
 			trustPassword = askPassword("Trust password for new clients: ")
 		}
 
-		if askBool("Do you want to configure the LXD bridge (yes/no)? ") {
+		if askBool("Do you want to configure the LXD bridge (yes/no) [default=yes]? ", "yes") {
 			runReconfigure = true
 		}
 	}

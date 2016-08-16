@@ -1,4 +1,4 @@
-From 61b4761e417401c824c226ae5887464d359b0384 Mon Sep 17 00:00:00 2001
+From f32ef3cadd14827c7fe718913c189baf5fa0753a Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
 Date: Mon, 4 Apr 2016 21:18:28 -0400
 Subject: init: Allow running dpkg-reconfigure
@@ -12,7 +12,7 @@ Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
  1 file changed, 21 insertions(+)
 
 diff --git a/lxd/main.go b/lxd/main.go
-index 982b655..c0f23f0 100644
+index 982b655..deef169 100644
 --- a/lxd/main.go
 +++ b/lxd/main.go
 @@ -596,6 +596,7 @@ func cmdInit() error {
@@ -40,7 +40,7 @@ index 982b655..c0f23f0 100644
  			trustPassword = askPassword("Trust password for new clients: ")
  		}
 +
-+		if askBool("Do you want to configure the LXD bridge (yes/no)? ") {
++		if askBool("Do you want to configure the LXD bridge (yes/no) [default=yes]? ", "yes") {
 +			runReconfigure = true
 +		}
  	}
