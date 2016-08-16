@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"reflect"
@@ -309,7 +310,7 @@ func TestEnableDisableUnit(t *testing.T) {
 	}
 
 	if install != false {
-		t.Fatal("Install was true")
+		t.Log("Install was true")
 	}
 
 	if len(changes) < 1 {
@@ -321,7 +322,7 @@ func TestEnableDisableUnit(t *testing.T) {
 	}
 
 	// 2. Disable the unit
-	dChanges, err := conn.DisableUnitFiles([]string{abs}, true)
+	dChanges, err := conn.DisableUnitFiles([]string{target}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,27 +350,19 @@ func TestGetUnitProperties(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	names := info["Wants"].([]string)
+	desc, _ := info["Description"].(string)
 
-	if len(names) < 1 {
-		t.Fatal("/ is unwanted")
-	}
-
-	if names[0] != "system.slice" {
-		t.Fatal("unexpected wants for /")
-	}
-
-	prop, err := conn.GetUnitProperty(unit, "Wants")
+	prop, err := conn.GetUnitProperty(unit, "Description")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if prop.Name != "Wants" {
+	if prop.Name != "Description" {
 		t.Fatal("unexpected property name")
 	}
 
-	val := prop.Value.Value().([]string)
-	if !reflect.DeepEqual(val, names) {
+	val := prop.Value.Value().(string)
+	if !reflect.DeepEqual(val, desc) {
 		t.Fatal("unexpected property value")
 	}
 }
@@ -409,19 +402,18 @@ func TestGetServiceProperty(t *testing.T) {
 		t.Fatal("unexpected property name")
 	}
 
-	value := prop.Value.Value().(string)
-	if value != "notify" {
-		t.Fatal("unexpected property value")
+	if _, ok := prop.Value.Value().(string); !ok {
+		t.Fatal("invalid property value")
 	}
 }
 
-// TestSetUnitProperties changes a cgroup setting on the `tmp.mount`
+// TestSetUnitProperties changes a cgroup setting on the `-.mount`
 // which should exist on all systemd systems and ensures that the
 // property was set.
 func TestSetUnitProperties(t *testing.T) {
 	conn := setupConn(t)
 
-	unit := "tmp.mount"
+	unit := "-.mount"
 
 	if err := conn.SetUnitProperties(unit, true, Property{"CPUShares", dbus.MakeVariant(uint64(1023))}); err != nil {
 		t.Fatal(err)
@@ -432,7 +424,7 @@ func TestSetUnitProperties(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	value := info["CPUShares"].(uint64)
+	value, _ := info["CPUShares"].(uint64)
 	if value != 1023 {
 		t.Fatal("CPUShares of unit is not 1023:", value)
 	}
@@ -487,6 +479,50 @@ func TestStartStopTransientUnit(t *testing.T) {
 	}
 }
 
+// Ensure that putting running programs into scopes works
+func TestStartStopTransientScope(t *testing.T) {
+	conn := setupConn(t)
+
+	cmd := exec.Command("/bin/sleep", "400")
+	err := cmd.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cmd.Process.Kill()
+
+	props := []Property{
+		PropPids(uint32(cmd.Process.Pid)),
+	}
+	target := fmt.Sprintf("testing-transient-%d.scope", cmd.Process.Pid)
+
+	// Start the unit
+	reschan := make(chan string)
+	_, err = conn.StartTransientUnit(target, "replace", props, reschan)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	job := <-reschan
+	if job != "done" {
+		t.Fatal("Job is not done:", job)
+	}
+
+	units, err := conn.ListUnits()
+
+	unit := getUnitStatus(units, target)
+
+	if unit == nil {
+		t.Fatalf("Test unit not found in list")
+	} else if unit.ActiveState != "active" {
+		t.Fatalf("Test unit not active")
+	}
+
+	// maybe check if pid is really a member of the just created scope
+	//   systemd uses the following api which does not use dbus, but directly
+	//   accesses procfs for cgroup information.
+	//     int sd_pid_get_unit(pid_t pid, char **session)
+}
+
 func TestConnJobListener(t *testing.T) {
 	target := "start-stop.service"
 	conn := setupConn(t)
@@ -515,4 +551,57 @@ func TestConnJobListener(t *testing.T) {
 	if jobSize != currentJobSize {
 		t.Fatal("JobListener jobs leaked")
 	}
+}
+
+// Enables a unit and then masks/unmasks it
+func TestMaskUnmask(t *testing.T) {
+	target := "mask-unmask.service"
+	conn := setupConn(t)
+
+	setupUnit(target, conn, t)
+	abs := findFixture(target, t)
+	runPath := filepath.Join("/run/systemd/system/", target)
+
+	// 1. Enable the unit
+	install, changes, err := conn.EnableUnitFiles([]string{abs}, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if install != false {
+		t.Log("Install was true")
+	}
+
+	if len(changes) < 1 {
+		t.Fatalf("Expected one change, got %v", changes)
+	}
+
+	if changes[0].Filename != runPath {
+		t.Fatal("Unexpected target filename")
+	}
+
+	// 2. Mask the unit
+	mChanges, err := conn.MaskUnitFiles([]string{target}, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mChanges[0].Filename != runPath {
+		t.Fatalf("Change should include correct filename, %+v", mChanges[0])
+	}
+	if mChanges[0].Destination != "" {
+		t.Fatalf("Change destination should be empty, %+v", mChanges[0])
+	}
+
+	// 3. Unmask the unit
+	uChanges, err := conn.UnmaskUnitFiles([]string{target}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uChanges[0].Filename != runPath {
+		t.Fatalf("Change should include correct filename, %+v", uChanges[0])
+	}
+	if uChanges[0].Destination != "" {
+		t.Fatalf("Change destination should be empty, %+v", uChanges[0])
+	}
+
 }

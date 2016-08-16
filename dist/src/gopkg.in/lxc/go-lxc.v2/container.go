@@ -1478,7 +1478,7 @@ func (c *Container) Checkpoint(opts CheckpointOptions) error {
 
 // Restore restores the container from a checkpoint.
 func (c *Container) Restore(opts RestoreOptions) error {
-	if err := c.makeSure(isNotDefined | isGreaterEqualThanLXC11); err != nil {
+	if err := c.makeSure(isGreaterEqualThanLXC11); err != nil {
 		return err
 	}
 
@@ -1502,10 +1502,9 @@ func (c *Container) Migrate(cmd uint, opts MigrateOptions) error {
 	defer C.free(unsafe.Pointer(cdirectory))
 
 	var cpredumpdir *C.char
-	cpredumpdir = nil
 
 	if opts.PredumpDir != "" {
-		cpredumpdir := C.CString(opts.PredumpDir)
+		cpredumpdir = C.CString(opts.PredumpDir)
 		defer C.free(unsafe.Pointer(cpredumpdir))
 	}
 
@@ -1519,8 +1518,16 @@ func (c *Container) Migrate(cmd uint, opts MigrateOptions) error {
 		predump_dir: cpredumpdir,
 	}
 
+	var cActionScript *C.char
+	if opts.ActionScript != "" {
+		cActionScript = C.CString(opts.ActionScript)
+		defer C.free(unsafe.Pointer(cActionScript))
+	}
+
 	extras := C.struct_extra_migrate_opts{
 		preserves_inodes: C.bool(opts.PreservesInodes),
+		action_script:    cActionScript,
+		ghost_limit:      C.uint64_t(opts.GhostLimit),
 	}
 
 	ret := C.int(C.go_lxc_migrate(c.container, C.uint(cmd), &copts, &extras))

@@ -104,9 +104,14 @@ func unpack(file string, path string) error {
 
 	output, err := exec.Command(command, args...).CombinedOutput()
 	if err != nil {
+		co := string(output)
 		shared.Debugf("Unpacking failed")
-		shared.Debugf(string(output))
-		return err
+		shared.Debugf(co)
+
+		// Truncate the output to a single line for inclusion in the error
+		// message.  The first line isn't guaranteed to pinpoint the issue,
+		// but it's better than nothing and better than a multi-line message.
+		return fmt.Errorf("Unpack failed, %s.  %s", err, strings.SplitN(co, "\n", 2)[0])
 	}
 
 	return nil
@@ -1226,16 +1231,14 @@ func imageExport(d *Daemon, r *http.Request) Response {
 		return SmartError(err)
 	}
 
-	filename := imgInfo.Filename
 	imagePath := shared.VarPath("images", imgInfo.Fingerprint)
 	rootfsPath := imagePath + ".rootfs"
-	if filename == "" {
-		_, ext, err := detectCompression(imagePath)
-		if err != nil {
-			ext = ""
-		}
-		filename = fmt.Sprintf("%s%s", fingerprint, ext)
+
+	_, ext, err := detectCompression(imagePath)
+	if err != nil {
+		ext = ""
 	}
+	filename := fmt.Sprintf("%s%s", fingerprint, ext)
 
 	if shared.PathExists(rootfsPath) {
 		files := make([]fileResponseEntry, 2)
@@ -1243,6 +1246,14 @@ func imageExport(d *Daemon, r *http.Request) Response {
 		files[0].identifier = "metadata"
 		files[0].path = imagePath
 		files[0].filename = "meta-" + filename
+
+		// Recompute the extension for the root filesystem, it may use a different
+		// compression algorithm than the metadata.
+		_, ext, err = detectCompression(rootfsPath)
+		if err != nil {
+			ext = ""
+		}
+		filename = fmt.Sprintf("%s%s", fingerprint, ext)
 
 		files[1].identifier = "rootfs"
 		files[1].path = rootfsPath
