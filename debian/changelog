@@ -1,3 +1,79 @@
+lxd (2.0.4-0ubuntu1) yakkety; urgency=medium
+
+  * New upstream bugfix release (2.0.4)
+    - /dev/net/tun is now a default device (always present)
+    - lxd-bridge: dnsmasq is now configured with IPv6 name resolution
+    - lxd-bridge: iptables rules now have a comment
+    - "lxd init" now comes with reasonable defaults
+    - The "images:" remote now uses simplestreams on new installations
+    - "lxc image export" now always uses the image fingerprint as filename
+    - Import progress is now reported for URL imports in "lxc image import"
+    - apparmor: Add feature detection and clean things a bit
+    - apparmor: Don't depend on the LXC apparmor profile
+    - apparmor: Rename main two chunks of rules
+    - apparmor: Setup a more modular apparmor profile
+    - client: Don't share http client with go routines
+    - client: Error when trying to remove a non-existent device (LP: #1612388)
+    - client: Fix API info reporting in "lxc info"
+    - client: Fix spelling: permisson -> permission
+    - client: Make client.websocket a public API
+    - client: Make --version option visible
+    - client: Relax constraints on WebsocketRecvStream args
+    - client: Use named args for actionCmds
+    - client/finger: Remove unused field from finger cmd
+    - client/image: Fix image import from URL
+    - client/list: fix concurrent read/write
+    - client/list: Fix error handling and race in "lxc list"
+    - client/pause: Add some additional help to lxc pause
+    - client/profile: Add "lxc profile unset" to help message (LP: #1592529)
+    - daemon/container: Actually handle containers list error
+    - daemon/container: Add sanity checks for common problems
+    - daemon/container: Alphabetize device processing
+    - daemon/container: Better errors when sanity checking devices
+    - daemon/container: Better handle missing or invalid device types
+    - daemon/container: Document and validate limits.*.priority values
+    - daemon/container: Document image export target behavior and fix bugs
+    - daemon/container: Don't unfreeze a container on stop
+    - daemon/container: Fix flag name in init error message
+    - daemon/container: Fix limits.disk.priority when set to 0 (LP: #1603982)
+    - daemon/container: Fix nic hotplug with openvswitch
+    - daemon/container: Fix unix-char/unix-block in nested containers
+      (LP: #1574158)
+    - daemon/container: Improve check for invalid physical devices
+    - daemon/container: Remember the return code in the non wait-for-websocket
+    - daemon/container: Remove unused "name" argument from UnixDevice
+    - daemon/container: Return more error information back to the user
+    - daemon/container: Sort disk devices by their path before their names
+    - daemon/container: Unfreeze frozen container on shutdown
+    - daemon/db: Don't fail db upgrade if $LXD_DIR/containers doesn't exist
+      (LP: #1602025)
+    - daemon/db: remove fuse device from docker profile
+    - daemon/migration: fix tempdir handling
+    - daemon/profile: Prevent using invalid profile names (LP: #1612228)
+    - daemon/zfs: Fix ZFS volume size on 32bit architectures
+    - daemon/zfs: Only delete copy- snapshots on delete
+    - daemon/zfs: Remove subvolume in zfs.ImageCreate error flow
+    - doc: Add /dev/net/tun and /dev/fuse to docs
+    - doc: Added command to install squashfs-tools in README.md
+    - doc: Document config_get in pongo templates
+    - doc: Fixed errors on api examples with curl
+    - doc: Initial documentation for production use of LXD
+    - doc: Shuffle packages a bit in README.md
+    - lxd-bridge-proxy: Remove unused code
+    - Makefile: Also have "make dist" run multiple go get
+    - scripts: Make lxc-to-lxd work inside virtualenv
+    - simplestreams: Fix size reporting
+    - simplestreams: Handle images without labels
+    - simplestreams: List images available as both squashfs and tar.xz
+    - simplestreams: Properly deal with unset expiry
+    - simplestreams: Set proper user-agent
+    - simplestreams: Use the hashes in the right order
+
+  * Refresh debian/copyright to match vendor directory (dist/).
+    Note that this bundled code isn't used for the main archive builds.
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Tue, 16 Aug 2016 00:23:05 -0400
+
 lxd (2.0.3-0ubuntu2) yakkety; urgency=medium
 
   * Cherry-pick squashfs fix from upstream:
