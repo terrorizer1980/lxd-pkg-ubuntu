@@ -1,16 +1,5 @@
 #!/bin/sh
 
-gen_third_cert() {
-  [ -f "${LXD_CONF}/client3.crt" ] && return
-  mv "${LXD_CONF}/client.crt" "${LXD_CONF}/client.crt.bak"
-  mv "${LXD_CONF}/client.key" "${LXD_CONF}/client.key.bak"
-  lxc_remote list > /dev/null 2>&1
-  mv "${LXD_CONF}/client.crt" "${LXD_CONF}/client3.crt"
-  mv "${LXD_CONF}/client.key" "${LXD_CONF}/client3.key"
-  mv "${LXD_CONF}/client.crt.bak" "${LXD_CONF}/client.crt"
-  mv "${LXD_CONF}/client.key.bak" "${LXD_CONF}/client.key"
-}
-
 test_basic_usage() {
   ensure_import_testimage
   ensure_has_localhost_remote "${LXD_ADDR}"
@@ -19,7 +8,7 @@ test_basic_usage() {
   sum=$(lxc image info testimage | grep ^Fingerprint | cut -d' ' -f2)
   lxc image export testimage "${LXD_DIR}/"
   [ "${sum}" = "$(sha256sum "${LXD_DIR}/${sum}.tar.xz" | cut -d' ' -f1)" ]
-  
+
   # Test an alias with slashes
   lxc image show "${sum}"
   lxc image alias create a/b/ "${sum}"
@@ -35,6 +24,12 @@ test_basic_usage() {
   lxc image alias list local: non-existent | grep -q -v non-existent
   lxc image alias delete foo
   lxc image alias delete bar
+
+  # Test image list output formats (table & json)
+  lxc image list --format table | grep -q testimage
+  lxc image list --format json \
+    | jq '.[]|select(.alias[0].name="testimage")' \
+    | grep -q '"name": "testimage"'
 
   # Test image delete
   lxc image delete testimage
@@ -104,7 +99,7 @@ test_basic_usage() {
   lxc delete foo
 
   # gen untrusted cert
-  gen_third_cert
+  gen_cert client3
 
   # don't allow requests without a cert to get trusted data
   curl -k -s -X GET "https://${LXD_ADDR}/1.0/containers/foo" | grep 403
@@ -160,9 +155,33 @@ test_basic_usage() {
   lxc delete bar2
   lxc image delete foo
 
-  # test basic alias support
-  printf "aliases:\n  ls: list" >> "${LXD_CONF}/config.yml"
-  lxc ls
+  # Test alias support
+  cp "${LXD_CONF}/config.yml" "${LXD_CONF}/config.yml.bak"
+
+  #   1. Basic built-in alias functionality
+  [ "$(lxc ls)" = "$(lxc list)" ]
+  #   2. Basic user-defined alias functionality
+  printf "aliases:\n  l: list\n" >> "${LXD_CONF}/config.yml"
+  [ "$(lxc l)" = "$(lxc list)" ]
+  #   3. Built-in aliases and user-defined aliases can coexist
+  [ "$(lxc ls)" = "$(lxc l)" ]
+  #   4. Multi-argument alias keys and values
+  printf "  i ls: image list\n" >> "${LXD_CONF}/config.yml"
+  [ "$(lxc i ls)" = "$(lxc image list)" ]
+  #   5. Aliases where len(keys) != len(values) (expansion/contraction of number of arguments)
+  printf "  ils: image list\n  container ls: list\n" >> "${LXD_CONF}/config.yml"
+  [ "$(lxc ils)" = "$(lxc image list)" ]
+  [ "$(lxc container ls)" = "$(lxc list)" ]
+  #   6. User-defined aliases override built-in aliases
+  printf "  cp: list\n" >> "${LXD_CONF}/config.yml"
+  [ "$(lxc ls)" = "$(lxc cp)" ]
+  #   7. User-defined aliases override commands and don't recurse
+  LXC_LIST_DEBUG=$(lxc list --debug 2>&1 | grep -o "Raw.*")
+  printf "  list: list --debug\n" >> "${LXD_CONF}/config.yml"
+  [ "$(lxc list  2>&1 | grep -o 'Raw.*')" = "$LXC_LIST_DEBUG" ]
+
+  # Restore the config to remove the aliases
+  mv "${LXD_CONF}/config.yml.bak" "${LXD_CONF}/config.yml"
 
   # Delete the bar container we've used for several tests
   lxc delete bar
@@ -183,6 +202,7 @@ test_basic_usage() {
   # Test "nonetype" container creation with an LXC config
   wait_for "${LXD_ADDR}" my_curl -X POST "https://${LXD_ADDR}/1.0/containers" \
         -d "{\"name\":\"configtest\",\"config\":{\"raw.lxc\":\"lxc.hook.clone=/bin/true\"},\"source\":{\"type\":\"none\"}}"
+  # shellcheck disable=SC2102
   [ "$(my_curl "https://${LXD_ADDR}/1.0/containers/configtest" | jq -r .metadata.config[\"raw.lxc\"])" = "lxc.hook.clone=/bin/true" ]
   lxc delete configtest
 
@@ -223,6 +243,12 @@ test_basic_usage() {
     echo "==> MAC addresses didn't match across restarts (${mac1} vs ${mac2})"
     false
   fi
+
+  # Test last_used_at field is working properly
+  lxc init testimage last-used-at-test
+  lxc list last-used-at-test  --format json | jq -r '.[].last_used_at' | grep '1970-01-01T00:00:00Z'
+  lxc start last-used-at-test
+  lxc list last-used-at-test  --format json | jq -r '.[].last_used_at' | grep -v '1970-01-01T00:00:00Z'
 
   # check that we can set the environment
   lxc exec foo pwd | grep /root
@@ -284,6 +310,16 @@ test_basic_usage() {
   lxc delete lxd-apparmor-test
   [ ! -f "${LXD_DIR}/security/apparmor/profiles/lxd-lxd-apparmor-test" ]
 
+  lxc launch testimage lxd-seccomp-test
+  init=$(lxc info lxd-seccomp-test | grep Pid | cut -f2 -d" ")
+  [ "$(grep Seccomp "/proc/${init}/status" | cut -f2)" -eq "2" ]
+  lxc stop --force lxd-seccomp-test
+  lxc config set lxd-seccomp-test security.syscalls.blacklist_default false
+  lxc start lxd-seccomp-test
+  init=$(lxc info lxd-seccomp-test | grep Pid | cut -f2 -d" ")
+  [ "$(grep Seccomp "/proc/${init}/status" | cut -f2)" -eq "0" ]
+  lxc stop --force lxd-seccomp-test
+
   # make sure that privileged containers are not world-readable
   lxc profile create unconfined
   lxc profile set unconfined security.privileged true
@@ -291,6 +327,32 @@ test_basic_usage() {
   [ "$(stat -L -c "%a" "${LXD_DIR}/containers/foo2")" = "700" ]
   lxc delete foo2
   lxc profile delete unconfined
+
+  # Test boot.host_shutdown_timeout config setting
+  lxc init testimage configtest --config boot.host_shutdown_timeout=45
+  [ "$(lxc config get configtest boot.host_shutdown_timeout)" -eq 45 ]
+  lxc config set configtest boot.host_shutdown_timeout 15
+  [ "$(lxc config get configtest boot.host_shutdown_timeout)" -eq 15 ]
+  lxc delete configtest
+
+  # Test deleting multiple images
+  # Start 3 containers to create 3 different images
+  lxc launch testimage c1
+  lxc launch testimage c2
+  lxc launch testimage c3
+  lxc exec c1 -- touch /tmp/c1
+  lxc exec c2 -- touch /tmp/c2
+  lxc exec c3 -- touch /tmp/c3
+  lxc publish --force c1 --alias=image1
+  lxc publish --force c2 --alias=image2
+  lxc publish --force c3 --alias=image3
+  # Delete multiple images with lxc delete and confirm they're deleted
+  lxc image delete local:image1 local:image2 local:image3
+  ! lxc image list | grep -q image1
+  ! lxc image list | grep -q image2
+  ! lxc image list | grep -q image3
+  # Cleanup the containers
+  lxc delete --force c1 c2 c3
 
   # Ephemeral
   lxc launch testimage foo -e

@@ -164,25 +164,27 @@ func (k *daemonConfigKey) GetInt64() int64 {
 func daemonConfigInit(db *sql.DB) error {
 	// Set all the keys
 	daemonConfig = map[string]*daemonConfigKey{
-		"core.https_address":         &daemonConfigKey{valueType: "string", setter: daemonConfigSetAddress},
-		"core.https_allowed_headers": &daemonConfigKey{valueType: "string"},
-		"core.https_allowed_methods": &daemonConfigKey{valueType: "string"},
-		"core.https_allowed_origin":  &daemonConfigKey{valueType: "string"},
-		"core.proxy_http":            &daemonConfigKey{valueType: "string", setter: daemonConfigSetProxy},
-		"core.proxy_https":           &daemonConfigKey{valueType: "string", setter: daemonConfigSetProxy},
-		"core.proxy_ignore_hosts":    &daemonConfigKey{valueType: "string", setter: daemonConfigSetProxy},
-		"core.trust_password":        &daemonConfigKey{valueType: "string", hiddenValue: true, setter: daemonConfigSetPassword},
+		"core.https_address":             &daemonConfigKey{valueType: "string", setter: daemonConfigSetAddress},
+		"core.https_allowed_headers":     &daemonConfigKey{valueType: "string"},
+		"core.https_allowed_methods":     &daemonConfigKey{valueType: "string"},
+		"core.https_allowed_origin":      &daemonConfigKey{valueType: "string"},
+		"core.https_allowed_credentials": &daemonConfigKey{valueType: "bool"},
+		"core.proxy_http":                &daemonConfigKey{valueType: "string", setter: daemonConfigSetProxy},
+		"core.proxy_https":               &daemonConfigKey{valueType: "string", setter: daemonConfigSetProxy},
+		"core.proxy_ignore_hosts":        &daemonConfigKey{valueType: "string", setter: daemonConfigSetProxy},
+		"core.trust_password":            &daemonConfigKey{valueType: "string", hiddenValue: true, setter: daemonConfigSetPassword},
 
 		"images.auto_update_cached":    &daemonConfigKey{valueType: "bool", defaultValue: "true"},
 		"images.auto_update_interval":  &daemonConfigKey{valueType: "int", defaultValue: "6"},
 		"images.compression_algorithm": &daemonConfigKey{valueType: "string", validator: daemonConfigValidateCompression, defaultValue: "gzip"},
 		"images.remote_cache_expiry":   &daemonConfigKey{valueType: "int", defaultValue: "10", trigger: daemonConfigTriggerExpiry},
 
-		"storage.lvm_fstype":        &daemonConfigKey{valueType: "string", defaultValue: "ext4", validValues: []string{"ext4", "xfs"}},
-		"storage.lvm_thinpool_name": &daemonConfigKey{valueType: "string", defaultValue: "LXDPool", validator: storageLVMValidateThinPoolName},
-		"storage.lvm_vg_name":       &daemonConfigKey{valueType: "string", validator: storageLVMValidateVolumeGroupName, setter: daemonConfigSetStorage},
-		"storage.lvm_volume_size":   &daemonConfigKey{valueType: "string", defaultValue: "10GiB"},
-		"storage.zfs_pool_name":     &daemonConfigKey{valueType: "string", validator: storageZFSValidatePoolName, setter: daemonConfigSetStorage},
+		"storage.lvm_fstype":           &daemonConfigKey{valueType: "string", defaultValue: "ext4", validValues: []string{"ext4", "xfs"}},
+		"storage.lvm_thinpool_name":    &daemonConfigKey{valueType: "string", defaultValue: "LXDPool", validator: storageLVMValidateThinPoolName},
+		"storage.lvm_vg_name":          &daemonConfigKey{valueType: "string", validator: storageLVMValidateVolumeGroupName, setter: daemonConfigSetStorage},
+		"storage.lvm_volume_size":      &daemonConfigKey{valueType: "string", defaultValue: "10GiB"},
+		"storage.zfs_pool_name":        &daemonConfigKey{valueType: "string", validator: storageZFSValidatePoolName, setter: daemonConfigSetStorage},
+		"storage.zfs_remove_snapshots": &daemonConfigKey{valueType: "bool"},
 	}
 
 	// Load the values from the DB

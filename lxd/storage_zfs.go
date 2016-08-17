@@ -176,7 +176,11 @@ func (s *storageZfs) ContainerCanRestore(container container, sourceContainer co
 	}
 
 	if snaps[len(snaps)-1].Name() != sourceContainer.Name() {
-		return fmt.Errorf("ZFS can only restore from the latest snapshot. Delete newer snapshots or copy the snapshot into a new container instead.")
+		if !daemonConfig["storage.zfs_remove_snapshots"].GetBool() {
+			return fmt.Errorf("ZFS can only restore from the latest snapshot. Delete newer snapshots or copy the snapshot into a new container instead.")
+		}
+
+		return nil
 	}
 
 	return nil
@@ -379,11 +383,29 @@ func (s *storageZfs) ContainerRename(container container, newName string) error 
 }
 
 func (s *storageZfs) ContainerRestore(container container, sourceContainer container) error {
+	// Remove any needed snapshot
+	snaps, err := container.Snapshots()
+	if err != nil {
+		return err
+	}
+
+	for i := len(snaps) - 1; i != 0; i-- {
+		if snaps[i].Name() == sourceContainer.Name() {
+			break
+		}
+
+		err := snaps[i].Delete()
+		if err != nil {
+			return err
+		}
+	}
+
+	// Restore the snapshot
 	fields := strings.SplitN(sourceContainer.Name(), shared.SnapshotDelimiter, 2)
 	cName := fields[0]
 	snapName := fmt.Sprintf("snapshot-%s", fields[1])
 
-	err := s.zfsSnapshotRestore(fmt.Sprintf("containers/%s", cName), snapName)
+	err = s.zfsSnapshotRestore(fmt.Sprintf("containers/%s", cName), snapName)
 	if err != nil {
 		return err
 	}
@@ -1288,6 +1310,10 @@ func (s *zfsMigrationSourceDriver) Cleanup() {
 
 func (s *storageZfs) MigrationType() MigrationFSType {
 	return MigrationFSType_ZFS
+}
+
+func (s *storageZfs) PreservesInodes() bool {
+	return true
 }
 
 func (s *storageZfs) MigrationSource(ct container) (MigrationStorageSourceDriver, error) {

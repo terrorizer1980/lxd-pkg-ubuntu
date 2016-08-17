@@ -39,6 +39,7 @@ local_tcp_port() {
 
 # import all the backends
 for backend in backends/*.sh; do
+  # shellcheck disable=SC1090
   . "${backend}"
 done
 
@@ -50,6 +51,8 @@ spawn_lxd() {
   set +x
   # LXD_DIR is local here because since $(lxc) is actually a function, it
   # overwrites the environment and we would lose LXD_DIR's value otherwise.
+
+  # shellcheck disable=2039
   local LXD_DIR
 
   lxddir=${1}
@@ -129,6 +132,22 @@ lxc_remote() {
   eval "${cmd}"
 }
 
+gen_cert() {
+  # Temporarily move the existing cert to trick LXC into generating a
+  # second cert.  LXC will only generate a cert when adding a remote
+  # server with a HTTPS scheme.  The remote server URL just needs to
+  # be syntactically correct to get past initial checks; in fact, we
+  # don't want it to succeed, that way we don't have to delete it later.
+  [ -f "${LXD_CONF}/${1}.crt" ] && return
+  mv "${LXD_CONF}/client.crt" "${LXD_CONF}/client.crt.bak"
+  mv "${LXD_CONF}/client.key" "${LXD_CONF}/client.key.bak"
+  echo y | lxc_remote remote add "$(uuidgen)" https://0.0.0.0 || true
+  mv "${LXD_CONF}/client.crt" "${LXD_CONF}/${1}.crt"
+  mv "${LXD_CONF}/client.key" "${LXD_CONF}/${1}.key"
+  mv "${LXD_CONF}/client.crt.bak" "${LXD_CONF}/client.crt"
+  mv "${LXD_CONF}/client.key.bak" "${LXD_CONF}/client.key"
+}
+
 my_curl() {
   curl -k -s --cert "${LXD_CONF}/client.crt" --key "${LXD_CONF}/client.key" "$@"
 }
@@ -176,7 +195,10 @@ check_empty_table() {
 kill_lxd() {
   # LXD_DIR is local here because since $(lxc) is actually a function, it
   # overwrites the environment and we would lose LXD_DIR's value otherwise.
+
+  # shellcheck disable=2039
   local LXD_DIR
+
   daemon_dir=${1}
   LXD_DIR=${daemon_dir}
   daemon_pid=$(cat "${daemon_dir}/lxd.pid")
@@ -263,13 +285,13 @@ cleanup() {
     echo "Tests Completed (${TEST_RESULT}): hit enter to continue"
 
     # shellcheck disable=SC2034
-    read nothing
+    read -r nothing
   fi
 
   echo "==> Cleaning up"
 
   # Kill all the LXD instances
-  while read daemon_dir; do
+  while read -r daemon_dir; do
     kill_lxd "${daemon_dir}"
   done < "${TEST_DIR}/daemons"
 
@@ -293,12 +315,12 @@ wipe() {
   fi
 
   # shellcheck disable=SC2009
-  ps aux | grep lxc-monitord | grep "${1}" | awk '{print $2}' | while read pid; do
+  ps aux | grep lxc-monitord | grep "${1}" | awk '{print $2}' | while read -r pid; do
     kill -9 "${pid}"
   done
 
   if [ -f "${TEST_DIR}/loops" ]; then
-    while read line; do
+    while read -r line; do
       losetup -d "${line}" || true
     done < "${TEST_DIR}/loops"
   fi
@@ -317,6 +339,7 @@ trap cleanup EXIT HUP INT TERM
 
 # Import all the testsuites
 for suite in suites/*.sh; do
+  # shellcheck disable=SC1090
  . "${suite}"
 done
 

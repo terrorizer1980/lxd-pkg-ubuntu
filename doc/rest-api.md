@@ -257,8 +257,8 @@ Return value (if guest or untrusted):
         "public": false,                        # Whether the server should be treated as a public (read-only) remote by the client
     }
 
-### PUT
- * Description: Updates the server configuration or other properties
+### PUT (ETag supported)
+ * Description: Replaces the server configuration or other properties
  * Authentication: trusted
  * Operation: sync
  * Return: standard return value or standard error
@@ -269,6 +269,20 @@ Input (replaces any existing config with the provided one):
         "config": {
             "core.trust_password": "my-new-password",
             "storage.zfs_pool_name": "lxd"
+        }
+    }
+
+### PATCH (ETag supported)
+ * Description: Updates the server configuration or other properties
+ * Authentication: trusted
+ * Operation: sync
+ * Return: standard return value or standard error
+
+Input (updates only the listed keys, rest remains intact):
+
+    {
+        "config": {
+            "core.trust_password": "my-new-password"
         }
     }
 
@@ -547,6 +561,7 @@ Output:
                 "type": "disk"
             }
         },
+        "last_used_at": "2016-02-16T01:05:05Z",
         "name": "my-container",
         "profiles": [
             "default"
@@ -557,8 +572,8 @@ Output:
     }
 
 
-### PUT
- * Description: update container configuration or restore snapshot
+### PUT (ETag supported)
+ * Description: replaces container configuration or restore snapshot
  * Authentication: trusted
  * Operation: async
  * Return: background operation or standard error
@@ -594,6 +609,27 @@ Input (restore snapshot):
     {
         "restore": "snapshot-name"
     }
+
+### PATCH
+ * Description: update container configuration
+ * Authentication: trusted
+ * Operation: sync
+ * Return: standard return value or standard error
+
+Input:
+
+    {
+        "config": {
+            "limits.cpu": "4"
+        },
+        "devices": {
+            "rootfs": {
+                "size": "5GB"
+            }
+        },
+        "ephemeral": true
+    }
+
 
 ### POST
  * Description: used to rename/migrate the container
@@ -1231,8 +1267,8 @@ Input (none at present):
 
 HTTP code for this should be 202 (Accepted).
 
-### PUT
- * Description: Updates the image properties
+### PUT (ETag supported)
+ * Description: Replaces the image properties, update information and visibility
  * Authentication: trusted
  * Operation: sync
  * Return: standard return value or standard error
@@ -1244,6 +1280,22 @@ Input:
         "properties": {
             "architecture": "x86_64",
             "description": "Ubuntu 14.04 LTS server (20160201)",
+            "os": "ubuntu",
+            "release": "trusty"
+        },
+        "public": true,
+    }
+
+### PATCH
+ * Description: Updates the image properties, update information and visibility
+ * Authentication: trusted
+ * Operation: sync
+ * Return: standard return value or standard error
+
+Input:
+
+    {
+        "properties": {
             "os": "ubuntu",
             "release": "trusty"
         },
@@ -1335,8 +1387,8 @@ Output:
         "target": "c9b6e738fae75286d52f497415463a8ecc61bbcb046536f220d797b0e500a41f"
     }
 
-### PUT
- * Description: Updates the alias target or description
+### PUT (ETag supported)
+ * Description: Replaces the alias target or description
  * Authentication: trusted
  * Operation: sync
  * Return: standard return value or standard error
@@ -1347,6 +1399,19 @@ Input:
         "description": "New description",
         "target": "54c8caac1f61901ed86c68f24af5f5d3672bdc62c71d04f06df3a59e95684473"
     }
+
+### PATCH
+ * Description: Updates the alias target or description
+ * Authentication: trusted
+ * Operation: sync
+ * Return: standard return value or standard error
+
+Input:
+
+    {
+        "description": "New description"
+    }
+
 
 ### POST
  * Description: rename an alias
@@ -1537,8 +1602,8 @@ Output:
         }
     }
 
-### PUT
- * Description: update the profile
+### PUT (ETag supported)
+ * Description: replace the profile information
  * Authentication: trusted
  * Operation: sync
  * Return: standard return value or standard error
@@ -1561,6 +1626,26 @@ Input:
 Same dict as used for initial creation and coming from GET. The name
 property can't be changed (see POST for that).
 
+### PATCH
+ * Description: update the profile information
+ * Authentication: trusted
+ * Operation: sync
+ * Return: standard return value or standard error
+
+Input:
+
+    {
+        "config": {
+            "limits.memory": "4GB"
+        },
+        "description": "Some description string",
+        "devices": {
+            "kvm": {
+                "path": "/dev/kvm",
+                "type": "unix-char"
+            }
+        }
+    }
 
 ### POST
  * Description: rename a profile

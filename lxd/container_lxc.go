@@ -100,6 +100,7 @@ func containerLXCCreate(d *Daemon, args containerArgs) (container, error) {
 		cType:        args.Ctype,
 		stateful:     args.Stateful,
 		creationDate: args.CreationDate,
+		lastUsedDate: args.LastUsedDate,
 		profiles:     args.Profiles,
 		localConfig:  args.Config,
 		localDevices: args.Devices,
@@ -153,7 +154,7 @@ func containerLXCCreate(d *Daemon, args containerArgs) (container, error) {
 	}
 
 	// Validate expanded config
-	err = containerValidConfig(c.expandedConfig, false, true)
+	err = containerValidConfig(d, c.expandedConfig, false, true)
 	if err != nil {
 		c.Delete()
 		return nil, err
@@ -198,6 +199,7 @@ func containerLXCLoad(d *Daemon, args containerArgs) (container, error) {
 		architecture: args.Architecture,
 		cType:        args.Ctype,
 		creationDate: args.CreationDate,
+		lastUsedDate: args.LastUsedDate,
 		profiles:     args.Profiles,
 		localConfig:  args.Config,
 		localDevices: args.Devices,
@@ -225,6 +227,7 @@ type containerLXC struct {
 	architecture int
 	cType        containerType
 	creationDate time.Time
+	lastUsedDate time.Time
 	ephemeral    bool
 	id           int
 	name         string
@@ -497,10 +500,12 @@ func (c *containerLXC) initLXC() error {
 		}
 	}
 
-	// Setup Seccomp
-	err = lxcSetConfigItem(cc, "lxc.seccomp", SeccompProfilePath(c))
-	if err != nil {
-		return err
+	// Setup Seccomp if necessary
+	if ContainerNeedsSeccomp(c) {
+		err = lxcSetConfigItem(cc, "lxc.seccomp", SeccompProfilePath(c))
+		if err != nil {
+			return err
+		}
 	}
 
 	// Setup idmap
@@ -1079,6 +1084,8 @@ func (c *containerLXC) startCommon() (string, error) {
 	c.removeUnixDevices()
 	c.removeDiskDevices()
 
+	var usbs []usbDevice
+
 	// Create the devices
 	for _, k := range c.expandedDevices.DeviceNames() {
 		m := c.expandedDevices[k]
@@ -1100,6 +1107,55 @@ func (c *containerLXC) startCommon() (string, error) {
 				if err != nil {
 					return "", fmt.Errorf("Failed to add cgroup rule for device")
 				}
+			}
+		} else if m["type"] == "usb" {
+			if usbs == nil {
+				usbs, err = deviceLoadUsb()
+				if err != nil {
+					return "", err
+				}
+			}
+
+			created := false
+
+			for _, usb := range usbs {
+				if usb.vendor != m["vendorid"] || (m["productid"] != "" && usb.product != m["productid"]) {
+					continue
+				}
+
+				if c.IsPrivileged() && !runningInUserns && cgDevicesController {
+					err = lxcSetConfigItem(c.c, "lxc.cgroup.devices.allow", fmt.Sprintf("c %d:%d rwm", usb.major, usb.minor))
+					if err != nil {
+						return "", err
+					}
+				}
+
+				m["major"] = fmt.Sprintf("%d", usb.major)
+				m["minor"] = fmt.Sprintf("%d", usb.minor)
+				m["path"] = usb.path
+
+				/* it's ok to fail, the device might be hot plugged later */
+				_, err := c.createUnixDevice(m)
+				if err != nil {
+					shared.Log.Debug("failed to create usb device", log.Ctx{"err": err, "device": k})
+					continue
+				}
+
+				created = true
+
+				/* if the create was successful, let's bind mount it */
+				srcPath := usb.path
+				tgtPath := strings.TrimPrefix(srcPath, "/")
+				devName := fmt.Sprintf("unix.%s", strings.Replace(tgtPath, "/", "-", -1))
+				devPath := filepath.Join(c.DevicesPath(), devName)
+				err = lxcSetConfigItem(c.c, "lxc.mount.entry", fmt.Sprintf("%s %s none bind,create=file", devPath, tgtPath))
+				if err != nil {
+					return "", err
+				}
+			}
+
+			if !created && shared.IsTrue(m["required"]) {
+				return "", fmt.Errorf("couldn't create usb device %s", k)
 			}
 		} else if m["type"] == "disk" {
 			// Disk device
@@ -1191,6 +1247,12 @@ func (c *containerLXC) startCommon() (string, error) {
 		return "", err
 	}
 
+	// Update time container was last started
+	err = dbContainerLastUsedUpdate(c.daemon.db, c.id, time.Now().UTC())
+	if err != nil {
+		fmt.Printf("Error updating last used: %v", err)
+	}
+
 	return configPath, nil
 }
 
@@ -1219,7 +1281,7 @@ func (c *containerLXC) Start(stateful bool) error {
 			return fmt.Errorf("Container has no existing state to restore.")
 		}
 
-		err := c.Migrate(lxc.MIGRATE_RESTORE, c.StatePath(), "snapshot", false)
+		err := c.Migrate(lxc.MIGRATE_RESTORE, c.StatePath(), "snapshot", false, false)
 		if err != nil && !c.IsRunning() {
 			return err
 		}
@@ -1415,7 +1477,7 @@ func (c *containerLXC) Stop(stateful bool) error {
 		}
 
 		// Checkpoint
-		err = c.Migrate(lxc.MIGRATE_DUMP, stateDir, "snapshot", true)
+		err = c.Migrate(lxc.MIGRATE_DUMP, stateDir, "snapshot", true, false)
 		if err != nil {
 			return err
 		}
@@ -1626,15 +1688,18 @@ func (c *containerLXC) getLxcState() (lxc.State, error) {
 	}
 }
 
-func (c *containerLXC) Render() (interface{}, error) {
+func (c *containerLXC) Render() (interface{}, interface{}, error) {
 	// Load the go-lxc struct
 	err := c.initLXC()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Ignore err as the arch string on error is correct (unknown)
 	architectureName, _ := shared.ArchitectureName(c.architecture)
+
+	// Prepare the ETag
+	etag := []interface{}{c.architecture, c.localConfig, c.localDevices, c.ephemeral, c.profiles}
 
 	if c.IsSnapshot() {
 		return &shared.SnapshotInfo{
@@ -1645,15 +1710,16 @@ func (c *containerLXC) Render() (interface{}, error) {
 			Ephemeral:       c.ephemeral,
 			ExpandedConfig:  c.expandedConfig,
 			ExpandedDevices: c.expandedDevices,
+			LastUsedDate:    c.lastUsedDate,
 			Name:            c.name,
 			Profiles:        c.profiles,
 			Stateful:        c.stateful,
-		}, nil
+		}, etag, nil
 	} else {
 		// FIXME: Render shouldn't directly access the go-lxc struct
 		cState, err := c.getLxcState()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		statusCode := shared.FromLXCState(int(cState))
 
@@ -1665,12 +1731,13 @@ func (c *containerLXC) Render() (interface{}, error) {
 			Ephemeral:       c.ephemeral,
 			ExpandedConfig:  c.expandedConfig,
 			ExpandedDevices: c.expandedDevices,
+			LastUsedDate:    c.lastUsedDate,
 			Name:            c.name,
 			Profiles:        c.profiles,
 			Status:          statusCode.String(),
 			StatusCode:      statusCode,
 			Stateful:        c.stateful,
-		}, nil
+		}, etag, nil
 	}
 }
 
@@ -1786,7 +1853,7 @@ func (c *containerLXC) Restore(sourceContainer container) error {
 	// If the container wasn't running but was stateful, should we restore
 	// it as running?
 	if shared.PathExists(c.StatePath()) {
-		if err := c.Migrate(lxc.MIGRATE_RESTORE, c.StatePath(), "snapshot", false); err != nil {
+		if err := c.Migrate(lxc.MIGRATE_RESTORE, c.StatePath(), "snapshot", false, false); err != nil {
 			return err
 		}
 
@@ -1994,7 +2061,7 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 	}
 
 	// Validate the new config
-	err := containerValidConfig(args.Config, false, false)
+	err := containerValidConfig(c.daemon, args.Config, false, false)
 	if err != nil {
 		return err
 	}
@@ -2147,7 +2214,7 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 	removeDevices, addDevices, updateDevices := oldExpandedDevices.Update(c.expandedDevices)
 
 	// Do some validation of the config diff
-	err = containerValidConfig(c.expandedConfig, false, true)
+	err = containerValidConfig(c.daemon, c.expandedConfig, false, true)
 	if err != nil {
 		return err
 	}
@@ -2416,6 +2483,8 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 			}
 		}
 
+		var usbs []usbDevice
+
 		// Live update the devices
 		for k, m := range removeDevices {
 			if shared.StringInSlice(m["type"], []string{"unix-char", "unix-block"}) {
@@ -2432,6 +2501,29 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 				err = c.removeNetworkDevice(k, m)
 				if err != nil {
 					return err
+				}
+			} else if m["type"] == "usb" {
+				if usbs == nil {
+					usbs, err = deviceLoadUsb()
+					if err != nil {
+						return err
+					}
+				}
+
+				/* if the device isn't present, we don't need to remove it */
+				for _, usb := range usbs {
+					if usb.vendor != m["vendorid"] || (m["productid"] != "" && usb.product != m["productid"]) {
+						continue
+					}
+
+					m["major"] = fmt.Sprintf("%d", usb.major)
+					m["minor"] = fmt.Sprintf("%d", usb.minor)
+					m["path"] = usb.path
+
+					err = c.removeUnixDevice(m)
+					if err != nil {
+						shared.Log.Error("failed to remove usb device", log.Ctx{"err": err, "usb": usb, "container": c.Name()})
+					}
 				}
 			}
 		}
@@ -2451,6 +2543,28 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 				err = c.insertNetworkDevice(k, m)
 				if err != nil {
 					return err
+				}
+			} else if m["type"] == "usb" {
+				if usbs == nil {
+					usbs, err = deviceLoadUsb()
+					if err != nil {
+						return err
+					}
+				}
+
+				for _, usb := range usbs {
+					if usb.vendor != m["vendorid"] || (m["productid"] != "" && usb.product != m["productid"]) {
+						continue
+					}
+
+					m["major"] = fmt.Sprintf("%d", usb.major)
+					m["minor"] = fmt.Sprintf("%d", usb.minor)
+					m["path"] = usb.path
+
+					err = c.insertUnixDevice(k, m)
+					if err != nil {
+						shared.Log.Error("failed to insert usb device", log.Ctx{"err": err, "usb": usb, "container": c.Name()})
+					}
 				}
 			}
 		}
@@ -2714,7 +2828,7 @@ func findCriu(host string) error {
 	return nil
 }
 
-func (c *containerLXC) Migrate(cmd uint, stateDir string, function string, stop bool) error {
+func (c *containerLXC) Migrate(cmd uint, stateDir string, function string, stop bool, actionScript bool) error {
 	if err := findCriu(function); err != nil {
 		return err
 	}
@@ -2730,6 +2844,14 @@ func (c *containerLXC) Migrate(cmd uint, stateDir string, function string, stop 
 	default:
 		prettyCmd = "unknown"
 		shared.Log.Warn("unknown migrate call", log.Ctx{"cmd": cmd})
+	}
+
+	preservesInodes := c.storage.PreservesInodes()
+	/* This feature was only added in 2.0.1, let's not ask for it
+	 * before then or migrations will fail.
+	 */
+	if !lxc.VersionAtLeast(2, 0, 1) {
+		preservesInodes = false
 	}
 
 	var migrateErr error
@@ -2766,7 +2888,8 @@ func (c *containerLXC) Migrate(cmd uint, stateDir string, function string, stop 
 			c.name,
 			c.daemon.lxcpath,
 			configPath,
-			stateDir).CombinedOutput()
+			stateDir,
+			fmt.Sprintf("%v", preservesInodes)).CombinedOutput()
 
 		if string(out) != "" {
 			for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
@@ -2791,10 +2914,26 @@ func (c *containerLXC) Migrate(cmd uint, stateDir string, function string, stop 
 			return err
 		}
 
+		script := ""
+		if actionScript {
+			script = filepath.Join(stateDir, "action.sh")
+		}
+
+		// TODO: make this configurable? Ultimately I think we don't
+		// want to do that; what we really want to do is have "modes"
+		// of criu operation where one is "make this succeed" and the
+		// other is "make this fast". Anyway, for now, let's choose a
+		// really big size so it almost always succeeds, even if it is
+		// slow.
+		ghostLimit := uint64(256 * 1024 * 1024)
+
 		opts := lxc.MigrateOptions{
-			Stop:      stop,
-			Directory: stateDir,
-			Verbose:   true,
+			Stop:            stop,
+			Directory:       stateDir,
+			Verbose:         true,
+			PreservesInodes: preservesInodes,
+			ActionScript:    script,
+			GhostLimit:      ghostLimit,
 		}
 
 		migrateErr = c.c.Migrate(cmd, opts)
@@ -4576,6 +4715,9 @@ func (c *containerLXC) Architecture() int {
 
 func (c *containerLXC) CreationDate() time.Time {
 	return c.creationDate
+}
+func (c *containerLXC) LastUsedDate() time.Time {
+	return c.lastUsedDate
 }
 func (c *containerLXC) ExpandedConfig() map[string]string {
 	return c.expandedConfig
