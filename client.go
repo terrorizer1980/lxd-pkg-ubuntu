@@ -188,6 +188,17 @@ func NewClient(config *Config, remote string) (*Client, error) {
 			info.ClientPEMKey = string(keyBytes)
 		}
 
+		// Read the client key (if it exists)
+		clientCaPath := path.Join(config.ConfigDir, "client.ca")
+		if shared.PathExists(clientCaPath) {
+			caBytes, err := ioutil.ReadFile(clientCaPath)
+			if err != nil {
+				return nil, err
+			}
+
+			info.ClientPEMCa = string(caBytes)
+		}
+
 		// Read the server certificate (if it exists)
 		serverCertPath := config.ServerCertPath(remote)
 		if shared.PathExists(serverCertPath) {
@@ -224,6 +235,8 @@ type ConnectInfo struct {
 	ClientPEMCert string
 	// ClientPEMKey is the PEM encoded private bytes of the client's key associated with its certificate
 	ClientPEMKey string
+	// ClientPEMCa is the PEM encoded client certificate authority (if any)
+	ClientPEMCa string
 	// ServerPEMCert is the PEM encoded server certificate that we are
 	// connecting to. It can be the empty string if we do not know the
 	// server's certificate yet.
@@ -262,8 +275,8 @@ func connectViaUnix(c *Client, remote *RemoteConfig) error {
 	return nil
 }
 
-func connectViaHttp(c *Client, remote *RemoteConfig, clientCert, clientKey, serverCert string) error {
-	tlsconfig, err := shared.GetTLSConfigMem(clientCert, clientKey, serverCert)
+func connectViaHttp(c *Client, remote *RemoteConfig, clientCert, clientKey, clientCA, serverCert string) error {
+	tlsconfig, err := shared.GetTLSConfigMem(clientCert, clientKey, clientCA, serverCert)
 	if err != nil {
 		return err
 	}
@@ -305,7 +318,7 @@ func NewClientFromInfo(info ConnectInfo) (*Client, error) {
 	if strings.HasPrefix(info.RemoteConfig.Addr, "unix:") {
 		err = connectViaUnix(c, &info.RemoteConfig)
 	} else {
-		err = connectViaHttp(c, &info.RemoteConfig, info.ClientPEMCert, info.ClientPEMKey, info.ServerPEMCert)
+		err = connectViaHttp(c, &info.RemoteConfig, info.ClientPEMCert, info.ClientPEMKey, info.ClientPEMCa, info.ServerPEMCert)
 	}
 	if err != nil {
 		return nil, err
@@ -1294,7 +1307,7 @@ func (c *Client) GetAlias(alias string) string {
 
 // Init creates a container from either a fingerprint or an alias; you must
 // provide at least one.
-func (c *Client) Init(name string, imgremote string, image string, profiles *[]string, config map[string]string, ephem bool) (*Response, error) {
+func (c *Client) Init(name string, imgremote string, image string, profiles *[]string, config map[string]string, devices shared.Devices, ephem bool) (*Response, error) {
 	if c.Remote.Public {
 		return nil, fmt.Errorf("This function isn't supported by public remotes.")
 	}
@@ -1394,6 +1407,10 @@ func (c *Client) Init(name string, imgremote string, image string, profiles *[]s
 
 	if config != nil {
 		body["config"] = config
+	}
+
+	if devices != nil {
+		body["devices"] = devices
 	}
 
 	if ephem {
@@ -2190,7 +2207,7 @@ func (c *Client) ListProfiles() ([]string, error) {
 	return names, nil
 }
 
-func (c *Client) ApplyProfile(container, profile string) (*Response, error) {
+func (c *Client) AssignProfile(container, profile string) (*Response, error) {
 	if c.Remote.Public {
 		return nil, fmt.Errorf("This function isn't supported by public remotes.")
 	}
@@ -2200,7 +2217,11 @@ func (c *Client) ApplyProfile(container, profile string) (*Response, error) {
 		return nil, err
 	}
 
-	st.Profiles = strings.Split(profile, ",")
+	if profile != "" {
+		st.Profiles = strings.Split(profile, ",")
+	} else {
+		st.Profiles = nil
+	}
 
 	return c.put(fmt.Sprintf("containers/%s", container), st, Async)
 }

@@ -39,11 +39,21 @@ type Response interface {
 // Sync response
 type syncResponse struct {
 	success  bool
+	etag     interface{}
 	metadata interface{}
 	location string
 }
 
 func (r *syncResponse) Render(w http.ResponseWriter) error {
+	// Set an appropriate ETag header
+	if r.etag != nil {
+		etag, err := etagHash(r.etag)
+		if err == nil {
+			w.Header().Set("ETag", etag)
+		}
+	}
+
+	// Prepare the JSON response
 	status := shared.Success
 	if !r.success {
 		status = shared.Failure
@@ -68,6 +78,10 @@ func (r *syncResponse) String() string {
 
 func SyncResponse(success bool, metadata interface{}) Response {
 	return &syncResponse{success: success, metadata: metadata}
+}
+
+func SyncResponseETag(success bool, metadata interface{}, etag interface{}) Response {
+	return &syncResponse{success: success, metadata: metadata, etag: etag}
 }
 
 func SyncResponseLocation(success bool, metadata interface{}, location string) Response {
@@ -261,6 +275,10 @@ func BadRequest(err error) Response {
 
 func InternalError(err error) Response {
 	return &errorResponse{http.StatusInternalServerError, err.Error()}
+}
+
+func PreconditionFailed(err error) Response {
+	return &errorResponse{http.StatusPreconditionFailed, err.Error()}
 }
 
 /*
