@@ -1,3 +1,36 @@
+lxd (2.1-0ubuntu1) yakkety; urgency=medium
+
+  * New upstream release (2.1)
+    - All the bugfixes listed as part of LXD 2.0.1, 2.0.2, 2.0.3 and 2.0.4
+
+    - client: Add a lxc shell alias by default
+    - client: Build unix-like aliases directly into LXC
+    - client: Generate the client certificate on-demand
+    - client/copy: Allow additional profiles and config (LP: #1585307)
+    - client/copy: Pick a random name if not specified (LP: #1585308)
+    - client/image: Add --format and json output
+    - client/image: Allow deleting multiple images at once
+    - client/list: Add support for config key columns
+    - client/profile: lxc profile apply is now lxc profile assign
+    - client/profile: New lxc profile add and lxc profile remove sub-commands
+    - client/version: Do not show the version command by default
+    - daemon: Add a global core.https_allowed_credentials key
+    - daemon: Implement ETag support for all PUT calls
+    - daemon: Implement PKI authentication
+    - daemon: Implement the PATCH method for all endpoints that have PUT
+    - daemon/container: Add config key for container force shutdown timeout
+    - daemon/container: Add some seccomp knobs
+    - daemon/container: Add support for the "usb" device type
+    - daemon/container: Record the last used date for containers
+    - daemon/zfs: Allow forcing snapshot removal through configuration
+    - tests: Fix for newer shellcheck
+    - lxd-bridge: Fail on dnsmasq failure (LP: #1613815)
+    - c/r: switch to the new ->migrate API
+    - c/r: use liblxc's new preserves_inodes feature
+    - c/r: bump ghost limit
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 17 Aug 2016 19:31:36 -0400
+
 lxd (2.0.4-0ubuntu2) yakkety; urgency=medium
 
   * Cherry-pick from upstream:
