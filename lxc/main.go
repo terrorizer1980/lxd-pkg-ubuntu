@@ -28,7 +28,7 @@ func main() {
 		case syscall.ECONNREFUSED:
 			msg = i18n.G("Connection refused; is LXD running?")
 		case syscall.EACCES:
-			msg = i18n.G("Permisson denied, are you in the lxd group?")
+			msg = i18n.G("Permission denied, are you in the lxd group?")
 		}
 
 		fmt.Fprintln(os.Stderr, fmt.Sprintf("%s", msg))
@@ -156,30 +156,50 @@ type command interface {
 }
 
 var commands = map[string]command{
-	"config":   &configCmd{},
-	"copy":     &copyCmd{},
-	"delete":   &deleteCmd{},
-	"exec":     &execCmd{},
-	"file":     &fileCmd{},
-	"finger":   &fingerCmd{},
-	"help":     &helpCmd{},
-	"image":    &imageCmd{},
-	"info":     &infoCmd{},
-	"init":     &initCmd{},
-	"launch":   &launchCmd{},
-	"list":     &listCmd{},
-	"monitor":  &monitorCmd{},
-	"move":     &moveCmd{},
-	"pause":    &actionCmd{shared.Freeze, false, false, "pause", -1, false, false, false},
-	"profile":  &profileCmd{},
-	"publish":  &publishCmd{},
-	"remote":   &remoteCmd{},
-	"restart":  &actionCmd{shared.Restart, true, true, "restart", -1, false, false, false},
+	"config":  &configCmd{},
+	"copy":    &copyCmd{},
+	"delete":  &deleteCmd{},
+	"exec":    &execCmd{},
+	"file":    &fileCmd{},
+	"finger":  &fingerCmd{},
+	"help":    &helpCmd{},
+	"image":   &imageCmd{},
+	"info":    &infoCmd{},
+	"init":    &initCmd{},
+	"launch":  &launchCmd{},
+	"list":    &listCmd{},
+	"monitor": &monitorCmd{},
+	"move":    &moveCmd{},
+	"pause": &actionCmd{
+		action:         shared.Freeze,
+		name:           "pause",
+		additionalHelp: i18n.G("The opposite of `lxc pause` is `lxc start`."),
+	},
+	"profile": &profileCmd{},
+	"publish": &publishCmd{},
+	"remote":  &remoteCmd{},
+	"restart": &actionCmd{
+		action:     shared.Restart,
+		hasTimeout: true,
+		visible:    true,
+		name:       "restart",
+		timeout:    -1,
+	},
 	"restore":  &restoreCmd{},
 	"snapshot": &snapshotCmd{},
-	"start":    &actionCmd{shared.Start, false, true, "start", -1, false, false, false},
-	"stop":     &actionCmd{shared.Stop, true, true, "stop", -1, false, false, false},
-	"version":  &versionCmd{},
+	"start": &actionCmd{
+		action:  shared.Start,
+		visible: true,
+		name:    "start",
+	},
+	"stop": &actionCmd{
+		action:     shared.Stop,
+		hasTimeout: true,
+		visible:    true,
+		name:       "stop",
+		timeout:    -1,
+	},
+	"version": &versionCmd{},
 }
 
 var errArgs = fmt.Errorf(i18n.G("wrong number of subcommand arguments"))

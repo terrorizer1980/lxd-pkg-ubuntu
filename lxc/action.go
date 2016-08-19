@@ -10,14 +10,15 @@ import (
 )
 
 type actionCmd struct {
-	action     shared.ContainerAction
-	hasTimeout bool
-	visible    bool
-	name       string
-	timeout    int
-	force      bool
-	stateful   bool
-	stateless  bool
+	action         shared.ContainerAction
+	hasTimeout     bool
+	visible        bool
+	name           string
+	timeout        int
+	force          bool
+	stateful       bool
+	stateless      bool
+	additionalHelp string
 }
 
 func (c *actionCmd) showByDefault() bool {
@@ -25,10 +26,14 @@ func (c *actionCmd) showByDefault() bool {
 }
 
 func (c *actionCmd) usage() string {
+	if c.additionalHelp != "" {
+		c.additionalHelp = fmt.Sprintf("\n\n%s", c.additionalHelp)
+	}
+
 	return fmt.Sprintf(i18n.G(
 		`Changes state of one or more containers to %s.
 
-lxc %s <name> [<name>...]`), c.name, c.name)
+lxc %s <name> [<name>...]%s`), c.name, c.name, c.additionalHelp)
 }
 
 func (c *actionCmd) flags() {
@@ -64,7 +69,7 @@ func (c *actionCmd) run(config *lxd.Config, args []string) error {
 			return fmt.Errorf(i18n.G("Must supply container name for: ")+"\"%s\"", nameArg)
 		}
 
-		if c.action == shared.Start || c.action == shared.Stop {
+		if c.action == shared.Start {
 			current, err := d.ContainerInfo(name)
 			if err != nil {
 				return err

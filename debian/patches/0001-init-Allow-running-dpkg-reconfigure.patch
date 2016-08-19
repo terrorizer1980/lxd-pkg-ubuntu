@@ -1,4 +1,4 @@
-From 7b0585fa5cab4413216d0187fff3fe5423ad7ba3 Mon Sep 17 00:00:00 2001
+From f541d0bab40e26f415e09ee493779c990b78e0ee Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
 Date: Mon, 4 Apr 2016 21:18:28 -0400
 Subject: init: Allow running dpkg-reconfigure
@@ -12,18 +12,18 @@ Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
  1 file changed, 21 insertions(+)
 
 diff --git a/lxd/main.go b/lxd/main.go
-index ec20ed2..3a47bc5 100644
+index 982b655..c0f23f0 100644
 --- a/lxd/main.go
 +++ b/lxd/main.go
 @@ -596,6 +596,7 @@ func cmdInit() error {
  	var networkAddress string // Address
- 	var networkPort int       // Port
+ 	var networkPort int64     // Port
  	var trustPassword string  // Trust password
 +	var runReconfigure bool   // Whether to call dpkg-reconfigure
  
  	// Detect userns
  	defaultPrivileged = -1
-@@ -713,6 +714,11 @@ func cmdInit() error {
+@@ -732,6 +733,11 @@ func cmdInit() error {
  	}
  
  	if len(containers) > 0 || len(images) > 0 {
@@ -35,8 +35,8 @@ index ec20ed2..3a47bc5 100644
  		return fmt.Errorf("You have existing containers or images. lxd init requires an empty LXD.")
  	}
  
-@@ -826,6 +832,10 @@ they otherwise would.
- 			networkPort = askInt("Port to bind LXD to (8443 recommended): ", 1, 65535)
+@@ -861,6 +867,10 @@ they otherwise would.
+ 			networkPort = askInt("Port to bind LXD to [default=8443]: ", 1, 65535, "8443")
  			trustPassword = askPassword("Trust password for new clients: ")
  		}
 +
@@ -46,7 +46,7 @@ index ec20ed2..3a47bc5 100644
  	}
  
  	if !shared.StringInSlice(storageBackend, []string{"dir", "zfs"}) {
-@@ -913,6 +923,17 @@ they otherwise would.
+@@ -948,6 +958,17 @@ they otherwise would.
  		}
  	}
  
