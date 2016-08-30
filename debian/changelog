@@ -1,3 +1,11 @@
+lxd (2.1-0ubuntu2) yakkety; urgency=medium
+
+  * Properly handle purge. (LP: #1614621)
+  * Configure system-wide dnsmasq not to touch lxdbr0. (LP: #1613820)
+  * Stop lxd.socket on package remove. (LP: #1577001)
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Mon, 29 Aug 2016 17:29:27 -0400
+
 lxd (2.1-0ubuntu1) yakkety; urgency=medium
 
   * New upstream release (2.1)
