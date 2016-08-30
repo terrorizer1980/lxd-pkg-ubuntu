@@ -90,6 +90,10 @@ override_dh_install:
 	# Apparmor
 	dh_apparmor -p lxd --profile-name=usr.lib.lxd.lxd-bridge-proxy
 
+	# copy dnsmasq configuration
+	mkdir -p $(PKGDIR)/etc/dnsmasq.d-available
+	cp debian/lxd.dnsmasq $(PKGDIR)/etc/dnsmasq.d-available/lxd
+
 	# Trigger normal dh_install
 	dh_install
 

@@ -9,3 +9,5 @@ debian/wrappers/profile-config usr/lib/lxd/
 debian/wrappers/shutdown usr/lib/lxd/
 
 debian/apparmor/usr.lib.lxd.lxd-bridge-proxy etc/apparmor.d/
+
+etc/dnsmasq.d-available/lxd
