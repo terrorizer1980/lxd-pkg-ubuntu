@@ -1,3 +1,0 @@
-# It's Go, not much we can do about this
-hardening-no-pie usr/bin/fuidshift
-hardening-no-bindnow usr/bin/fuidshift
