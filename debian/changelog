@@ -1,6 +1,6 @@
 lxd (2.1-0ubuntu3) UNRELEASED; urgency=medium
 
-  * Link against go shared library packages. 
+  * Link against go shared library packages. (LP: #1508122)
 
  -- Michael Hudson-Doyle <michael.hudson@ubuntu.com>  Thu, 08 Sep 2016 22:19:39 +1200
 
