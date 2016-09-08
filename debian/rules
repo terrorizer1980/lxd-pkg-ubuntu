@@ -12,6 +12,11 @@ DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
 export DH_GOPKG := github.com/lxc/lxd
 export GOPATH := $(CURDIR)/obj-$(DEB_BUILD_GNU_TYPE)
 export USE_EMBEDDED := false
+export USE_SHLIBS := true
+
+ifeq ($(USE_SHLIBS), true)
+export DH_GOLANG_LINK_SHARED := 1
+endif
 
 %:
 	dh $@ --with systemd --buildsystem=golang --with=golang
@@ -34,7 +39,11 @@ override_dh_auto_configure:
 	mv ${GOPATH}/src/github.com/lxc/lxd ${GOPATH}/lxd.tmp
 
 	# Clean GOPATH.
+ifeq ($(USE_SHLIBS), true)
+	rm -Rf ${GOPATH}/src/srclibs
+else
 	rm -Rf ${GOPATH}/src
+endif
 
 ifeq ($(USE_EMBEDDED), true)
 	# If we get all dependencies from dist, just copy it onto GOPATH.
