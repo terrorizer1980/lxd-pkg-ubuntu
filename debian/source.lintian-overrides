@@ -1,2 +1,1 @@
-lxd source: xs-testsuite-header-in-debian-control xs-testsuite
 lxd source: no-complete-debconf-translation

@@ -34,7 +34,6 @@ Build-Depends: debhelper (>= 9),
                lxc-dev (>= 1.1.0~),
                pkg-config,
                protobuf-compiler
-XS-Testsuite: autopkgtest
 
 Package: lxd-client
 Architecture: any
