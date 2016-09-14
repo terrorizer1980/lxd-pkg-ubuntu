@@ -1,3 +1,58 @@
+lxd (2.2-0ubuntu1) yakkety; urgency=medium
+
+  * New upstream release (2.2)
+    - client: Add a "manpage" command
+    - client: Add a "rename" alias
+    - client/file: Recursive file push/pull (-r) (LP: #1531364)
+    - client/file: Support recursive directory creation (-p)
+    - client/info: Add cpu usage
+    - client/publish: Allow overriding compression algorithm
+    - daemon: Make a database backup on schema updates
+    - daemon/container: Expose CPU usage
+    - daemon/container: Initial implementation of recursive file push/pull
+    - daemon/image: Allow overriding compression algorithm
+    - daemon/init: Ask for images.auto\_update\_interval
+    - daemon/storage: Add new storage.zfs\_use\_refquota option
+    - client/exec: Use os.LookupEnv from go 1.5 to find environment vars
+    - client/help: Change lxc help to go to stdout
+    - daemon: Consistently handle name conflicts
+    - daemon/container: Allow unsetting any config key
+    - daemon/container: Fix USB transposed major/minor
+    - daemon/container: Handle xattrs on publish
+    - daemon/container: Retry generating petnames on conflict
+    - daemon/container: Error on "restart" without force of a paused container
+    - daemon/container: Rework container operation locking
+    - daemon/container: Try to remove the usb bus dir after device disconnect
+    - daemon/container: Various USB hotplug fixes
+    - daemon/dir: Copy everything on container copy
+    - daemon: Do our own socket activation
+    - daemon/image: Fix support for lzma alone file format
+    - daemon/init: Change default host to all (::)
+    - daemon/init: Default to "dir" when "zfs" isn't available (LP: #1619958)
+    - daemon/init: Fix listed default value for ZFS pool (LP: #1619959)
+    - daemon/init: Use more intelligent logic for partition sizing
+    - daemon/profile: Cleaner error on existing profile name
+    - daemon/profile: Properly cleanup on profile removal
+    - doc: Add txqueuelen tweak
+    - doc: Clarify that user\_subvol\_rm\_allowed is needed for btrfs nesting
+    - doc: Fix typos in production-setup.md
+    - doc: Rename api\_extensions to api-extensions
+    - i18n: Update po files and Japanese translation
+    - lxd-bridge: Fix crash in lxd-bridge-proxy
+    - tests: Fix race in alias test
+    - tests: Make TestReaderToChannel transfer smaller
+    - tests: Only check leftovers on active LXD
+
+  * Update debian/copyright
+    - Drop godbus
+    - Drop go-systemd
+    - Drop yaml.v1
+
+  * Update debian/control
+    - Drop dependency on go-systemd
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Tue, 13 Sep 2016 22:38:18 -0400
+
 lxd (2.1-0ubuntu4) yakkety; urgency=medium
 
   * Fix powerpc build by using golang-any-shared-dev instead of
