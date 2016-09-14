@@ -1,4 +1,4 @@
-From 91dbdfca42a242070a9c6d50d5102fc4add36e5c Mon Sep 17 00:00:00 2001
+From dc96c751ef2bb97fee404f7e394b1e90582b4f63 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
 Date: Mon, 4 Apr 2016 21:18:28 -0400
 Subject: init: Allow running dpkg-reconfigure
@@ -12,18 +12,18 @@ Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
  1 file changed, 21 insertions(+)
 
 diff --git a/lxd/main.go b/lxd/main.go
-index 12b5b06..c80475d 100644
+index 2283e66..4a6613b 100644
 --- a/lxd/main.go
 +++ b/lxd/main.go
-@@ -600,6 +600,7 @@ func cmdInit() error {
- 	var networkAddress string // Address
+@@ -601,6 +601,7 @@ func cmdInit() error {
  	var networkPort int64     // Port
  	var trustPassword string  // Trust password
+ 	var imagesAutoUpdate bool // controls whether we set images.auto_update_interval to 0
 +	var runReconfigure bool   // Whether to call dpkg-reconfigure
  
  	// Detect userns
  	defaultPrivileged = -1
-@@ -736,6 +737,11 @@ func cmdInit() error {
+@@ -738,6 +739,11 @@ func cmdInit() error {
  	}
  
  	if len(containers) > 0 || len(images) > 0 {
@@ -35,9 +35,9 @@ index 12b5b06..c80475d 100644
  		return fmt.Errorf("You have existing containers or images. lxd init requires an empty LXD.")
  	}
  
-@@ -865,6 +871,10 @@ they otherwise would.
- 			networkPort = askInt("Port to bind LXD to [default=8443]: ", 1, 65535, "8443")
- 			trustPassword = askPassword("Trust password for new clients: ")
+@@ -896,6 +902,10 @@ they otherwise would.
+ 		if !askBool("Would you like stale cached images to be updated automatically? (yes/no) [default=yes]? ", "yes") {
+ 			imagesAutoUpdate = false
  		}
 +
 +		if askBool("Do you want to configure the LXD bridge (yes/no) [default=yes]? ", "yes") {
@@ -46,7 +46,7 @@ index 12b5b06..c80475d 100644
  	}
  
  	if !shared.StringInSlice(storageBackend, []string{"dir", "zfs"}) {
-@@ -952,6 +962,17 @@ they otherwise would.
+@@ -1001,6 +1011,17 @@ they otherwise would.
  		}
  	}
  

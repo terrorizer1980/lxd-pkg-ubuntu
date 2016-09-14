@@ -56,12 +56,12 @@ type usbDevice struct {
 }
 
 func createUSBDevice(action string, vendor string, product string, major string, minor string, busnum string, devnum string) (usbDevice, error) {
-	majorInt, err := strconv.Atoi(minor)
+	majorInt, err := strconv.Atoi(major)
 	if err != nil {
 		return usbDevice{}, err
 	}
 
-	minorInt, err := strconv.Atoi(major)
+	minorInt, err := strconv.Atoi(minor)
 	if err != nil {
 		return usbDevice{}, err
 	}
@@ -491,18 +491,14 @@ func deviceUSBEvent(d *Daemon, usb usbDevice) {
 				continue
 			}
 
-			m["major"] = fmt.Sprintf("%d", usb.major)
-			m["minor"] = fmt.Sprintf("%d", usb.minor)
-			m["path"] = usb.path
-
 			if usb.action == "add" {
-				err := c.insertUnixDevice("unused", m)
+				err := c.insertUSBDevice(m, usb)
 				if err != nil {
 					shared.Log.Error("failed to create usb device", log.Ctx{"err": err, "usb": usb, "container": c.Name()})
 					return
 				}
 			} else if usb.action == "remove" {
-				err := c.removeUnixDevice(m)
+				err := c.removeUSBDevice(m, usb)
 				if err != nil {
 					shared.Log.Error("failed to remove usb device", log.Ctx{"err": err, "usb": usb, "container": c.Name()})
 					return
