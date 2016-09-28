@@ -8,11 +8,7 @@ kill timeout 60
 
 respawn
 
-pre-start script
-    @LIBEXECDIR@/lxc/lxc-apparmor-load
-
-    /usr/lib/lxd/lxd-bridge.start
-end script
+pre-start @LIBEXECDIR@/lxc/lxc-apparmor-load
 
 script
     [ -e /etc/environment ] && . /etc/environment
@@ -26,12 +22,9 @@ post-start script
         sleep 1
     done
 
-    /usr/lib/lxd/profile-config
     /usr/bin/lxd waitready
 end script
 
 pre-stop script
     [ -n "${UPSTART_STOP_EVENTS:-}" ] && exec /usr/bin/lxd shutdown
 end script
-
-post-stop exec /usr/lib/lxd/lxd-bridge stop

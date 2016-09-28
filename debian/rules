@@ -95,9 +95,6 @@ override_dh_install:
 	cp -RL ${GOPATH}/src/github.com/lxc/lxd $(PKGDIR)/usr/share/gocode/src/github.com/lxc/
 	rm -Rf $(PKGDIR)/usr/share/gocode/src/github.com/lxc/lxd/dist
 
-	# Apparmor
-	dh_apparmor -p lxd --profile-name=usr.lib.lxd.lxd-bridge-proxy
-
 	# copy dnsmasq configuration
 	mkdir -p $(PKGDIR)/etc/dnsmasq.d-available
 	cp debian/lxd.dnsmasq $(PKGDIR)/etc/dnsmasq.d-available/lxd
@@ -107,10 +104,8 @@ override_dh_install:
 
 override_dh_installinit:
 	# We handle starting and restarting things ourselves
-	dh_systemd_enable -plxd --name=lxd-bridge lxd-bridge.service
 	dh_systemd_enable -plxd --name=lxd-containers lxd-containers.service
 	dh_installinit -plxd --no-start
-	dh_installinit -plxd --name=lxd-bridge --no-start --noscripts
 	dh_installinit -plxd --name=lxd-containers --no-start --noscripts
 	dh_systemd_start -plxd lxd-containers.service --no-restart-on-upgrade
 

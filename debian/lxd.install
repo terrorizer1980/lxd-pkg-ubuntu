@@ -1,13 +1,6 @@
 usr/bin/lxd
 usr/share/man/man1/lxd.1
 
-lxd-bridge/lxd-bridge usr/lib/lxd/
-usr/bin/lxd-bridge-proxy usr/lib/lxd/
-
-debian/wrappers/lxd-bridge.start usr/lib/lxd/
-debian/wrappers/profile-config usr/lib/lxd/
 debian/wrappers/shutdown usr/lib/lxd/
-
-debian/apparmor/usr.lib.lxd.lxd-bridge-proxy etc/apparmor.d/
 
 etc/dnsmasq.d-available/lxd

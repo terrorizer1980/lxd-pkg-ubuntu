@@ -7,7 +7,7 @@ set -e
 if [ "$1" = "remove" ]; then
     # Manual init script handling
     if [ -d /run/systemd/system ]; then
-        deb-systemd-invoke stop lxd-containers.service lxd.service lxd.socket lxd-bridge.service >/dev/null || true
+        deb-systemd-invoke stop lxd-containers.service lxd.service lxd.socket >/dev/null || true
     elif [ -x "/etc/init.d/lxd" ] || [ -e "/etc/init/lxd.conf" ]; then
         invoke-rc.d lxd stop || true
     fi
@@ -25,8 +25,7 @@ fi
 # Purge
 if [ "$1" = "purge" ]; then
     # clean all the things
-    rm --one-file-system -Rf /var/lib/lxd /var/log/lxd /var/lib/lxd-bridge /run/lxd-bridge
-    rm -f /etc/default/lxd-bridge
+    rm --one-file-system -Rf /var/lib/lxd /var/log/lxd
     rm -f /etc/dnsmasq.d-available/lxd
 fi
 
