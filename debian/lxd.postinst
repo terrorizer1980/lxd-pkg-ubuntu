@@ -34,4 +34,18 @@ if [ -z "${2}" ]; then
     echo ""
 fi
 
+# Upgrade LXD bridge
+if [ -e "/etc/default/lxd-bridge" ] && [ ! -e "/etc/default/lxd-bridge.upgrade" ]; then
+    echo ""
+    echo "Old bridge configuration detected in /etc/default/lxd-bridge, upgrading"
+    /usr/lib/lxd/upgrade-bridge
+    echo ""
+
+    # Stop LXD again if it should be
+    if [ -d /run/systemd/system ]; then
+        deb-systemd-invoke stop lxd.service >/dev/null 2>&1 || true
+        deb-systemd-invoke restart lxd-containers.service >/dev/null 2>&1 || true
+    fi
+fi
+
 exit 0
