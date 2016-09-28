@@ -49,7 +49,6 @@ Description: Container hypervisor based on LXC - client
 
 Package: lxd
 Architecture: any
-Pre-Depends: debconf
 Depends: acl,
          adduser,
          dnsmasq-base,

@@ -1,2 +1,0 @@
-# The "random" warning should only be shown in interactive mode
-possible-debconf-note-abuse * lxd/bridge-random-warning
