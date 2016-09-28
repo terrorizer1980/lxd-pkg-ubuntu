@@ -41,6 +41,12 @@ if [ -e "/etc/default/lxd-bridge" ] && [ ! -e "/etc/default/lxd-bridge.upgrade" 
     /usr/lib/lxd/upgrade-bridge
     echo ""
 
+    # Cleanup apparmor config for good measure (lxd-bridge is gone)
+    rm -f /etc/apparmor.d/usr.lib.lxd.lxd-bridge-proxy
+    rm -f /etc/apparmor.d/disable/usr.lib.lxd.lxd-bridge-proxy
+    rm -f /etc/apparmor.d/force-complain/usr.lib.lxd.lxd-bridge-proxy
+    rm -f /etc/apparmor.d/local/usr.lib.lxd.lxd-bridge-proxy
+
     # Stop LXD again if it should be
     if [ -d /run/systemd/system ]; then
         deb-systemd-invoke stop lxd.service >/dev/null 2>&1 || true
