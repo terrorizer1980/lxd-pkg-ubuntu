@@ -7,14 +7,6 @@ Files: *
 Copyright: 2014-2015 LXD contributors
 License: Apache-2
 
-Files: dist/src/github.com/PuerkitoBio/goquery/*
-Copyright: 2012-2016, Martin Angers & Contributors
-License: BSD-3-clause
-
-Files: dist/src/github.com/andybalholm/cascadia/*
-Copyright: 2011 Andy Balholm
-License: BSD-2-clause
-
 Files: dist/src/github.com/dustinkirkland/golang-petname/*
 Copyright: 2014 Dustin Kirkland <dustin.kirkland@gmail.com>
 License: Apache-2
@@ -38,10 +30,6 @@ License: BSD-2-clause
 Files: dist/src/github.com/gosexy/gettext/*
 Copyright: 2012-2013 José Carlos Nieto, http://xiam.menteslibres.org/
 License: Expat
-
-Files: dist/src/github.com/jessevdk/go-flags/*
-Copyright: 2012 Jesse van den Kieboom
-License: BSD-3-clause
 
 Files: dist/src/github.com/mattn/go-colorable/*
 Copyright: 2014 Yasuhiro Matsumoto
@@ -74,18 +62,6 @@ License: BSD-2-clause
 Files: dist/src/golang.org/x/crypto/*
 Copyright: 2009 The Go Authors.
 License: BSD-3-clause
-
-Files: dist/src/golang.org/x/net/*
-Copyright: 2009 The Go Authors.
-License: BSD-3-clause
-
-Files: dist/src/golang.org/x/text/*
-Copyright: 2009 The Go Authors.
-License: BSD-3-clause
-
-Files: dist/src/gopkg.in/check.v1/*
-Copyright: 2010-2013 Gustavo Niemeyer <gustavo@niemeyer.net>
-License: BSD-2-clause
 
 Files: dist/src/gopkg.in/flosch/pongo2.v3/*
 Copyright: 2013-2014 Florian Schlachter
