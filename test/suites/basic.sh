@@ -317,8 +317,8 @@ test_basic_usage() {
   MAJOR=0
   MINOR=0
   if [ -f /sys/kernel/security/apparmor/features/domain/version ]; then
-    MAJOR=$(awk '{print $1}' < /sys/kernel/security/apparmor/features/domain/version)
-    MINOR=$(awk '{print $2}' < /sys/kernel/security/apparmor/features/domain/version)
+    MAJOR=$(awk -F. '{print $1}' < /sys/kernel/security/apparmor/features/domain/version)
+    MINOR=$(awk -F. '{print $2}' < /sys/kernel/security/apparmor/features/domain/version)
   fi
 
   if [ "${MAJOR}" -gt "1" ] || ([ "${MAJOR}" = "1" ] && [ "${MINOR}" -ge "2" ]); then

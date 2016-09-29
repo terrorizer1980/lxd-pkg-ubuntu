@@ -1,4 +1,4 @@
-From 3df2adce5abc85884ae5ae44504b9ea8fe5f4e44 Mon Sep 17 00:00:00 2001
+From 2e73211a560eac132ef201ef6c74a9741663445c Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
 Date: Thu, 29 Sep 2016 00:37:14 -0400
 Subject: test: Fix apparmor version check
@@ -12,7 +12,7 @@ Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
  1 file changed, 8 insertions(+)
 
 diff --git a/test/suites/basic.sh b/test/suites/basic.sh
-index 5bcfdc9..52824eb 100644
+index 5bcfdc9..2cbf0ee 100644
 --- a/test/suites/basic.sh
 +++ b/test/suites/basic.sh
 @@ -313,7 +313,15 @@ test_basic_usage() {
@@ -23,8 +23,8 @@ index 5bcfdc9..52824eb 100644
 +  MAJOR=0
 +  MINOR=0
    if [ -f /sys/kernel/security/apparmor/features/domain/version ]; then
-+    MAJOR=$(awk '{print $1}' < /sys/kernel/security/apparmor/features/domain/version)
-+    MINOR=$(awk '{print $2}' < /sys/kernel/security/apparmor/features/domain/version)
++    MAJOR=$(awk -F. '{print $1}' < /sys/kernel/security/apparmor/features/domain/version)
++    MINOR=$(awk -F. '{print $2}' < /sys/kernel/security/apparmor/features/domain/version)
 +  fi
 +
 +  if [ "${MAJOR}" -gt "1" ] || ([ "${MAJOR}" = "1" ] && [ "${MINOR}" -ge "2" ]); then
