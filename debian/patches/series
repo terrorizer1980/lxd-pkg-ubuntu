@@ -1,3 +1,5 @@
 0001-init-Typo-fix.patch
 0002-init-Actually-add-new-network-to-profile.patch
 0003-test-Fix-shellcheck-warning.patch
+0004-test-Force-UTC-timezone.patch
+0005-test-Fix-apparmor-version-check.patch
