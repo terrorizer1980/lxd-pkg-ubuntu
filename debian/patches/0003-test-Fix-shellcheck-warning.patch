@@ -1,0 +1,26 @@
+From b0ac438280f853753e941e736ade62da8bf4aa15 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Wed, 28 Sep 2016 23:55:18 -0400
+Subject: test: Fix shellcheck warning
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ test/main.sh | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/test/main.sh b/test/main.sh
+index 515eeae..5076448 100755
+--- a/test/main.sh
++++ b/test/main.sh
+@@ -316,7 +316,7 @@ cleanup() {
+ 
+   # Cleanup leftover networks
+   # shellcheck disable=SC2009
+-  ps aux | grep "interface=lxdt$$ " | grep -v grep | awk '{print $2}' | while read line; do
++  ps aux | grep "interface=lxdt$$ " | grep -v grep | awk '{print $2}' | while read -r line; do
+     kill -9 "${line}"
+   done
+   if [ -e "/sys/class/net/lxdt$$" ]; then
