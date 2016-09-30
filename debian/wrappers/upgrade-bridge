@@ -16,13 +16,16 @@ fi
 # Source current configuration
 . /etc/default/lxd-bridge
 
+# Setup temporary config dir
+export LXD_CONF=$(mktemp -d)
+
 # Check if LXD is functional (chroot detection)
 if ! lxc finger --force-local >/dev/null 2>&1; then
     echo "This system isn't running LXD, assuming stock configuration."
     mv /etc/default/lxd-bridge /etc/default/lxd-bridge.upgraded
 
     echo "Cleaning up lxd-bridge state files"
-    rm -Rf /var/lib/lxd-bridge /run/lxd-bridge
+    rm -Rf /var/lib/lxd-bridge /run/lxd-bridge ${LXD_CONF}
     exit 0
 fi
 
@@ -37,7 +40,7 @@ if [ "${USE_LXD_BRIDGE}" != "true" ] || [ -z "${LXD_BRIDGE}" ]; then
     mv /etc/default/lxd-bridge /etc/default/lxd-bridge.upgraded
 
     echo "Cleaning up lxd-bridge state files"
-    rm -Rf /var/lib/lxd-bridge /run/lxd-bridge
+    rm -Rf /var/lib/lxd-bridge /run/lxd-bridge ${LXD_CONF}
     exit 0
 fi
 
@@ -68,7 +71,7 @@ if [ "${EXISTING}" = "false" ] && [ "$(md5sum /etc/default/lxd-bridge | cut -d' 
     mv /etc/default/lxd-bridge /etc/default/lxd-bridge.upgraded
 
     echo "Cleaning up lxd-bridge state files"
-    rm -Rf /var/lib/lxd-bridge /run/lxd-bridge
+    rm -Rf /var/lib/lxd-bridge /run/lxd-bridge ${LXD_CONF}
     exit 0
 fi
 
@@ -138,4 +141,4 @@ echo "Done converting your bridge, renaming old configuration"
 mv /etc/default/lxd-bridge /etc/default/lxd-bridge.upgraded
 
 echo "Cleaning up lxd-bridge state files"
-rm -Rf /var/lib/lxd-bridge /run/lxd-bridge
+rm -Rf /var/lib/lxd-bridge /run/lxd-bridge ${LXD_CONF}
