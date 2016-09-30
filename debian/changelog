@@ -1,3 +1,11 @@
+lxd (2.3-0ubuntu3) yakkety; urgency=medium
+
+  * Add a versioned dependency on lxd-client to lxd as we need it for
+    the bridge configuration upgrade script.
+  * Update bridge upgrade script to not mess with the user's LXD client.
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Thu, 29 Sep 2016 20:29:17 -0400
+
 lxd (2.3-0ubuntu2) yakkety; urgency=medium
 
   * Fix upgrade-bridge script to properly deal with systems that have
