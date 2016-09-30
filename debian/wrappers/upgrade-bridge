@@ -50,7 +50,7 @@ if [ -e "/run/systemd/system" ] && systemctl -q is-active lxd-bridge; then
     systemctl stop lxd-bridge || true
 fi
 
-if [ -e "/run/lxd-bridge/network_up" ]; then
+if [ -e "/run/lxd-bridge/network_up" ] && [ -e "/usr/lib/lxd/lxd-bridge" ]; then
     /usr/lib/lxd/lxd-bridge stop || true
 fi
 
