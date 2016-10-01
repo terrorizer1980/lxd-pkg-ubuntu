@@ -126,7 +126,7 @@ if [ -n "${LXD_IPV4_ADDR}" ] && [ -n "${LXD_IPV4_NETMASK}" ]; then
     fi
 fi
 
-if [ -n "${LXD_IPV6_ADDR}" ] && [ -n "${LXD_IPV6_MASK}" ]; then
+if [ -e /proc/sys/net/ipv6 ] && [ -n "${LXD_IPV6_ADDR}" ] && [ -n "${LXD_IPV6_MASK}" ]; then
     IPV6_CIDR="${LXD_IPV6_ADDR}/${LXD_IPV6_MASK}"
     echo "Setting IPv6 network to ${IPV6_CIDR}"
     lxc network set "${LXD_BRIDGE}" ipv6.address "${IPV6_CIDR}" --force-local
