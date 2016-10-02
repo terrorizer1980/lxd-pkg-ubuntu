@@ -8,7 +8,7 @@ kill timeout 60
 
 respawn
 
-pre-start @LIBEXECDIR@/lxc/lxc-apparmor-load
+pre-start exec @LIBEXECDIR@/lxc/lxc-apparmor-load
 
 script
     [ -e /etc/environment ] && . /etc/environment
