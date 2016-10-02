@@ -1,3 +1,9 @@
+lxd (2.3-0ubuntu5) yakkety; urgency=medium
+
+  * Make it possible to run the bridge migration script again on failure.
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Sun, 02 Oct 2016 14:36:08 -0400
+
 lxd (2.3-0ubuntu4) yakkety; urgency=medium
 
   * Cherry-pick upstream fixes:
