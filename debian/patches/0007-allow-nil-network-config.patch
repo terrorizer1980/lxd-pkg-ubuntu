@@ -1,0 +1,25 @@
+From 6baa1b6cbff1a5edf8de41e4d23daf7e430b3c2f Mon Sep 17 00:00:00 2001
+From: Tycho Andersen <tycho.andersen@canonical.com>
+Date: Thu, 29 Sep 2016 22:13:22 +0000
+Subject: allow nil network config
+
+Signed-off-by: Tycho Andersen <tycho.andersen@canonical.com>
+---
+ lxd/networks.go | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/lxd/networks.go b/lxd/networks.go
+index c27b12d..a85a0dd 100644
+--- a/lxd/networks.go
++++ b/lxd/networks.go
+@@ -84,6 +84,10 @@ func networksPost(d *Daemon, r *http.Request) Response {
+ 		return BadRequest(fmt.Errorf("The network already exists"))
+ 	}
+ 
++	if req.Config == nil {
++		req.Config = map[string]string{}
++	}
++
+ 	err = networkValidateConfig(req.Name, req.Config)
+ 	if err != nil {
+ 		return BadRequest(err)

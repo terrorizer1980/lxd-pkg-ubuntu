@@ -84,6 +84,10 @@ func networksPost(d *Daemon, r *http.Request) Response {
 		return BadRequest(fmt.Errorf("The network already exists"))
 	}
 
+	if req.Config == nil {
+		req.Config = map[string]string{}
+	}
+
 	err = networkValidateConfig(req.Name, req.Config)
 	if err != nil {
 		return BadRequest(err)
@@ -768,6 +772,12 @@ func (n *network) Start() error {
 
 	// Configure IPv6
 	if !shared.StringInSlice(n.config["ipv6.address"], []string{"", "none"}) {
+		// Enable IPv6 for the subnet
+		err := networkSysctl(fmt.Sprintf("ipv6/conf/%s/disable_ipv6", n.name), "0")
+		if err != nil {
+			return err
+		}
+
 		// Parse the subnet
 		ip, subnet, err := net.ParseCIDR(n.config["ipv6.address"])
 		if err != nil {
@@ -829,18 +839,23 @@ func (n *network) Start() error {
 				return err
 			}
 
+			// First set accept_ra to 2 for everything
 			for _, entry := range entries {
-				if entry.Name() == "all" || entry.Name() == "default" {
+				content, err := ioutil.ReadFile(fmt.Sprintf("/proc/sys/net/ipv6/conf/%s/accept_ra", entry.Name()))
+				if err == nil && string(content) != "1\n" {
 					continue
 				}
 
-				err := networkSysctl(fmt.Sprintf("ipv6/conf/%s/accept_ra", entry.Name()), "2")
-				if err != nil {
+				err = networkSysctl(fmt.Sprintf("ipv6/conf/%s/accept_ra", entry.Name()), "2")
+				if err != nil && !os.IsNotExist(err) {
 					return err
 				}
+			}
 
+			// Then set forwarding for all of them
+			for _, entry := range entries {
 				err = networkSysctl(fmt.Sprintf("ipv6/conf/%s/forwarding", entry.Name()), "1")
-				if err != nil {
+				if err != nil && !os.IsNotExist(err) {
 					return err
 				}
 			}

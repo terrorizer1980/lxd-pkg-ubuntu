@@ -1,0 +1,36 @@
+From 700ceb7f6be09a69d5a3d8064c2b18c0b809615c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Fri, 30 Sep 2016 12:58:00 -0400
+Subject: network: Fix rare race condition with sysctl
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+On very busy systems (like our Jenkins), a network interface may
+disappear between the time we list the interfaces and the time we
+attempt to set the sysctl, so just ignore ENOENT.
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ lxd/networks.go | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/lxd/networks.go b/lxd/networks.go
+index a85a0dd..66e7551 100644
+--- a/lxd/networks.go
++++ b/lxd/networks.go
+@@ -839,12 +839,12 @@ func (n *network) Start() error {
+ 				}
+ 
+ 				err := networkSysctl(fmt.Sprintf("ipv6/conf/%s/accept_ra", entry.Name()), "2")
+-				if err != nil {
++				if err != nil && err != os.ErrNotExist {
+ 					return err
+ 				}
+ 
+ 				err = networkSysctl(fmt.Sprintf("ipv6/conf/%s/forwarding", entry.Name()), "1")
+-				if err != nil {
++				if err != nil && err != os.ErrNotExist {
+ 					return err
+ 				}
+ 			}

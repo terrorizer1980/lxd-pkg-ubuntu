@@ -1,0 +1,30 @@
+From 8bef24a5c4b50d63f484ad7d2e4cae002b56d2cf Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Sat, 1 Oct 2016 19:49:52 -0400
+Subject: network: Better deal with partially disabled IPv6
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ lxd/networks.go | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/lxd/networks.go b/lxd/networks.go
+index 9988c3e..060951f 100644
+--- a/lxd/networks.go
++++ b/lxd/networks.go
+@@ -772,6 +772,12 @@ func (n *network) Start() error {
+ 
+ 	// Configure IPv6
+ 	if !shared.StringInSlice(n.config["ipv6.address"], []string{"", "none"}) {
++		// Enable IPv6 for the subnet
++		err := networkSysctl(fmt.Sprintf("ipv6/conf/%s/disable_ipv6", n.name), "0")
++		if err != nil {
++			return err
++		}
++
+ 		// Parse the subnet
+ 		ip, subnet, err := net.ParseCIDR(n.config["ipv6.address"])
+ 		if err != nil {

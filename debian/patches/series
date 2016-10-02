@@ -3,3 +3,10 @@
 0003-test-Fix-shellcheck-warning.patch
 0004-test-Force-UTC-timezone.patch
 0005-test-Fix-apparmor-version-check.patch
+0006-Fix-typo-discovered-by-lintian.patch
+0007-allow-nil-network-config.patch
+0008-network-Fix-rare-race-condition-with-sysctl.patch
+0009-network-Fix-IPv6-forwarding-logic.patch
+0010-test-Make-container-cleanup-more-reliable.patch
+0011-network-Properly-catch-ENOENT.patch
+0012-network-Better-deal-with-partially-disabled-IPv6.patch
