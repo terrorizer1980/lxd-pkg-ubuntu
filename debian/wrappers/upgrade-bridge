@@ -88,7 +88,9 @@ fi
 
 # Define the bridge in LXD
 echo "Creating a new LXD bridge"
-lxc network create "${LXD_BRIDGE}" ipv4.address=none ipv6.address=none dns.mode=dynamic --force-local
+if ! lxc network show "${LXD_BRIDGE}" >/dev/null 2>&1; then
+    lxc network create "${LXD_BRIDGE}" ipv4.address=none ipv6.address=none dns.mode=dynamic --force-local
+fit
 
 # Move the old bridge into place
 if [ "${EXISTING}" = "true" ]; then
