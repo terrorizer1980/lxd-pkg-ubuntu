@@ -1,3 +1,20 @@
+lxd (2.3-0ubuntu4) yakkety; urgency=medium
+
+  * Cherry-pick upstream fixes:
+    - Fix typo discovered by lintian
+    - network: Allow nil network config
+    - network: Fix rare race-condition with sysctl
+    - network: Fix IPv6 forwarding logic
+    - test: Make container cleanup more reliable
+    - network: Properly catch ENOENT
+    - network: Better deal with partially disabled IPv6 (LP: #1629540)
+  * Fix invalid upstart job
+  * Bugfix for migration script
+    - Don't print error on missing lxd-bridge script
+    - Don't attempt to setup IPv6 if the host kernel has it disabled
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Sat, 01 Oct 2016 20:41:41 -0400
+
 lxd (2.3-0ubuntu3) yakkety; urgency=medium
 
   * Add a versioned dependency on lxd-client to lxd as we need it for
