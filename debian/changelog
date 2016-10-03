@@ -1,3 +1,9 @@
+lxd (2.3-0ubuntu7) yakkety; urgency=medium
+
+  * Ignore rm failures in postrm (caused by mounted ZFS/LVM) (LP: #1629992)
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Mon, 03 Oct 2016 16:09:00 -0400
+
 lxd (2.3-0ubuntu6) yakkety; urgency=medium
 
   * Fix typo in migration script and make shellcheck happier. (LP: #1629766)
