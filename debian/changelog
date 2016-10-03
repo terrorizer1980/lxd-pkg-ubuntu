@@ -1,3 +1,9 @@
+lxd (2.3-0ubuntu6) yakkety; urgency=medium
+
+  * Fix typo in migration script and make shellcheck happier. (LP: #1629766)
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Mon, 03 Oct 2016 01:04:42 -0400
+
 lxd (2.3-0ubuntu5) yakkety; urgency=medium
 
   * Make it possible to run the bridge migration script again on failure.
