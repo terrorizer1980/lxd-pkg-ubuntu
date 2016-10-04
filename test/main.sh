@@ -4,6 +4,9 @@
 # Don't translate lxc output for parsing in it in tests.
 export "LC_ALL=C"
 
+# Force UTC for consistency
+export "TZ=UTC"
+
 if [ -n "${LXD_DEBUG:-}" ]; then
   set -x
   DEBUG="--debug"
@@ -211,7 +214,7 @@ kill_lxd() {
   if [ -e "${daemon_dir}/unix.socket" ]; then
     # Delete all containers
     echo "==> Deleting all containers"
-    for container in $(lxc list --force-local | tail -n+3 | grep "^| " | cut -d' ' -f2); do
+    for container in $(lxc list --fast --force-local | tail -n+3 | grep "^| " | cut -d' ' -f2); do
       lxc delete "${container}" --force-local -f || true
     done
 
@@ -223,7 +226,7 @@ kill_lxd() {
 
     # Delete all profiles
     echo "==> Deleting all profiles"
-    for profile in $(lxc profile list --force-local); do
+    for profile in $(lxc profile list --force-local | tail -n+3 | grep "^| " | cut -d' ' -f2); do
       lxc profile delete "${profile}" --force-local || true
     done
 
@@ -316,7 +319,7 @@ cleanup() {
 
   # Cleanup leftover networks
   # shellcheck disable=SC2009
-  ps aux | grep "interface=lxdt$$ " | grep -v grep | awk '{print $2}' | while read line; do
+  ps aux | grep "interface=lxdt$$ " | grep -v grep | awk '{print $2}' | while read -r line; do
     kill -9 "${line}"
   done
   if [ -e "/sys/class/net/lxdt$$" ]; then

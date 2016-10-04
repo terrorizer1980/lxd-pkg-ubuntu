@@ -601,7 +601,9 @@ func cmdInit() error {
 	var imagesAutoUpdate bool // controls whether we set images.auto_update_interval to 0
 	var bridgeName string     // Bridge name
 	var bridgeIPv4 string     // IPv4 address
+	var bridgeIPv4Nat bool    // IPv4 address
 	var bridgeIPv6 string     // IPv6 address
+	var bridgeIPv6Nat bool    // IPv6 address
 
 	// Detect userns
 	defaultPrivileged = -1
@@ -894,7 +896,7 @@ they otherwise would.
 			trustPassword = askPassword("Trust password for new clients: ")
 		}
 
-		if !askBool("Would you like stale cached images to be updated automatically? (yes/no) [default=yes]? ", "yes") {
+		if !askBool("Would you like stale cached images to be updated automatically (yes/no) [default=yes]? ", "yes") {
 			imagesAutoUpdate = false
 		}
 
@@ -907,12 +909,20 @@ they otherwise would.
 				return networkValidAddressCIDRV4(value)
 			})
 
-			bridgeIPv6 = askString("What IPv4 subnet should be used (CIDR notation, “auto” or “none”) [default=auto]? ", "auto", func(value string) error {
+			if !shared.StringInSlice(bridgeIPv4, []string{"auto", "none"}) {
+				bridgeIPv4Nat = askBool("Would you like LXD to NAT IPv4 traffic on your bridge? [default=yes]? ", "yes")
+			}
+
+			bridgeIPv6 = askString("What IPv6 subnet should be used (CIDR notation, “auto” or “none”) [default=auto]? ", "auto", func(value string) error {
 				if shared.StringInSlice(value, []string{"auto", "none"}) {
 					return nil
 				}
 				return networkValidAddressCIDRV6(value)
 			})
+
+			if !shared.StringInSlice(bridgeIPv6, []string{"auto", "none"}) {
+				bridgeIPv6Nat = askBool("Would you like LXD to NAT IPv6 traffic on your bridge? [default=yes]? ", "yes")
+			}
 		}
 	}
 
@@ -1024,7 +1034,21 @@ they otherwise would.
 		bridgeConfig["ipv4.address"] = bridgeIPv4
 		bridgeConfig["ipv6.address"] = bridgeIPv6
 
+		if bridgeIPv4Nat {
+			bridgeConfig["ipv4.nat"] = "true"
+		}
+
+		if bridgeIPv6Nat {
+			bridgeConfig["ipv6.nat"] = "true"
+		}
+
 		err = c.NetworkCreate(bridgeName, bridgeConfig)
+		if err != nil {
+			return err
+		}
+
+		props := []string{"nictype=bridged", fmt.Sprintf("parent=%s", bridgeName)}
+		_, err = c.ProfileDeviceAdd("default", "eth0", "nic", props)
 		if err != nil {
 			return err
 		}
