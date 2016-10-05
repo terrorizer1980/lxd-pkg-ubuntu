@@ -1,3 +1,13 @@
+lxd (2.4.1-0ubuntu1) yakkety; urgency=medium
+
+  * New upstream bugfix release (2.4):
+    - Fix reported version string (was saying 2.3)
+    - shared: Remove logging import
+    - tests: add a test to make sure we don't accidentally include new deps
+    - extras: Added the command shell to lxc-client bash-completion
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 05 Oct 2016 17:27:56 +0200
+
 lxd (2.4-0ubuntu1) yakkety; urgency=medium
 
   * New upstream release (2.4) (LP: #1618159):
