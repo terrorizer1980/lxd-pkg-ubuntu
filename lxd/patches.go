@@ -27,6 +27,7 @@ import (
 
 var patches = []patch{
 	patch{name: "invalid_profile_names", run: patchInvalidProfileNames},
+	patch{name: "leftover_profile_config", run: patchLeftoverProfileConfig},
 }
 
 type patch struct {
@@ -35,7 +36,7 @@ type patch struct {
 }
 
 func (p *patch) apply(d *Daemon) error {
-	shared.Debugf("Applying patch: %s", p.name)
+	shared.LogDebugf("Applying patch: %s", p.name)
 
 	err := p.run(p.name, d)
 	if err != nil {
@@ -71,6 +72,21 @@ func patchesApplyAll(d *Daemon) error {
 }
 
 // Patches begin here
+func patchLeftoverProfileConfig(name string, d *Daemon) error {
+	stmt := `
+DELETE FROM profiles_config WHERE profile_id NOT IN (SELECT id FROM profiles);
+DELETE FROM profiles_devices WHERE profile_id NOT IN (SELECT id FROM profiles);
+DELETE FROM profiles_devices_config WHERE profile_device_id NOT IN (SELECT id FROM profiles_devices);
+`
+
+	_, err := d.db.Exec(stmt)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func patchInvalidProfileNames(name string, d *Daemon) error {
 	profiles, err := dbProfiles(d.db)
 	if err != nil {
@@ -79,7 +95,7 @@ func patchInvalidProfileNames(name string, d *Daemon) error {
 
 	for _, profile := range profiles {
 		if strings.Contains(profile, "/") || shared.StringInSlice(profile, []string{".", ".."}) {
-			shared.Log.Info("Removing unreachable profile (invalid name)", log.Ctx{"name": profile})
+			shared.LogInfo("Removing unreachable profile (invalid name)", log.Ctx{"name": profile})
 			err := dbProfileDelete(d.db, profile)
 			if err != nil {
 				return err

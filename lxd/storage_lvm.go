@@ -20,7 +20,7 @@ import (
 func storageLVMCheckVolumeGroup(vgName string) error {
 	output, err := exec.Command("vgdisplay", "-s", vgName).CombinedOutput()
 	if err != nil {
-		shared.Log.Debug("vgdisplay failed to find vg", log.Ctx{"output": string(output)})
+		shared.LogDebug("vgdisplay failed to find vg", log.Ctx{"output": string(output)})
 		return fmt.Errorf("LVM volume group '%s' not found", vgName)
 	}
 
@@ -557,7 +557,7 @@ func (s *storageLvm) createSnapshotContainer(
 
 	srcName := containerNameToLVName(sourceContainer.Name())
 	destName := containerNameToLVName(snapshotContainer.Name())
-	shared.Log.Debug(
+	shared.LogDebug(
 		"Creating snapshot",
 		log.Ctx{"srcName": srcName, "destName": destName})
 
@@ -649,7 +649,7 @@ func (s *storageLvm) ContainerSnapshotStart(container container) error {
 	srcName := containerNameToLVName(container.Name())
 	destName := containerNameToLVName(container.Name() + "/rw")
 
-	shared.Log.Debug(
+	shared.LogDebug(
 		"Creating snapshot",
 		log.Ctx{"srcName": srcName, "destName": destName})
 
@@ -732,7 +732,7 @@ func (s *storageLvm) ImageCreate(fingerprint string) error {
 	fstype := daemonConfig["storage.lvm_fstype"].Get()
 	err = tryMount(lvpath, tempLVMountPoint, fstype, 0, "discard")
 	if err != nil {
-		shared.Logf("Error mounting image LV for unpacking: %v", err)
+		shared.LogInfof("Error mounting image LV for unpacking: %v", err)
 		return fmt.Errorf("Error mounting image LV: %v", err)
 	}
 
@@ -964,10 +964,14 @@ func (s *storageLvm) MigrationType() MigrationFSType {
 	return MigrationFSType_RSYNC
 }
 
+func (s *storageLvm) PreservesInodes() bool {
+	return false
+}
+
 func (s *storageLvm) MigrationSource(container container) (MigrationStorageSourceDriver, error) {
 	return rsyncMigrationSource(container)
 }
 
-func (s *storageLvm) MigrationSink(live bool, container container, snapshots []container, conn *websocket.Conn) error {
-	return rsyncMigrationSink(live, container, snapshots, conn)
+func (s *storageLvm) MigrationSink(live bool, container container, snapshots []*Snapshot, conn *websocket.Conn, srcIdmap *shared.IdmapSet) error {
+	return rsyncMigrationSink(live, container, snapshots, conn, srcIdmap)
 }

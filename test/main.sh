@@ -4,6 +4,9 @@
 # Don't translate lxc output for parsing in it in tests.
 export "LC_ALL=C"
 
+# Force UTC for consistency
+export "TZ=UTC"
+
 if [ -n "${LXD_DEBUG:-}" ]; then
   set -x
   DEBUG="--debug"
@@ -39,6 +42,7 @@ local_tcp_port() {
 
 # import all the backends
 for backend in backends/*.sh; do
+  # shellcheck disable=SC1090
   . "${backend}"
 done
 
@@ -50,6 +54,8 @@ spawn_lxd() {
   set +x
   # LXD_DIR is local here because since $(lxc) is actually a function, it
   # overwrites the environment and we would lose LXD_DIR's value otherwise.
+
+  # shellcheck disable=2039
   local LXD_DIR
 
   lxddir=${1}
@@ -176,10 +182,14 @@ check_empty_table() {
 kill_lxd() {
   # LXD_DIR is local here because since $(lxc) is actually a function, it
   # overwrites the environment and we would lose LXD_DIR's value otherwise.
+
+  # shellcheck disable=2039
   local LXD_DIR
+
   daemon_dir=${1}
   LXD_DIR=${daemon_dir}
   daemon_pid=$(cat "${daemon_dir}/lxd.pid")
+  check_leftovers="false"
   echo "==> Killing LXD at ${daemon_dir}"
 
   if [ -e "${daemon_dir}/unix.socket" ]; then
@@ -195,6 +205,12 @@ kill_lxd() {
       lxc image delete "${image}" --force-local || true
     done
 
+    # Delete all profiles
+    echo "==> Deleting all profiles"
+    for profile in $(lxc profile list --force-local); do
+      lxc profile delete "${profile}" --force-local || true
+    done
+
     echo "==> Checking for locked DB tables"
     for table in $(echo .tables | sqlite3 "${daemon_dir}/lxd.db"); do
       echo "SELECT * FROM ${table};" | sqlite3 "${daemon_dir}/lxd.db" >/dev/null
@@ -205,6 +221,8 @@ kill_lxd() {
 
     # Cleanup shmounts (needed due to the forceful kill)
     find "${daemon_dir}" -name shmounts -exec "umount" "-l" "{}" \; >/dev/null 2>&1 || true
+
+    check_leftovers="true"
   fi
 
   if [ -n "${LXD_LOGS:-}" ]; then
@@ -214,29 +232,36 @@ kill_lxd() {
     cp "${daemon_dir}/lxd.log" "${LXD_LOGS}/${daemon_pid}/"
   fi
 
-  echo "==> Checking for leftover files"
-  rm -f "${daemon_dir}/containers/lxc-monitord.log"
-  rm -f "${daemon_dir}/security/apparmor/cache/.features"
-  check_empty "${daemon_dir}/containers/"
-  check_empty "${daemon_dir}/devices/"
-  check_empty "${daemon_dir}/images/"
-  # FIXME: Once container logging rework is done, uncomment
-  # check_empty "${daemon_dir}/logs/"
-  check_empty "${daemon_dir}/security/apparmor/cache/"
-  check_empty "${daemon_dir}/security/apparmor/profiles/"
-  check_empty "${daemon_dir}/security/seccomp/"
-  check_empty "${daemon_dir}/shmounts/"
-  check_empty "${daemon_dir}/snapshots/"
+  if [ "${check_leftovers}" = "true" ]; then
+    echo "==> Checking for leftover files"
+    rm -f "${daemon_dir}/containers/lxc-monitord.log"
+    rm -f "${daemon_dir}/security/apparmor/cache/.features"
+    check_empty "${daemon_dir}/containers/"
+    check_empty "${daemon_dir}/devices/"
+    check_empty "${daemon_dir}/images/"
+    # FIXME: Once container logging rework is done, uncomment
+    # check_empty "${daemon_dir}/logs/"
+    check_empty "${daemon_dir}/security/apparmor/cache/"
+    check_empty "${daemon_dir}/security/apparmor/profiles/"
+    check_empty "${daemon_dir}/security/seccomp/"
+    check_empty "${daemon_dir}/shmounts/"
+    check_empty "${daemon_dir}/snapshots/"
 
-  echo "==> Checking for leftover DB entries"
-  check_empty_table "${daemon_dir}/lxd.db" "containers"
-  check_empty_table "${daemon_dir}/lxd.db" "containers_config"
-  check_empty_table "${daemon_dir}/lxd.db" "containers_devices"
-  check_empty_table "${daemon_dir}/lxd.db" "containers_devices_config"
-  check_empty_table "${daemon_dir}/lxd.db" "containers_profiles"
-  check_empty_table "${daemon_dir}/lxd.db" "images"
-  check_empty_table "${daemon_dir}/lxd.db" "images_aliases"
-  check_empty_table "${daemon_dir}/lxd.db" "images_properties"
+    echo "==> Checking for leftover DB entries"
+    check_empty_table "${daemon_dir}/lxd.db" "containers"
+    check_empty_table "${daemon_dir}/lxd.db" "containers_config"
+    check_empty_table "${daemon_dir}/lxd.db" "containers_devices"
+    check_empty_table "${daemon_dir}/lxd.db" "containers_devices_config"
+    check_empty_table "${daemon_dir}/lxd.db" "containers_profiles"
+    check_empty_table "${daemon_dir}/lxd.db" "images"
+    check_empty_table "${daemon_dir}/lxd.db" "images_aliases"
+    check_empty_table "${daemon_dir}/lxd.db" "images_properties"
+    check_empty_table "${daemon_dir}/lxd.db" "images_source"
+    check_empty_table "${daemon_dir}/lxd.db" "profiles"
+    check_empty_table "${daemon_dir}/lxd.db" "profiles_config"
+    check_empty_table "${daemon_dir}/lxd.db" "profiles_devices"
+    check_empty_table "${daemon_dir}/lxd.db" "profiles_devices_config"
+  fi
 
   # teardown storage
   "$LXD_BACKEND"_teardown "${daemon_dir}"
@@ -263,13 +288,13 @@ cleanup() {
     echo "Tests Completed (${TEST_RESULT}): hit enter to continue"
 
     # shellcheck disable=SC2034
-    read nothing
+    read -r nothing
   fi
 
   echo "==> Cleaning up"
 
   # Kill all the LXD instances
-  while read daemon_dir; do
+  while read -r daemon_dir; do
     kill_lxd "${daemon_dir}"
   done < "${TEST_DIR}/daemons"
 
@@ -293,12 +318,12 @@ wipe() {
   fi
 
   # shellcheck disable=SC2009
-  ps aux | grep lxc-monitord | grep "${1}" | awk '{print $2}' | while read pid; do
+  ps aux | grep lxc-monitord | grep "${1}" | awk '{print $2}' | while read -r pid; do
     kill -9 "${pid}"
   done
 
   if [ -f "${TEST_DIR}/loops" ]; then
-    while read line; do
+    while read -r line; do
       losetup -d "${line}" || true
     done < "${TEST_DIR}/loops"
   fi
@@ -317,6 +342,7 @@ trap cleanup EXIT HUP INT TERM
 
 # Import all the testsuites
 for suite in suites/*.sh; do
+  # shellcheck disable=SC1090
  . "${suite}"
 done
 

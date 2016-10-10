@@ -153,39 +153,39 @@ func (s *execWs) Do(op *operation) error {
 				}
 
 				if err != nil {
-					shared.Debugf("Got error getting next reader %s", err)
+					shared.LogDebugf("Got error getting next reader %s", err)
 					break
 				}
 
 				buf, err := ioutil.ReadAll(r)
 				if err != nil {
-					shared.Debugf("Failed to read message %s", err)
+					shared.LogDebugf("Failed to read message %s", err)
 					break
 				}
 
 				command := shared.ContainerExecControl{}
 
 				if err := json.Unmarshal(buf, &command); err != nil {
-					shared.Debugf("Failed to unmarshal control socket command: %s", err)
+					shared.LogDebugf("Failed to unmarshal control socket command: %s", err)
 					continue
 				}
 
 				if command.Command == "window-resize" {
 					winchWidth, err := strconv.Atoi(command.Args["width"])
 					if err != nil {
-						shared.Debugf("Unable to extract window width: %s", err)
+						shared.LogDebugf("Unable to extract window width: %s", err)
 						continue
 					}
 
 					winchHeight, err := strconv.Atoi(command.Args["height"])
 					if err != nil {
-						shared.Debugf("Unable to extract window height: %s", err)
+						shared.LogDebugf("Unable to extract window height: %s", err)
 						continue
 					}
 
 					err = shared.SetSize(int(ptys[0].Fd()), winchWidth, winchHeight)
 					if err != nil {
-						shared.Debugf("Failed to set window size to: %dx%d", winchWidth, winchHeight)
+						shared.LogDebugf("Failed to set window size to: %dx%d", winchWidth, winchHeight)
 						continue
 					}
 				}
@@ -282,6 +282,14 @@ func containerExecPost(d *Daemon, r *http.Request) Response {
 		}
 	}
 
+	_, ok := env["PATH"]
+	if !ok {
+		env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+		if shared.PathExists(fmt.Sprintf("%s/snap/bin", c.RootfsPath())) {
+			env["PATH"] = fmt.Sprintf("%s:/snap/bin", env["PATH"])
+		}
+	}
+
 	if post.WaitForWS {
 		ws := &execWs{}
 		ws.fds = map[int]string{}
@@ -335,7 +343,7 @@ func containerExecPost(d *Daemon, r *http.Request) Response {
 		metadata := shared.Jmap{"return": cmdResult}
 		err = op.UpdateMetadata(metadata)
 		if err != nil {
-			shared.Log.Error("error updating metadata for cmd", log.Ctx{"err": err, "cmd": post.Command})
+			shared.LogError("error updating metadata for cmd", log.Ctx{"err": err, "cmd": post.Command})
 		}
 		return cmdErr
 	}

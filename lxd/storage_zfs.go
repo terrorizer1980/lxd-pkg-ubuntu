@@ -74,6 +74,18 @@ func (s *storageZfs) Init(config map[string]interface{}) (storage, error) {
 		return s, fmt.Errorf("The 'zfs' tool isn't working properly")
 	}
 
+	output, err = exec.Command("zfs", "get", "mountpoint", "-H", "-o", "source", s.zfsPool).CombinedOutput()
+	if err != nil {
+		return s, fmt.Errorf("Unable to query ZFS mountpoint")
+	}
+
+	if strings.TrimSpace(string(output)) != "local" {
+		err = shared.RunCommand("zfs", "set", "mountpoint=none", s.zfsPool)
+		if err != nil {
+			return s, err
+		}
+	}
+
 	return s, nil
 }
 
@@ -1160,6 +1172,17 @@ func storageZFSValidatePoolName(d *Daemon, key string, value string) error {
 		}
 	}
 
+	// Confirm that the new pool is empty
+	s.zfsPool = value
+	subvols, err := s.zfsListSubvolumes("")
+	if err != nil {
+		return err
+	}
+
+	if len(subvols) > 0 {
+		return fmt.Errorf("Provided ZFS pool (or dataset) isn't empty")
+	}
+
 	// Confirm the old pool isn't in use anymore
 	oldPoolname := daemonConfig["storage.zfs_pool_name"].Get()
 	if oldPoolname != "" {
@@ -1218,12 +1241,12 @@ func (s *zfsMigrationSourceDriver) send(conn *websocket.Conn, zfsName string, zf
 
 	output, err := ioutil.ReadAll(stderr)
 	if err != nil {
-		shared.Log.Error("problem reading zfs send stderr", "err", err)
+		shared.LogError("problem reading zfs send stderr", log.Ctx{"err": err})
 	}
 
 	err = cmd.Wait()
 	if err != nil {
-		shared.Log.Error("problem with zfs send", "output", string(output))
+		shared.LogError("problem with zfs send", log.Ctx{"output": string(output)})
 	}
 
 	return err
@@ -1290,6 +1313,10 @@ func (s *storageZfs) MigrationType() MigrationFSType {
 	return MigrationFSType_ZFS
 }
 
+func (s *storageZfs) PreservesInodes() bool {
+	return true
+}
+
 func (s *storageZfs) MigrationSource(ct container) (MigrationStorageSourceDriver, error) {
 	/* If the container is a snapshot, let's just send that; we don't need
 	 * to send anything else, because that's all the user asked for.
@@ -1337,7 +1364,7 @@ func (s *storageZfs) MigrationSource(ct container) (MigrationStorageSourceDriver
 	return &driver, nil
 }
 
-func (s *storageZfs) MigrationSink(live bool, container container, snapshots []container, conn *websocket.Conn) error {
+func (s *storageZfs) MigrationSink(live bool, container container, snapshots []*Snapshot, conn *websocket.Conn, srcIdmap *shared.IdmapSet) error {
 	zfsRecv := func(zfsName string) error {
 		zfsFsName := fmt.Sprintf("%s/%s", s.zfsPool, zfsName)
 		args := []string{"receive", "-F", "-u", zfsFsName}
@@ -1361,12 +1388,12 @@ func (s *storageZfs) MigrationSink(live bool, container container, snapshots []c
 
 		output, err := ioutil.ReadAll(stderr)
 		if err != nil {
-			shared.Debugf("problem reading zfs recv stderr %s", "err", err)
+			shared.LogDebug("problem reading zfs recv stderr %s", log.Ctx{"err": err})
 		}
 
 		err = cmd.Wait()
 		if err != nil {
-			shared.Log.Error("problem with zfs recv", "output", string(output))
+			shared.LogError("problem with zfs recv", log.Ctx{"output": string(output)})
 		}
 		return err
 	}
@@ -1384,18 +1411,23 @@ func (s *storageZfs) MigrationSink(live bool, container container, snapshots []c
 	}
 
 	for _, snap := range snapshots {
-		fields := strings.SplitN(snap.Name(), shared.SnapshotDelimiter, 2)
-		name := fmt.Sprintf("containers/%s@snapshot-%s", fields[0], fields[1])
-		if err := zfsRecv(name); err != nil {
-			return err
-		}
-
-		err := os.MkdirAll(shared.VarPath(fmt.Sprintf("snapshots/%s", fields[0])), 0700)
+		args := snapshotProtobufToContainerArgs(container.Name(), snap)
+		_, err := containerCreateEmptySnapshot(container.Daemon(), args)
 		if err != nil {
 			return err
 		}
 
-		err = os.Symlink("on-zfs", shared.VarPath(fmt.Sprintf("snapshots/%s/%s.zfs", fields[0], fields[1])))
+		name := fmt.Sprintf("containers/%s@snapshot-%s", container.Name(), snap.GetName())
+		if err := zfsRecv(name); err != nil {
+			return err
+		}
+
+		err = os.MkdirAll(shared.VarPath(fmt.Sprintf("snapshots/%s", container.Name())), 0700)
+		if err != nil {
+			return err
+		}
+
+		err = os.Symlink("on-zfs", shared.VarPath(fmt.Sprintf("snapshots/%s/%s.zfs", container.Name(), snap.GetName())))
 		if err != nil {
 			return err
 		}
@@ -1405,7 +1437,7 @@ func (s *storageZfs) MigrationSink(live bool, container container, snapshots []c
 		/* clean up our migration-send snapshots that we got from recv. */
 		zfsSnapshots, err := s.zfsListSnapshots(fmt.Sprintf("containers/%s", container.Name()))
 		if err != nil {
-			shared.Log.Error("failed listing snapshots post migration", "err", err)
+			shared.LogError("failed listing snapshots post migration", log.Ctx{"err": err})
 			return
 		}
 

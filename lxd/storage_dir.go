@@ -102,8 +102,8 @@ func (s *storageDir) ContainerDelete(container container) error {
 func (s *storageDir) ContainerCopy(
 	container container, sourceContainer container) error {
 
-	oldPath := sourceContainer.RootfsPath()
-	newPath := container.RootfsPath()
+	oldPath := sourceContainer.Path()
+	newPath := container.Path()
 
 	/*
 	 * Copy by using rsync
@@ -274,10 +274,14 @@ func (s *storageDir) MigrationType() MigrationFSType {
 	return MigrationFSType_RSYNC
 }
 
+func (s *storageDir) PreservesInodes() bool {
+	return false
+}
+
 func (s *storageDir) MigrationSource(container container) (MigrationStorageSourceDriver, error) {
 	return rsyncMigrationSource(container)
 }
 
-func (s *storageDir) MigrationSink(live bool, container container, snapshots []container, conn *websocket.Conn) error {
-	return rsyncMigrationSink(live, container, snapshots, conn)
+func (s *storageDir) MigrationSink(live bool, container container, snapshots []*Snapshot, conn *websocket.Conn, srcIdmap *shared.IdmapSet) error {
+	return rsyncMigrationSink(live, container, snapshots, conn, srcIdmap)
 }

@@ -1,7 +1,7 @@
 #!/bin/sh
 
 safe_pot_hash() {
-  sed -e "/Project-Id-Version/,/Content-Transfer-Encoding/d" -e "/^#/d" "po/lxd.pot" | tee /tmp/foo | md5sum | cut -f1 -d" "
+  sed -e "/Project-Id-Version/,/Content-Transfer-Encoding/d" -e "/^#/d" "po/lxd.pot" | md5sum | cut -f1 -d" "
 }
 
 test_static_analysis() {
@@ -45,6 +45,14 @@ test_static_analysis() {
           false
         fi
       done
+    fi
+
+    if which godeps >/dev/null 2>&1; then
+      OUT=$(godeps . ./shared | cut -f1)
+      if [ "${OUT}" != "$(printf "github.com/gorilla/websocket\ngopkg.in/yaml.v2\n")" ]; then
+        echo "ERROR: you added a new dependency to the client or shared; please make sure this is what you want"
+        echo "${OUT}"
+      fi
     fi
 
     # Skip the tests which require git
