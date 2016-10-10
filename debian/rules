@@ -47,7 +47,6 @@ else
 	# has installed it, as appropriate.
 
 	# Packaged dependencies
-	debian/helpers/link-from-installed github.com/coreos/go-systemd
 	debian/helpers/link-from-installed github.com/dustinkirkland/golang-petname
 	debian/helpers/link-from-installed github.com/golang/protobuf
 	debian/helpers/link-from-installed github.com/gorilla/context
