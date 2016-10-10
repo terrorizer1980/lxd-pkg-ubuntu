@@ -158,6 +158,8 @@ func run() error {
 		fmt.Printf("        Start a container\n")
 		fmt.Printf("    callhook\n")
 		fmt.Printf("        Call a container hook\n")
+		fmt.Printf("    migratedumpsuccess\n")
+		fmt.Printf("        Indicate that a migration dump was successful\n")
 		fmt.Printf("    netcat\n")
 		fmt.Printf("        Mirror a unix socket to stdin/stdout\n")
 	}
@@ -237,6 +239,8 @@ func run() error {
 			os.Exit(ret)
 		case "netcat":
 			return Netcat(os.Args[1:])
+		case "migratedumpsuccess":
+			return cmdMigrateDumpSuccess(os.Args[1:])
 		}
 	}
 
@@ -370,8 +374,7 @@ func cmdDaemon() error {
 		signal.Notify(ch, syscall.SIGPWR)
 		sig := <-ch
 
-		shared.Log.Info(
-			fmt.Sprintf("Received '%s signal', shutting down containers.", sig))
+		shared.LogInfof("Received '%s signal', shutting down containers.", sig)
 
 		containersShutdown(d)
 
@@ -382,8 +385,7 @@ func cmdDaemon() error {
 	go func() {
 		<-d.shutdownChan
 
-		shared.Log.Info(
-			fmt.Sprintf("Asked to shutdown by API, shutting down containers."))
+		shared.LogInfof("Asked to shutdown by API, shutting down containers.")
 
 		containersShutdown(d)
 
@@ -398,7 +400,7 @@ func cmdDaemon() error {
 		signal.Notify(ch, syscall.SIGTERM)
 		sig := <-ch
 
-		shared.Log.Info(fmt.Sprintf("Received '%s signal', exiting.", sig))
+		shared.LogInfof("Received '%s signal', exiting.", sig)
 		ret = d.Stop()
 		wg.Done()
 	}()
@@ -492,7 +494,7 @@ func cmdActivateIfNeeded() error {
 	// Look for network socket
 	value := daemonConfig["core.https_address"].Get()
 	if value != "" {
-		shared.Debugf("Daemon has core.https_address set, activating...")
+		shared.LogDebugf("Daemon has core.https_address set, activating...")
 		_, err := lxd.NewClient(&lxd.DefaultConfig, "local")
 		return err
 	}
@@ -519,19 +521,19 @@ func cmdActivateIfNeeded() error {
 		autoStart := config["boot.autostart"]
 
 		if c.IsRunning() {
-			shared.Debugf("Daemon has running containers, activating...")
+			shared.LogDebugf("Daemon has running containers, activating...")
 			_, err := lxd.NewClient(&lxd.DefaultConfig, "local")
 			return err
 		}
 
 		if lastState == "RUNNING" || lastState == "Running" || shared.IsTrue(autoStart) {
-			shared.Debugf("Daemon has auto-started containers, activating...")
+			shared.LogDebugf("Daemon has auto-started containers, activating...")
 			_, err := lxd.NewClient(&lxd.DefaultConfig, "local")
 			return err
 		}
 	}
 
-	shared.Debugf("No need to start the daemon now.")
+	shared.LogDebugf("No need to start the daemon now.")
 	return nil
 }
 
@@ -670,7 +672,7 @@ func cmdInit() error {
 		}
 	}
 
-	askString := func(question string, default_ string, validate func(string) string) string {
+	askString := func(question string, default_ string, validate func(string) error) string {
 		for {
 			fmt.Printf(question)
 			input, _ := reader.ReadString('\n')
@@ -680,7 +682,7 @@ func cmdInit() error {
 			}
 			if validate != nil {
 				result := validate(input)
-				if result != "" {
+				if result != nil {
 					fmt.Printf("Invalid input: %s\n\n", result)
 					continue
 				}
@@ -801,7 +803,12 @@ you can still do so by running "sudo dpkg-reconfigure -p medium lxd"
 			return fmt.Errorf("Init configuration is only valid with --auto")
 		}
 
-		storageBackend = askChoice("Name of the storage backend to use (dir or zfs) [default=zfs]: ", backendsSupported, "zfs")
+		defaultStorage := "dir"
+		if shared.StringInSlice("zfs", backendsAvailable) {
+			defaultStorage = "zfs"
+		}
+
+		storageBackend = askChoice(fmt.Sprintf("Name of the storage backend to use (dir or zfs) [default=%s]: ", defaultStorage), backendsSupported, defaultStorage)
 
 		if !shared.StringInSlice(storageBackend, backendsSupported) {
 			return fmt.Errorf("The requested backend '%s' isn't supported by lxd init.", storageBackend)
@@ -815,16 +822,32 @@ you can still do so by running "sudo dpkg-reconfigure -p medium lxd"
 			if askBool("Create a new ZFS pool (yes/no) [default=yes]? ", "yes") {
 				storagePool = askString("Name of the new ZFS pool [default=lxd]: ", "lxd", nil)
 				if askBool("Would you like to use an existing block device (yes/no) [default=no]? ", "no") {
-					deviceExists := func(path string) string {
+					deviceExists := func(path string) error {
 						if !shared.IsBlockdevPath(path) {
-							return fmt.Sprintf("'%s' is not a block device", path)
+							return fmt.Errorf("'%s' is not a block device", path)
 						}
-						return ""
+						return nil
 					}
 					storageDevice = askString("Path to the existing block device: ", "", deviceExists)
 					storageMode = "device"
 				} else {
-					storageLoopSize = askInt("Size in GB of the new loop device (1GB minimum) [default=10GB]: ", 1, -1, "10")
+					st := syscall.Statfs_t{}
+					err := syscall.Statfs(shared.VarPath(), &st)
+					if err != nil {
+						return fmt.Errorf("couldn't statfs %s: %s", shared.VarPath(), err)
+					}
+
+					/* choose 15 GB < x < 100GB, where x is 20% of the disk size */
+					def := uint64(st.Frsize) * st.Blocks / (1024 * 1024 * 1024) / 5
+					if def > 100 {
+						def = 100
+					}
+					if def < 15 {
+						def = 15
+					}
+
+					q := fmt.Sprintf("Size in GB of the new loop device (1GB minimum) [default=%d]: ", def)
+					storageLoopSize = askInt(q, 1, -1, fmt.Sprintf("%d", def))
 					storageMode = "loop"
 				}
 			} else {
@@ -853,14 +876,18 @@ they otherwise would.
 		}
 
 		if askBool("Would you like LXD to be available over the network (yes/no) [default=no]? ", "no") {
-			isIPAddress := func(s string) string {
-				if net.ParseIP(s) == nil {
-					return fmt.Sprintf("'%s' is not an IP address", s)
+			isIPAddress := func(s string) error {
+				if s != "all" && net.ParseIP(s) == nil {
+					return fmt.Errorf("'%s' is not an IP address", s)
 				}
-				return ""
+				return nil
 			}
 
-			networkAddress = askString("Address to bind LXD to (not including port) [default=0.0.0.0]: ", "0.0.0.0", isIPAddress)
+			networkAddress = askString("Address to bind LXD to (not including port) [default=all]: ", "all", isIPAddress)
+			if networkAddress == "all" {
+				networkAddress = "::"
+			}
+
 			if net.ParseIP(networkAddress).To4() == nil {
 				networkAddress = fmt.Sprintf("[%s]", networkAddress)
 			}
@@ -920,7 +947,7 @@ they otherwise would.
 			output, err := exec.Command(
 				"zpool",
 				"create", storagePool, storageDevice,
-				"-f", "-m", "none").CombinedOutput()
+				"-f", "-m", "none", "-O", "compression=on").CombinedOutput()
 			if err != nil {
 				return fmt.Errorf("Failed to create the ZFS pool: %s", output)
 			}
@@ -1105,4 +1132,23 @@ func printnet() error {
 	fmt.Printf("%s\n", buf)
 
 	return nil
+}
+
+func cmdMigrateDumpSuccess(args []string) error {
+	if len(args) != 3 {
+		return fmt.Errorf("bad migrate dump success args %s", args)
+	}
+
+	c, err := lxd.NewClient(&lxd.DefaultConfig, "local")
+	if err != nil {
+		return err
+	}
+
+	conn, err := c.Websocket(args[1], args[2])
+	if err != nil {
+		return err
+	}
+	conn.Close()
+
+	return c.WaitForSuccess(args[1])
 }

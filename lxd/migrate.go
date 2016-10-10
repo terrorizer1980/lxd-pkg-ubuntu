@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -134,7 +136,7 @@ func (c *migrationFields) controlChannel() <-chan MigrationControl {
 		msg := MigrationControl{}
 		err := c.recv(&msg)
 		if err != nil {
-			shared.Debugf("Got error reading migration control socket %s", err)
+			shared.LogDebugf("Got error reading migration control socket %s", err)
 			close(ch)
 			return
 		}
@@ -227,7 +229,63 @@ func (s *migrationSourceWs) Connect(op *operation, r *http.Request, w http.Respo
 	return nil
 }
 
-func (s *migrationSourceWs) Do(op *operation) error {
+func writeActionScript(directory string, operation string, secret string) error {
+	script := fmt.Sprintf(`#!/bin/sh -e
+if [ "$CRTOOLS_SCRIPT_ACTION" = "post-dump" ]; then
+	%s migratedumpsuccess %s %s
+fi
+`, execPath, operation, secret)
+
+	f, err := os.Create(filepath.Join(directory, "action.sh"))
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	if err := f.Chmod(0500); err != nil {
+		return err
+	}
+
+	_, err = f.WriteString(script)
+	return err
+}
+
+func snapshotToProtobuf(c container) *Snapshot {
+	config := []*Config{}
+	for k, v := range c.LocalConfig() {
+		kCopy := string(k)
+		vCopy := string(v)
+		config = append(config, &Config{Key: &kCopy, Value: &vCopy})
+	}
+
+	devices := []*Device{}
+	for name, d := range c.LocalDevices() {
+		props := []*Config{}
+		for k, v := range d {
+			kCopy := string(k)
+			vCopy := string(v)
+			props = append(props, &Config{Key: &kCopy, Value: &vCopy})
+		}
+
+		devices = append(devices, &Device{Name: &name, Config: props})
+	}
+
+	parts := strings.SplitN(c.Name(), shared.SnapshotDelimiter, 2)
+	isEphemeral := c.IsEphemeral()
+	arch := int32(c.Architecture())
+	stateful := c.IsStateful()
+	return &Snapshot{
+		Name:         &parts[len(parts)-1],
+		LocalConfig:  config,
+		Profiles:     c.Profiles(),
+		Ephemeral:    &isEphemeral,
+		LocalDevices: devices,
+		Architecture: &arch,
+		Stateful:     &stateful,
+	}
+}
+
+func (s *migrationSourceWs) Do(migrateOp *operation) error {
 	<-s.allConnected
 
 	criuType := CRIUType_CRIU_RSYNC.Enum()
@@ -263,20 +321,23 @@ func (s *migrationSourceWs) Do(op *operation) error {
 	/* the protocol says we have to send a header no matter what, so let's
 	 * do that, but then immediately send an error.
 	 */
-	snapshots := []string{}
+	snapshots := []*Snapshot{}
+	snapshotNames := []string{}
 	if fsErr == nil {
 		fullSnaps := driver.Snapshots()
 		for _, snap := range fullSnaps {
-			snapshots = append(snapshots, shared.ExtractSnapshotName(snap.Name()))
+			snapshots = append(snapshots, snapshotToProtobuf(snap))
+			snapshotNames = append(snapshotNames, shared.ExtractSnapshotName(snap.Name()))
 		}
 	}
 
 	myType := s.container.Storage().MigrationType()
 	header := MigrationHeader{
-		Fs:        &myType,
-		Criu:      criuType,
-		Idmap:     idmaps,
-		Snapshots: snapshots,
+		Fs:            &myType,
+		Criu:          criuType,
+		Idmap:         idmaps,
+		SnapshotNames: snapshotNames,
+		Snapshots:     snapshots,
 	}
 
 	if err := s.send(&header); err != nil {
@@ -331,9 +392,96 @@ func (s *migrationSourceWs) Do(op *operation) error {
 		}
 		defer os.RemoveAll(checkpointDir)
 
-		err = s.container.Migrate(lxc.MIGRATE_DUMP, checkpointDir, "migration", true)
-		if err != nil {
-			return abort(err)
+		if lxc.VersionAtLeast(2, 0, 4) {
+			/* What happens below is slightly convoluted. Due to various
+			 * complications with networking, there's no easy way for criu
+			 * to exit and leave the container in a frozen state for us to
+			 * somehow resume later.
+			 *
+			 * Instead, we use what criu calls an "action-script", which is
+			 * basically a callback that lets us know when the dump is
+			 * done. (Unfortunately, we can't pass arguments, just an
+			 * executable path, so we write a custom action script with the
+			 * real command we want to run.)
+			 *
+			 * This script then hangs until the migration operation either
+			 * finishes successfully or fails, and exits 1 or 0, which
+			 * causes criu to either leave the container running or kill it
+			 * as we asked.
+			 */
+			dumpDone := make(chan bool, 1)
+			actionScriptOpSecret, err := shared.RandomCryptoString()
+			if err != nil {
+				return abort(err)
+			}
+
+			actionScriptOp, err := operationCreate(
+				operationClassWebsocket,
+				nil,
+				nil,
+				func(op *operation) error {
+					_, err := migrateOp.WaitFinal(-1)
+					if err != nil {
+						return err
+					}
+
+					if migrateOp.status != shared.Success {
+						return fmt.Errorf("restore failed: %s", op.status.String())
+					}
+					return nil
+				},
+				nil,
+				func(op *operation, r *http.Request, w http.ResponseWriter) error {
+					secret := r.FormValue("secret")
+					if secret == "" {
+						return fmt.Errorf("missing secret")
+					}
+
+					if secret != actionScriptOpSecret {
+						return os.ErrPermission
+					}
+
+					c, err := shared.WebsocketUpgrader.Upgrade(w, r, nil)
+					if err != nil {
+						return err
+					}
+
+					dumpDone <- true
+
+					closeMsg := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")
+					return c.WriteMessage(websocket.CloseMessage, closeMsg)
+				},
+			)
+			if err != nil {
+				return abort(err)
+			}
+
+			if err := writeActionScript(checkpointDir, actionScriptOp.url, actionScriptOpSecret); err != nil {
+				return abort(err)
+			}
+
+			_, err = actionScriptOp.Run()
+			if err != nil {
+				return abort(err)
+			}
+
+			migrateDone := make(chan error, 1)
+			go func() {
+				migrateDone <- s.container.Migrate(lxc.MIGRATE_DUMP, checkpointDir, "migration", true, true)
+			}()
+
+			select {
+			/* the checkpoint failed, let's just abort */
+			case err = <-migrateDone:
+				return abort(err)
+			/* the dump finished, let's continue on to the restore */
+			case <-dumpDone:
+				shared.LogDebugf("Dump finished, continuing with restore...")
+			}
+		} else {
+			if err := s.container.Migrate(lxc.MIGRATE_DUMP, checkpointDir, "migration", true, false); err != nil {
+				return abort(err)
+			}
 		}
 
 		/*
@@ -360,8 +508,6 @@ func (s *migrationSourceWs) Do(op *operation) error {
 		return err
 	}
 
-	// TODO: should we add some config here about automatically restarting
-	// the container migrate failure? What about the failures above?
 	if !*msg.Success {
 		return fmt.Errorf(*msg.Message)
 	}
@@ -370,7 +516,8 @@ func (s *migrationSourceWs) Do(op *operation) error {
 }
 
 type migrationSink struct {
-	migrationFields
+	// We are pulling the container from src in pull mode.
+	src migrationFields
 
 	url    string
 	dialer websocket.Dialer
@@ -383,32 +530,32 @@ type MigrationSinkArgs struct {
 	Secrets   map[string]string
 }
 
-func NewMigrationSink(args *MigrationSinkArgs) (func() error, error) {
+func NewMigrationSink(args *MigrationSinkArgs) (*migrationSink, error) {
 	sink := migrationSink{
-		migrationFields{container: args.Container},
-		args.Url,
-		args.Dialer,
+		src:    migrationFields{container: args.Container},
+		url:    args.Url,
+		dialer: args.Dialer,
 	}
 
 	var ok bool
-	sink.controlSecret, ok = args.Secrets["control"]
+	sink.src.controlSecret, ok = args.Secrets["control"]
 	if !ok {
 		return nil, fmt.Errorf("Missing control secret")
 	}
 
-	sink.fsSecret, ok = args.Secrets["fs"]
+	sink.src.fsSecret, ok = args.Secrets["fs"]
 	if !ok {
 		return nil, fmt.Errorf("Missing fs secret")
 	}
 
-	sink.criuSecret, ok = args.Secrets["criu"]
-	sink.live = ok
+	sink.src.criuSecret, ok = args.Secrets["criu"]
+	sink.src.live = ok
 
-	if err := findCriu("destination"); sink.live && err != nil {
+	if err := findCriu("destination"); sink.src.live && err != nil {
 		return nil, err
 	}
 
-	return sink.do, nil
+	return &sink, nil
 }
 
 func (c *migrationSink) connectWithSecret(secret string) (*websocket.Conn, error) {
@@ -420,41 +567,49 @@ func (c *migrationSink) connectWithSecret(secret string) (*websocket.Conn, error
 	return lxd.WebsocketDial(c.dialer, wsUrl)
 }
 
-func (c *migrationSink) do() error {
+func (c *migrationSink) Do(migrateOp *operation) error {
 	var err error
-	c.controlConn, err = c.connectWithSecret(c.controlSecret)
+
+	// Start the storage for this container (LVM mount/umount)
+	c.src.container.StorageStart()
+
+	c.src.controlConn, err = c.connectWithSecret(c.src.controlSecret)
 	if err != nil {
+		c.src.container.StorageStop()
 		return err
 	}
-	defer c.disconnect()
+	defer c.src.disconnect()
 
-	c.fsConn, err = c.connectWithSecret(c.fsSecret)
+	c.src.fsConn, err = c.connectWithSecret(c.src.fsSecret)
 	if err != nil {
-		c.sendControl(err)
+		c.src.container.StorageStop()
+		c.src.sendControl(err)
 		return err
 	}
 
-	if c.live {
-		c.criuConn, err = c.connectWithSecret(c.criuSecret)
+	if c.src.live {
+		c.src.criuConn, err = c.connectWithSecret(c.src.criuSecret)
 		if err != nil {
-			c.sendControl(err)
+			c.src.container.StorageStop()
+			c.src.sendControl(err)
 			return err
 		}
 	}
 
 	header := MigrationHeader{}
-	if err := c.recv(&header); err != nil {
-		c.sendControl(err)
+	if err := c.src.recv(&header); err != nil {
+		c.src.container.StorageStop()
+		c.src.sendControl(err)
 		return err
 	}
 
 	criuType := CRIUType_CRIU_RSYNC.Enum()
-	if !c.live {
+	if !c.src.live {
 		criuType = nil
 	}
 
-	mySink := c.container.Storage().MigrationSink
-	myType := c.container.Storage().MigrationType()
+	mySink := c.src.container.Storage().MigrationSink
+	myType := c.src.container.Storage().MigrationType()
 	resp := MigrationHeader{
 		Fs:   &myType,
 		Criu: criuType,
@@ -468,8 +623,9 @@ func (c *migrationSink) do() error {
 		resp.Fs = &myType
 	}
 
-	if err := c.send(&resp); err != nil {
-		c.sendControl(err)
+	if err := c.src.send(&resp); err != nil {
+		c.src.container.StorageStop()
+		c.src.sendControl(err)
 		return err
 	}
 
@@ -477,32 +633,6 @@ func (c *migrationSink) do() error {
 	go func(c *migrationSink) {
 		imagesDir := ""
 		srcIdmap := new(shared.IdmapSet)
-
-		snapshots := []container{}
-		for _, snap := range header.Snapshots {
-			// TODO: we need to propagate snapshot configurations
-			// as well. Right now the container configuration is
-			// done through the initial migration post. Should we
-			// post the snapshots and their configs as well, or do
-			// it some other way?
-			name := c.container.Name() + shared.SnapshotDelimiter + snap
-			args := containerArgs{
-				Ctype:        cTypeSnapshot,
-				Config:       c.container.LocalConfig(),
-				Profiles:     c.container.Profiles(),
-				Ephemeral:    c.container.IsEphemeral(),
-				Architecture: c.container.Architecture(),
-				Devices:      c.container.LocalDevices(),
-				Name:         name,
-			}
-
-			ct, err := containerCreateEmptySnapshot(c.container.Daemon(), args)
-			if err != nil {
-				restore <- err
-				return
-			}
-			snapshots = append(snapshots, ct)
-		}
 
 		for _, idmap := range header.Idmap {
 			e := shared.IdmapEntry{
@@ -522,12 +652,28 @@ func (c *migrationSink) do() error {
 		 */
 		fsTransfer := make(chan error)
 		go func() {
-			if err := mySink(c.live, c.container, snapshots, c.fsConn); err != nil {
+			snapshots := []*Snapshot{}
+
+			/* Legacy: we only sent the snapshot names, so we just
+			 * copy the container's config over, same as we used to
+			 * do.
+			 */
+			if len(header.SnapshotNames) != len(header.Snapshots) {
+				for _, name := range header.SnapshotNames {
+					base := snapshotToProtobuf(c.src.container)
+					base.Name = &name
+					snapshots = append(snapshots, base)
+				}
+			} else {
+				snapshots = header.Snapshots
+			}
+
+			if err := mySink(c.src.live, c.src.container, header.Snapshots, c.src.fsConn, srcIdmap); err != nil {
 				fsTransfer <- err
 				return
 			}
 
-			if err := ShiftIfNecessary(c.container, srcIdmap); err != nil {
+			if err := ShiftIfNecessary(c.src.container, srcIdmap); err != nil {
 				fsTransfer <- err
 				return
 			}
@@ -535,7 +681,7 @@ func (c *migrationSink) do() error {
 			fsTransfer <- nil
 		}()
 
-		if c.live {
+		if c.src.live {
 			var err error
 			imagesDir, err = ioutil.TempDir("", "lxd_restore_")
 			if err != nil {
@@ -545,7 +691,7 @@ func (c *migrationSink) do() error {
 
 			defer os.RemoveAll(imagesDir)
 
-			if err := RsyncRecv(shared.AddSlash(imagesDir), c.criuConn); err != nil {
+			if err := RsyncRecv(shared.AddSlash(imagesDir), c.src.criuConn); err != nil {
 				restore <- err
 				return
 			}
@@ -557,8 +703,8 @@ func (c *migrationSink) do() error {
 			return
 		}
 
-		if c.live {
-			err = c.container.Migrate(lxc.MIGRATE_RESTORE, imagesDir, "migration", false)
+		if c.src.live {
+			err = c.src.container.Migrate(lxc.MIGRATE_RESTORE, imagesDir, "migration", false, false)
 			if err != nil {
 				restore <- err
 				return
@@ -566,36 +712,35 @@ func (c *migrationSink) do() error {
 
 		}
 
-		for _, snap := range snapshots {
-			if err := ShiftIfNecessary(snap, srcIdmap); err != nil {
-				restore <- err
-				return
-			}
-		}
-
 		restore <- nil
 	}(c)
 
-	source := c.controlChannel()
+	source := c.src.controlChannel()
+
+	defer c.src.container.StorageStop()
 
 	for {
 		select {
 		case err = <-restore:
-			c.sendControl(err)
+			c.src.sendControl(err)
 			return err
 		case msg, ok := <-source:
 			if !ok {
-				c.disconnect()
+				c.src.disconnect()
 				return fmt.Errorf("Got error reading source")
 			}
 			if !*msg.Success {
-				c.disconnect()
+				c.src.disconnect()
 				return fmt.Errorf(*msg.Message)
 			} else {
 				// The source can only tell us it failed (e.g. if
 				// checkpointing failed). We have to tell the source
 				// whether or not the restore was successful.
-				shared.Debugf("Unknown message %v from source", msg)
+				shared.LogDebugf("Unknown message %v from source", msg)
+				err = c.src.container.TemplateApply("copy")
+				if err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -604,7 +749,7 @@ func (c *migrationSink) do() error {
 /*
  * Similar to forkstart, this is called when lxd is invoked as:
  *
- *    lxd forkmigrate <container> <lxcpath> <path_to_config> <path_to_criu_images>
+ *    lxd forkmigrate <container> <lxcpath> <path_to_config> <path_to_criu_images> <preserves_inodes>
  *
  * liblxc's restore() sets up the processes in such a way that the monitor ends
  * up being a child of the process that calls it, in our case lxd. However, we
@@ -613,7 +758,7 @@ func (c *migrationSink) do() error {
  * footprint when we fork tasks that will never free golang's memory, etc.)
  */
 func MigrateContainer(args []string) error {
-	if len(args) != 5 {
+	if len(args) != 6 {
 		return fmt.Errorf("Bad arguments %q", args)
 	}
 
@@ -621,6 +766,7 @@ func MigrateContainer(args []string) error {
 	lxcpath := args[2]
 	configPath := args[3]
 	imagesDir := args[4]
+	preservesInodes, err := strconv.ParseBool(args[5])
 
 	c, err := lxc.NewContainer(name, lxcpath)
 	if err != nil {
@@ -636,8 +782,9 @@ func MigrateContainer(args []string) error {
 	os.Stdout.Close()
 	os.Stderr.Close()
 
-	return c.Restore(lxc.RestoreOptions{
-		Directory: imagesDir,
-		Verbose:   true,
+	return c.Migrate(lxc.MIGRATE_RESTORE, lxc.MigrateOptions{
+		Directory:       imagesDir,
+		Verbose:         true,
+		PreservesInodes: preservesInodes,
 	})
 }

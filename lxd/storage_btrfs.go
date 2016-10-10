@@ -854,12 +854,12 @@ func (s *btrfsMigrationSourceDriver) send(conn *websocket.Conn, btrfsPath string
 
 	output, err := ioutil.ReadAll(stderr)
 	if err != nil {
-		shared.Log.Error("problem reading btrfs send stderr", "err", err)
+		shared.LogError("problem reading btrfs send stderr", log.Ctx{"err": err})
 	}
 
 	err = cmd.Wait()
 	if err != nil {
-		shared.Log.Error("problem with btrfs send", "output", string(output))
+		shared.LogError("problem with btrfs send", log.Ctx{"output": string(output)})
 	}
 	return err
 }
@@ -948,6 +948,14 @@ func (s *storageBtrfs) MigrationType() MigrationFSType {
 	}
 }
 
+func (s *storageBtrfs) PreservesInodes() bool {
+	if runningInUserns {
+		return false
+	} else {
+		return true
+	}
+}
+
 func (s *storageBtrfs) MigrationSource(c container) (MigrationStorageSourceDriver, error) {
 	if runningInUserns {
 		return rsyncMigrationSource(c)
@@ -977,9 +985,9 @@ func (s *storageBtrfs) MigrationSource(c container) (MigrationStorageSourceDrive
 	return driver, nil
 }
 
-func (s *storageBtrfs) MigrationSink(live bool, container container, snapshots []container, conn *websocket.Conn) error {
+func (s *storageBtrfs) MigrationSink(live bool, container container, snapshots []*Snapshot, conn *websocket.Conn, srcIdmap *shared.IdmapSet) error {
 	if runningInUserns {
-		return rsyncMigrationSink(live, container, snapshots, conn)
+		return rsyncMigrationSink(live, container, snapshots, conn, srcIdmap)
 	}
 
 	cName := container.Name()
@@ -1020,12 +1028,12 @@ func (s *storageBtrfs) MigrationSink(live bool, container container, snapshots [
 
 		output, err := ioutil.ReadAll(stderr)
 		if err != nil {
-			shared.Debugf("problem reading btrfs receive stderr %s", err)
+			shared.LogDebugf("problem reading btrfs receive stderr %s", err)
 		}
 
 		err = cmd.Wait()
 		if err != nil {
-			shared.Log.Error("problem with btrfs receive", log.Ctx{"output": string(output)})
+			shared.LogError("problem with btrfs receive", log.Ctx{"output": string(output)})
 			return err
 		}
 
@@ -1034,13 +1042,13 @@ func (s *storageBtrfs) MigrationSink(live bool, container container, snapshots [
 
 			err := s.subvolSnapshot(cPath, targetPath, false)
 			if err != nil {
-				shared.Log.Error("problem with btrfs snapshot", log.Ctx{"err": err})
+				shared.LogError("problem with btrfs snapshot", log.Ctx{"err": err})
 				return err
 			}
 
 			err = s.subvolsDelete(cPath)
 			if err != nil {
-				shared.Log.Error("problem with btrfs delete", log.Ctx{"err": err})
+				shared.LogError("problem with btrfs delete", log.Ctx{"err": err})
 				return err
 			}
 		}
@@ -1049,7 +1057,13 @@ func (s *storageBtrfs) MigrationSink(live bool, container container, snapshots [
 	}
 
 	for _, snap := range snapshots {
-		if err := btrfsRecv(containerPath(cName, true), snap.Path(), true); err != nil {
+		args := snapshotProtobufToContainerArgs(container.Name(), snap)
+		s, err := containerCreateEmptySnapshot(container.Daemon(), args)
+		if err != nil {
+			return err
+		}
+
+		if err := btrfsRecv(containerPath(cName, true), s.Path(), true); err != nil {
 			return err
 		}
 	}

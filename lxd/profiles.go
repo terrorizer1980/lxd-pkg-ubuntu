@@ -41,7 +41,7 @@ func profilesGet(d *Daemon, r *http.Request) Response {
 		} else {
 			profile, err := doProfileGet(d, name)
 			if err != nil {
-				shared.Log.Error("Failed to get profile", log.Ctx{"profile": name})
+				shared.LogError("Failed to get profile", log.Ctx{"profile": name})
 				continue
 			}
 			resultMap[i] = profile
@@ -65,6 +65,11 @@ func profilesPost(d *Daemon, r *http.Request) Response {
 	// Sanity checks
 	if req.Name == "" {
 		return BadRequest(fmt.Errorf("No name provided"))
+	}
+
+	_, profile, _ := dbProfileGet(d.db, req.Name)
+	if profile != nil {
+		return BadRequest(fmt.Errorf("The profile already exists"))
 	}
 
 	if strings.Contains(req.Name, "/") {
@@ -127,7 +132,7 @@ func getRunningContainersWithProfile(d *Daemon, profile string) []container {
 	for _, name := range output {
 		c, err := containerLoadByName(d, name)
 		if err != nil {
-			shared.Log.Error("Failed opening container", log.Ctx{"container": name})
+			shared.LogError("Failed opening container", log.Ctx{"container": name})
 			continue
 		}
 		results = append(results, c)
@@ -257,6 +262,12 @@ func profilePost(d *Daemon, r *http.Request) Response {
 		return BadRequest(fmt.Errorf("No name provided"))
 	}
 
+	// Check that the name isn't already in use
+	id, _, _ := dbProfileGet(d.db, req.Name)
+	if id > 0 {
+		return Conflict
+	}
+
 	if strings.Contains(req.Name, "/") {
 		return BadRequest(fmt.Errorf("Profile names may not contain slashes"))
 	}
@@ -280,6 +291,11 @@ func profileDelete(d *Daemon, r *http.Request) Response {
 	_, err := doProfileGet(d, name)
 	if err != nil {
 		return SmartError(err)
+	}
+
+	clist := getRunningContainersWithProfile(d, name)
+	if len(clist) != 0 {
+		return BadRequest(fmt.Errorf("Profile is currently in use"))
 	}
 
 	err = dbProfileDelete(d.db, name)

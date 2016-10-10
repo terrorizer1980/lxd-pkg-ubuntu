@@ -45,6 +45,7 @@ protobuf:
 
 .PHONY: check
 check: default
+	go get -v -x github.com/rogpeppe/godeps
 	go get -v -x github.com/remyoudompheng/go-misc/deadcode
 	go test -v ./...
 	cd test && ./main.sh
@@ -55,18 +56,20 @@ gccgo:
 
 .PHONY: dist
 dist:
+	$(eval TMP := $(shell mktemp -d))
 	rm -Rf lxd-$(VERSION) $(ARCHIVE) $(ARCHIVE).gz
-	mkdir -p lxd-$(VERSION)/dist
-	-GOPATH=$(shell pwd)/lxd-$(VERSION)/dist go get -t -v -d ./...
-	-GOPATH=$(shell pwd)/lxd-$(VERSION)/dist go get -t -v -d ./...
-	-GOPATH=$(shell pwd)/lxd-$(VERSION)/dist go get -t -v -d ./...
-	GOPATH=$(shell pwd)/lxd-$(VERSION)/dist go get -t -v -d ./...
-	rm -rf $(shell pwd)/lxd-$(VERSION)/dist/src/github.com/lxc/lxd
-	ln -s ../../../.. ./lxd-$(VERSION)/dist/src/github.com/lxc/lxd
+	mkdir -p lxd-$(VERSION)/
+	-GOPATH=$(TMP) go get -t -v -d ./...
+	-GOPATH=$(TMP) go get -t -v -d ./...
+	-GOPATH=$(TMP) go get -t -v -d ./...
+	GOPATH=$(TMP) go get -t -v -d ./...
+	rm -rf $(TMP)/src/github.com/lxc/lxd
+	ln -s ../../../.. $(TMP)/src/github.com/lxc/lxd
+	mv $(TMP)/ lxd-$(VERSION)/dist
 	git archive --prefix=lxd-$(VERSION)/ --output=$(ARCHIVE) HEAD
 	tar -uf $(ARCHIVE) --exclude-vcs lxd-$(VERSION)/
 	gzip -9 $(ARCHIVE)
-	rm -Rf dist lxd-$(VERSION) $(ARCHIVE)
+	rm -Rf lxd-$(VERSION) $(ARCHIVE)
 
 .PHONY: i18n update-po update-pot build-mo static-analysis
 i18n: update-pot

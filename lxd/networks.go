@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os/exec"
 	"strconv"
 
 	"github.com/gorilla/mux"
@@ -11,6 +12,30 @@ import (
 	"github.com/lxc/lxd/shared"
 )
 
+// Helper functions
+func networkIsInUse(c container, name string) bool {
+	for _, d := range c.ExpandedDevices() {
+		if d["type"] != "nic" {
+			continue
+		}
+
+		if !shared.StringInSlice(d["nictype"], []string{"bridged", "macvlan"}) {
+			continue
+		}
+
+		if d["parent"] == "" {
+			continue
+		}
+
+		if d["parent"] == name {
+			return true
+		}
+	}
+
+	return false
+}
+
+// API endpoints
 func networksGet(d *Daemon, r *http.Request) Response {
 	recursionStr := r.FormValue("recursion")
 	recursion, err := strconv.Atoi(recursionStr)
@@ -53,31 +78,6 @@ type network struct {
 	UsedBy []string `json:"used_by"`
 }
 
-func isOnBridge(c container, bridge string) bool {
-	devices := c.ExpandedDevices()
-	for _, name := range devices.DeviceNames() {
-		device := devices[name]
-
-		if device["type"] != "nic" {
-			continue
-		}
-
-		if !shared.StringInSlice(device["nictype"], []string{"bridged", "macvlan"}) {
-			continue
-		}
-
-		if device["parent"] == "" {
-			continue
-		}
-
-		if device["parent"] == bridge {
-			return true
-		}
-	}
-
-	return false
-}
-
 func networkGet(d *Daemon, r *http.Request) Response {
 	name := mux.Vars(r)["name"]
 
@@ -112,7 +112,7 @@ func doNetworkGet(d *Daemon, name string) (network, error) {
 			return network{}, err
 		}
 
-		if isOnBridge(c, n.Name) {
+		if networkIsInUse(c, n.Name) {
 			n.UsedBy = append(n.UsedBy, fmt.Sprintf("/%s/containers/%s", shared.APIVersion, ct))
 		}
 	}
@@ -124,8 +124,15 @@ func doNetworkGet(d *Daemon, name string) (network, error) {
 		n.Type = "bridge"
 	} else if shared.PathExists(fmt.Sprintf("/sys/class/net/%s/device", n.Name)) {
 		n.Type = "physical"
+	} else if shared.PathExists(fmt.Sprintf("/sys/class/net/%s/bonding", n.Name)) {
+		n.Type = "bond"
 	} else {
-		n.Type = "unknown"
+		_, err := exec.Command("ovs-vsctl", "br-exists", n.Name).CombinedOutput()
+		if err == nil {
+			n.Type = "bridge"
+		} else {
+			n.Type = "unknown"
+		}
 	}
 
 	return n, nil
