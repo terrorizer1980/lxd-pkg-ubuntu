@@ -1,3 +1,10 @@
+lxd (2.4.1-0ubuntu2) zesty; urgency=medium
+
+  * Add a logrotate profile for /var/log/lxd/lxd.log (LP: #1635079)
+  * Add a clear dependency on lsb-base
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 19 Oct 2016 22:08:22 -0400
+
 lxd (2.4.1-0ubuntu1) yakkety; urgency=medium
 
   * New upstream bugfix release (2.4):
