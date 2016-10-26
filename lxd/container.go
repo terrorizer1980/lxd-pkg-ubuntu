@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -54,7 +55,7 @@ func containerValidConfigKey(d *Daemon, key string, value string) error {
 				return nil
 			}
 		}
-		return fmt.Errorf("security.syscalls.blacklist_compat is only valid on x86_64")
+		return fmt.Errorf("security.syscalls.blacklist_compat isn't supported on this architecture")
 	}
 	return nil
 }
@@ -151,6 +152,25 @@ func containerValidDeviceConfigKey(t, k string) bool {
 		default:
 			return false
 		}
+	case "gpu":
+		switch k {
+		case "vendorid":
+			return true
+		case "productid":
+			return true
+		case "id":
+			return true
+		case "pci":
+			return true
+		case "mode":
+			return true
+		case "gid":
+			return true
+		case "uid":
+			return true
+		default:
+			return false
+		}
 	case "none":
 		return false
 	default:
@@ -203,7 +223,7 @@ func containerValidDevices(devices shared.Devices, profile bool, expanded bool) 
 			return fmt.Errorf("Missing device type for device '%s'", name)
 		}
 
-		if !shared.StringInSlice(m["type"], []string{"none", "nic", "disk", "unix-char", "unix-block", "usb"}) {
+		if !shared.StringInSlice(m["type"], []string{"none", "nic", "disk", "unix-char", "unix-block", "usb", "gpu"}) {
 			return fmt.Errorf("Invalid device type for device '%s'", name)
 		}
 
@@ -250,9 +270,12 @@ func containerValidDevices(devices shared.Devices, profile bool, expanded bool) 
 				return fmt.Errorf("Unix device entry is missing the required \"path\" property.")
 			}
 		} else if m["type"] == "usb" {
-			if m["productid"] == "" {
-				return fmt.Errorf("Missing productid for USB device.")
+			if m["vendorid"] == "" {
+				return fmt.Errorf("Missing vendorid for USB device.")
 			}
+		} else if m["type"] == "gpu" {
+			// Probably no checks needed, since we allow users to
+			// pass in all GPUs.
 		} else if m["type"] == "none" {
 			continue
 		} else {
@@ -328,8 +351,16 @@ type container interface {
 	FilePull(srcpath string, dstpath string) (int, int, os.FileMode, string, []string, error)
 	FilePush(srcpath string, dstpath string, uid int, gid int, mode int) error
 
-	// Command execution
+	// Command execution: Execute command and wait for it to exit.
 	Exec(command []string, env map[string]string, stdin *os.File, stdout *os.File, stderr *os.File) (int, error)
+
+	// Command execution: Returns a command. If called as exec.Cmd.Start()
+	// ExecNoWait() does not wait for the process to exit. Callers are
+	// expected to pass the write end of a pipe to the pidPipe argument. So
+	// they can read the PID of the executing process from the read end. The
+	// PID read cannot be directly waited upon since it is a child of lxd
+	// forkexec. It can however be used to e.g. send signals.
+	ExecNoWait(command []string, env map[string]string, stdin *os.File, stdout *os.File, stderr *os.File, pidPipe *os.File) (*exec.Cmd, error)
 
 	// Status
 	Render() (interface{}, interface{}, error)

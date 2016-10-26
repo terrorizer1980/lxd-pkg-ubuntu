@@ -52,7 +52,7 @@ func (s *storageZfs) Init(config map[string]interface{}) (storage, error) {
 	err = s.zfsCheckPool(s.zfsPool)
 	if err != nil {
 		if shared.PathExists(shared.VarPath("zfs.img")) {
-			_ = exec.Command("modprobe", "zfs").Run()
+			_ = loadModule("zfs")
 
 			output, err := exec.Command("zpool", "import",
 				"-d", shared.VarPath(), s.zfsPool).CombinedOutput()
@@ -659,7 +659,7 @@ func (s *storageZfs) ImageCreate(fingerprint string) error {
 		return err
 	}
 
-	err = unpackImage(imagePath, subvol)
+	err = unpackImage(s.d, imagePath, subvol)
 	if err != nil {
 		return cleanup(err)
 	}

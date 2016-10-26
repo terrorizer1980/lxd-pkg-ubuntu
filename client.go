@@ -272,7 +272,10 @@ func connectViaUnix(c *Client, remote *RemoteConfig) error {
 		}
 		return net.DialUnix("unix", nil, raddr)
 	}
-	c.Http.Transport = &http.Transport{Dial: uDial}
+	c.Http.Transport = &http.Transport{
+		Dial:              uDial,
+		DisableKeepAlives: true,
+	}
 	c.websocketDialer.NetDial = uDial
 	c.Remote = remote
 
@@ -291,9 +294,10 @@ func connectViaHttp(c *Client, remote *RemoteConfig, clientCert, clientKey, clie
 	}
 
 	tr := &http.Transport{
-		TLSClientConfig: tlsconfig,
-		Dial:            shared.RFC3493Dialer,
-		Proxy:           shared.ProxyFromEnvironment,
+		TLSClientConfig:   tlsconfig,
+		Dial:              shared.RFC3493Dialer,
+		Proxy:             shared.ProxyFromEnvironment,
+		DisableKeepAlives: true,
 	}
 
 	c.websocketDialer.NetDial = shared.RFC3493Dialer
@@ -1830,6 +1834,11 @@ func (c *Client) Mkdir(container string, p string, mode os.FileMode) error {
 func (c *Client) MkdirP(container string, p string, mode os.FileMode) error {
 	if c.Remote.Public {
 		return fmt.Errorf("This function isn't supported by public remotes.")
+	}
+
+	/* special case, every container has a /, we don't need to do anything */
+	if p == "/" {
+		return nil
 	}
 
 	parts := strings.Split(p, "/")
