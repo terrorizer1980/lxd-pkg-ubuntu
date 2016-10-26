@@ -65,6 +65,9 @@ Add support for the HTTP PATCH method.
 
 PATCH allows for partial update of an object in place of PUT.
 
+## usb\_devices
+Add support for USB hotplug.
+
 ## https\_allowed\_credentials
 To use LXD API with all Web Browsers (via SPAs) you must send credentials
 (certificate) with each XHR (in order for this to happen, you should set
@@ -124,3 +127,29 @@ When a container is created in push mode, the client serves as a proxy between
 the source and target server. This is useful in cases where the target server
 is behind a NAT or firewall and cannot directly communicate with the source
 server and operate in pull mode.
+
+## container\_exec\_recording
+Introduces a new boolean "record-output", parameter to
+/1.0/containers/<name>/exec which when set to "true" and combined with
+with "wait-for-websocket" set to false, will record stdout and stderr to
+disk and make them available through the logs interface.
+
+The URL to the recorded output is included in the operation metadata
+once the command is done running.
+
+That output will expire similarly to other log files, typically after 48 hours.
+
+## certificate\_update
+Adds the following to the REST API:
+ * ETag header on GET of a certificate
+ * PUT of certificate entries
+ * PATCH of certificate entries
+
+## container\_exec\_signal_handling
+Adds support /1.0/containers/<name>/exec for forwarding signals sent to the
+client to the processes executing in the container. Currently SIGTERM and
+SIGHUP are forwarded. Further signals that can be forwarded might be added
+later.
+
+## gpu\_devices
+Enables adding GPUs to a container.

@@ -658,24 +658,22 @@ func (n *network) Start() error {
 	// Configure IPv4 firewall (includes fan)
 	if n.config["bridge.mode"] == "fan" || !shared.StringInSlice(n.config["ipv4.address"], []string{"", "none"}) {
 		// Setup basic iptables overrides
-		err = networkIptablesPrepend("ipv4", n.name, "", "INPUT", "-i", n.name, "-p", "udp", "--dport", "67", "-j", "ACCEPT")
-		if err != nil {
-			return err
-		}
+		rules := [][]string{
+			[]string{"ipv4", n.name, "", "INPUT", "-i", n.name, "-p", "udp", "--dport", "67", "-j", "ACCEPT"},
+			[]string{"ipv4", n.name, "", "INPUT", "-i", n.name, "-p", "tcp", "--dport", "67", "-j", "ACCEPT"},
+			[]string{"ipv4", n.name, "", "INPUT", "-i", n.name, "-p", "udp", "--dport", "53", "-j", "ACCEPT"},
+			[]string{"ipv4", n.name, "", "INPUT", "-i", n.name, "-p", "tcp", "--dport", "53", "-j", "ACCEPT"},
+			[]string{"ipv4", n.name, "", "OUTPUT", "-o", n.name, "-p", "udp", "--sport", "67", "-j", "ACCEPT"},
+			[]string{"ipv4", n.name, "", "OUTPUT", "-o", n.name, "-p", "tcp", "--sport", "67", "-j", "ACCEPT"},
+			[]string{"ipv4", n.name, "", "OUTPUT", "-o", n.name, "-p", "udp", "--sport", "53", "-j", "ACCEPT"},
+			[]string{"ipv4", n.name, "", "OUTPUT", "-o", n.name, "-p", "tcp", "--sport", "53", "-j", "ACCEPT"},
+			[]string{"ipv4", n.name, "mangle", "POSTROUTING", "-o", n.name, "-p", "udp", "--dport", "68", "-j", "CHECKSUM", "--checksum-fill"}}
 
-		err = networkIptablesPrepend("ipv4", n.name, "", "INPUT", "-i", n.name, "-p", "tcp", "--dport", "67", "-j", "ACCEPT")
-		if err != nil {
-			return err
-		}
-
-		err = networkIptablesPrepend("ipv4", n.name, "", "INPUT", "-i", n.name, "-p", "udp", "--dport", "53", "-j", "ACCEPT")
-		if err != nil {
-			return err
-		}
-
-		err = networkIptablesPrepend("ipv4", n.name, "", "INPUT", "-i", n.name, "-p", "tcp", "--dport", "53", "-j", "ACCEPT")
-		if err != nil {
-			return err
+		for _, rule := range rules {
+			err = networkIptablesPrepend(rule[0], rule[1], rule[2], rule[3], rule[4:]...)
+			if err != nil {
+				return err
+			}
 		}
 
 		// Allow forwarding
@@ -785,50 +783,44 @@ func (n *network) Start() error {
 		}
 
 		// Update the dnsmasq config
-		dnsmasqCmd = append(dnsmasqCmd, fmt.Sprintf("--listen-address=%s", ip.String()))
+		dnsmasqCmd = append(dnsmasqCmd, []string{fmt.Sprintf("--listen-address=%s", ip.String()), "--enable-ra"}...)
 		if n.config["ipv6.dhcp"] == "" || shared.IsTrue(n.config["ipv6.dhcp"]) {
 			if !shared.StringInSlice("--dhcp-no-override", dnsmasqCmd) {
 				dnsmasqCmd = append(dnsmasqCmd, []string{"--dhcp-no-override", "--dhcp-authoritative", fmt.Sprintf("--dhcp-leasefile=%s", shared.VarPath("networks", n.name, "dnsmasq.leases")), fmt.Sprintf("--dhcp-hostsfile=%s", shared.VarPath("networks", n.name, "dnsmasq.hosts"))}...)
 			}
 
-			flags := ""
-			if n.config["ipv6.dhcp"] == "" || shared.IsTrue(n.config["ipv6.dhcp"]) {
-				if !shared.IsTrue(n.config["ipv6.dhcp.stateful"]) {
-					flags = ",ra-stateless,ra-names"
+			if shared.IsTrue(n.config["ipv6.dhcp.stateful"]) {
+				if n.config["ipv6.dhcp.ranges"] != "" {
+					for _, dhcpRange := range strings.Split(n.config["ipv6.dhcp.ranges"], ",") {
+						dhcpRange = strings.TrimSpace(dhcpRange)
+						dnsmasqCmd = append(dnsmasqCmd, []string{"--dhcp-range", fmt.Sprintf("%s", strings.Replace(dhcpRange, "-", ",", -1))}...)
+					}
+				} else {
+					dnsmasqCmd = append(dnsmasqCmd, []string{"--dhcp-range", fmt.Sprintf("%s,%s", networkGetIP(subnet, 2), networkGetIP(subnet, -1))}...)
 				}
 			} else {
-				flags = ",ra-only"
+				dnsmasqCmd = append(dnsmasqCmd, []string{"--dhcp-range", fmt.Sprintf("::,constructor:%s,ra-stateless,ra-names", n.name)}...)
 			}
-
-			if n.config["ipv6.dhcp.ranges"] != "" {
-				for _, dhcpRange := range strings.Split(n.config["ipv6.dhcp.ranges"], ",") {
-					dhcpRange = strings.TrimSpace(dhcpRange)
-					dnsmasqCmd = append(dnsmasqCmd, []string{"--dhcp-range", fmt.Sprintf("%s%s", strings.Replace(dhcpRange, "-", ",", -1), flags)}...)
-				}
-			} else {
-				dnsmasqCmd = append(dnsmasqCmd, []string{"--dhcp-range", fmt.Sprintf("%s,%s%s", networkGetIP(subnet, 2), networkGetIP(subnet, -1), flags)}...)
-			}
+		} else {
+			dnsmasqCmd = append(dnsmasqCmd, []string{"--dhcp-range", fmt.Sprintf("::,constructor:%s,ra-only", n.name)}...)
 		}
 
 		// Setup basic iptables overrides
-		err = networkIptablesPrepend("ipv6", n.name, "", "INPUT", "-i", n.name, "-p", "udp", "--dport", "546", "-j", "ACCEPT")
-		if err != nil {
-			return err
-		}
+		rules := [][]string{
+			[]string{"ipv6", n.name, "", "INPUT", "-i", n.name, "-p", "udp", "--dport", "546", "-j", "ACCEPT"},
+			[]string{"ipv6", n.name, "", "INPUT", "-i", n.name, "-p", "tcp", "--dport", "546", "-j", "ACCEPT"},
+			[]string{"ipv6", n.name, "", "INPUT", "-i", n.name, "-p", "udp", "--dport", "53", "-j", "ACCEPT"},
+			[]string{"ipv6", n.name, "", "INPUT", "-i", n.name, "-p", "tcp", "--dport", "53", "-j", "ACCEPT"},
+			[]string{"ipv6", n.name, "", "OUTPUT", "-o", n.name, "-p", "udp", "--sport", "546", "-j", "ACCEPT"},
+			[]string{"ipv6", n.name, "", "OUTPUT", "-o", n.name, "-p", "tcp", "--sport", "546", "-j", "ACCEPT"},
+			[]string{"ipv6", n.name, "", "OUTPUT", "-o", n.name, "-p", "udp", "--sport", "53", "-j", "ACCEPT"},
+			[]string{"ipv6", n.name, "", "OUTPUT", "-o", n.name, "-p", "tcp", "--sport", "53", "-j", "ACCEPT"}}
 
-		err = networkIptablesPrepend("ipv6", n.name, "", "INPUT", "-i", n.name, "-p", "tcp", "--dport", "546", "-j", "ACCEPT")
-		if err != nil {
-			return err
-		}
-
-		err = networkIptablesPrepend("ipv6", n.name, "", "INPUT", "-i", n.name, "-p", "udp", "--dport", "53", "-j", "ACCEPT")
-		if err != nil {
-			return err
-		}
-
-		err = networkIptablesPrepend("ipv6", n.name, "", "INPUT", "-i", n.name, "-p", "tcp", "--dport", "53", "-j", "ACCEPT")
-		if err != nil {
-			return err
+		for _, rule := range rules {
+			err = networkIptablesPrepend(rule[0], rule[1], rule[2], rule[3], rule[4:]...)
+			if err != nil {
+				return err
+			}
 		}
 
 		// Allow forwarding

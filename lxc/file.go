@@ -37,7 +37,7 @@ func (c *fileCmd) usage() string {
 		`Manage files on a container.
 
 lxc file pull [-r|--recursive] <source> [<source>...] <target>
-lxc file push [-r|--recursive] [-p|create-dirs] [--uid=UID] [--gid=GID] [--mode=MODE] <source> [<source>...] <target>
+lxc file push [-r|--recursive] [-p|--create-dirs] [--uid=UID] [--gid=GID] [--mode=MODE] <source> [<source>...] <target>
 lxc file edit <file>
 
 <source> in the case of pull, <target> in the case of push and <file> in the case of edit are <container name>/<path>
@@ -74,6 +74,17 @@ func (c *fileCmd) push(config *lxd.Config, send_file_perms bool, args []string) 
 		return fmt.Errorf(i18n.G("Invalid target %s"), target)
 	}
 
+	/* Fix up the path. Let's:
+	 * 1. re-add the leading / that got stripped from the SplitN
+	 * 2. clean it and remove any /./, /../, /////, etc.
+	 * 3. keep the trailing slash if it had one, since we use it via
+	 *    filepath.Split below
+	 */
+	pathSpec[1] = filepath.Clean("/" + pathSpec[1])
+	if target[len(target)-1] == '/' {
+		pathSpec[1] = pathSpec[1] + "/"
+	}
+
 	targetPath := pathSpec[1]
 	remote, container := config.ParseRemoteAndContainer(pathSpec[0])
 
@@ -107,13 +118,13 @@ func (c *fileCmd) push(config *lxd.Config, send_file_perms bool, args []string) 
 			return fmt.Errorf(i18n.G("can't supply uid/gid/mode in recursive mode"))
 		}
 
-		for _, fname := range sourcefilenames {
-			if c.mkdirs {
-				if err := d.MkdirP(container, fname, mode); err != nil {
-					return err
-				}
+		if c.mkdirs {
+			if err := d.MkdirP(container, pathSpec[1], mode); err != nil {
+				return err
 			}
+		}
 
+		for _, fname := range sourcefilenames {
 			if err := d.RecursivePushFile(container, fname, pathSpec[1]); err != nil {
 				return err
 			}

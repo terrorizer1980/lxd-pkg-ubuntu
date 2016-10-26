@@ -15,10 +15,14 @@
 
 #include "lxc-binding.h"
 
+#ifndef LXC_DEVEL
+#define LXC_DEVEL 0
+#endif
+
 #define VERSION_AT_LEAST(major, minor, micro)							\
-	(!(major > LXC_VERSION_MAJOR ||								\
+	((LXC_DEVEL == 1) || (!(major > LXC_VERSION_MAJOR ||					\
 	major == LXC_VERSION_MAJOR && minor > LXC_VERSION_MINOR ||				\
-	major == LXC_VERSION_MAJOR && minor == LXC_VERSION_MINOR && micro > LXC_VERSION_MICRO))
+	major == LXC_VERSION_MAJOR && minor == LXC_VERSION_MINOR && micro > LXC_VERSION_MICRO)))
 
 bool go_lxc_defined(struct lxc_container *c) {
 	return c->is_defined(c);
@@ -210,6 +214,51 @@ again:
         if (ret != pid)
                 goto again;
         return status;
+}
+
+int go_lxc_attach_no_wait(struct lxc_container *c,
+		bool clear_env,
+		int namespaces,
+		long personality,
+		uid_t uid, gid_t gid,
+		int stdinfd, int stdoutfd, int stderrfd,
+		char *initial_cwd,
+		char **extra_env_vars,
+		char **extra_keep_env,
+		const char * const argv[],
+		pid_t *attached_pid) {
+	int ret;
+
+	lxc_attach_options_t attach_options = LXC_ATTACH_OPTIONS_DEFAULT;
+	lxc_attach_command_t command = (lxc_attach_command_t){.program = NULL};
+
+	attach_options.env_policy = LXC_ATTACH_KEEP_ENV;
+	if (clear_env) {
+		attach_options.env_policy = LXC_ATTACH_CLEAR_ENV;
+	}
+
+	attach_options.namespaces = namespaces;
+	attach_options.personality = personality;
+
+	attach_options.uid = uid;
+	attach_options.gid = gid;
+
+	attach_options.stdin_fd = stdinfd;
+	attach_options.stdout_fd = stdoutfd;
+	attach_options.stderr_fd = stderrfd;
+
+	attach_options.initial_cwd = initial_cwd;
+	attach_options.extra_env_vars = extra_env_vars;
+	attach_options.extra_keep_env = extra_keep_env;
+
+	command.program = (char *)argv[0];
+	command.argv = (char **)argv;
+
+	ret = c->attach(c, lxc_attach_run_command, &command, &attach_options, attached_pid);
+	if (ret < 0)
+		return -1;
+
+	return 0;
 }
 
 int go_lxc_attach(struct lxc_container *c,

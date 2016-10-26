@@ -6,9 +6,12 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
@@ -19,12 +22,13 @@ import (
 )
 
 type commandPostContent struct {
-	Command     []string          `json:"command"`
-	WaitForWS   bool              `json:"wait-for-websocket"`
-	Interactive bool              `json:"interactive"`
-	Environment map[string]string `json:"environment"`
-	Width       int               `json:"width"`
-	Height      int               `json:"height"`
+	Command      []string          `json:"command"`
+	WaitForWS    bool              `json:"wait-for-websocket"`
+	RecordOutput bool              `json:"record-output"`
+	Interactive  bool              `json:"interactive"`
+	Environment  map[string]string `json:"environment"`
+	Width        int               `json:"width"`
+	Height       int               `json:"height"`
 }
 
 type execWs struct {
@@ -133,11 +137,13 @@ func (s *execWs) Do(op *operation) error {
 	}
 
 	controlExit := make(chan bool)
+	receivePid := make(chan int)
 	var wgEOF sync.WaitGroup
 
 	if s.interactive {
 		wgEOF.Add(1)
 		go func() {
+			receivedPid := <-receivePid
 			select {
 			case <-s.controlConnected:
 				break
@@ -188,6 +194,12 @@ func (s *execWs) Do(op *operation) error {
 						shared.LogDebugf("Failed to set window size to: %dx%d", winchWidth, winchHeight)
 						continue
 					}
+				} else if command.Command == "signal" {
+					if err := syscall.Kill(receivedPid, command.Signal); err != nil {
+						shared.LogDebugf("Failed forwarding signal '%s' to PID %d.", command.Signal, receivedPid)
+						continue
+					}
+					shared.LogDebugf("Forwarded signal '%s' to PID %d.", command.Signal, receivedPid)
 				}
 			}
 		}()
@@ -214,33 +226,76 @@ func (s *execWs) Do(op *operation) error {
 		}
 	}
 
-	cmdResult, cmdErr := s.container.Exec(s.command, s.env, stdin, stdout, stderr)
-
-	for _, tty := range ttys {
-		tty.Close()
-	}
-
-	if s.conns[-1] == nil {
-		if s.interactive {
-			controlExit <- true
+	finisher := func(cmdResult int, cmdErr error) error {
+		for _, tty := range ttys {
+			tty.Close()
 		}
-	} else {
-		s.conns[-1].Close()
+
+		if s.conns[-1] == nil {
+			if s.interactive {
+				controlExit <- true
+			}
+		} else {
+			s.conns[-1].Close()
+		}
+
+		wgEOF.Wait()
+
+		for _, pty := range ptys {
+			pty.Close()
+		}
+
+		metadata := shared.Jmap{"return": cmdResult}
+		err = op.UpdateMetadata(metadata)
+		if err != nil {
+			return err
+		}
+
+		return cmdErr
 	}
 
-	wgEOF.Wait()
-
-	for _, pty := range ptys {
-		pty.Close()
-	}
-
-	metadata := shared.Jmap{"return": cmdResult}
-	err = op.UpdateMetadata(metadata)
+	r, w, err := shared.Pipe()
+	defer r.Close()
 	if err != nil {
+		shared.LogErrorf("s", err)
 		return err
 	}
 
-	return cmdErr
+	cmd, err := s.container.ExecNoWait(s.command, s.env, stdin, stdout, stderr, w)
+	if err != nil {
+		w.Close()
+		return err
+	}
+
+	err = cmd.Start()
+	if err != nil {
+		w.Close()
+		return err
+	}
+	w.Close()
+
+	attachedPid := -1
+	if err := json.NewDecoder(r).Decode(&attachedPid); err != nil {
+		shared.LogErrorf("Failed to retrieve PID of executing child process: %s", err)
+		return finisher(-1, err)
+	}
+
+	if s.interactive {
+		receivePid <- attachedPid
+	}
+
+	err = cmd.Wait()
+	if err != nil {
+		exitErr, ok := err.(*exec.ExitError)
+		if ok {
+			status, ok := exitErr.Sys().(syscall.WaitStatus)
+			if ok {
+				return finisher(status.ExitStatus(), nil)
+			}
+		}
+	}
+
+	return finisher(0, nil)
 }
 
 func containerExecPost(d *Daemon, r *http.Request) Response {
@@ -333,18 +388,43 @@ func containerExecPost(d *Daemon, r *http.Request) Response {
 	}
 
 	run := func(op *operation) error {
-		nullDev, err := os.OpenFile(os.DevNull, os.O_RDWR, 0666)
-		if err != nil {
-			return err
-		}
-		defer nullDev.Close()
+		var cmdErr error
+		var cmdResult int
+		metadata := shared.Jmap{}
 
-		cmdResult, cmdErr := c.Exec(post.Command, env, nil, nil, nil)
-		metadata := shared.Jmap{"return": cmdResult}
+		if post.RecordOutput {
+			// Prepare stdout and stderr recording
+			stdout, err := os.OpenFile(filepath.Join(c.LogPath(), fmt.Sprintf("exec_%s.stdout", op.id)), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
+			if err != nil {
+				return err
+			}
+			defer stdout.Close()
+
+			stderr, err := os.OpenFile(filepath.Join(c.LogPath(), fmt.Sprintf("exec_%s.stderr", op.id)), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
+			if err != nil {
+				return err
+			}
+			defer stderr.Close()
+
+			// Run the command
+			cmdResult, cmdErr = c.Exec(post.Command, env, nil, stdout, stderr)
+
+			// Update metadata with the right URLs
+			metadata["return"] = cmdResult
+			metadata["output"] = shared.Jmap{
+				"1": fmt.Sprintf("/%s/containers/%s/logs/%s", shared.APIVersion, c.Name(), filepath.Base(stdout.Name())),
+				"2": fmt.Sprintf("/%s/containers/%s/logs/%s", shared.APIVersion, c.Name(), filepath.Base(stderr.Name())),
+			}
+		} else {
+			cmdResult, cmdErr = c.Exec(post.Command, env, nil, nil, nil)
+			metadata["return"] = cmdResult
+		}
+
 		err = op.UpdateMetadata(metadata)
 		if err != nil {
 			shared.LogError("error updating metadata for cmd", log.Ctx{"err": err, "cmd": post.Command})
 		}
+
 		return cmdErr
 	}
 
