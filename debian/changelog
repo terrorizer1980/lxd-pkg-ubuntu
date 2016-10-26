@@ -1,3 +1,79 @@
+lxd (2.5-0ubuntu1) zesty; urgency=medium
+
+  * New upstream release (2.5):
+    - lxc/remote: Allow adding a new remote just by FQDN/IP (without a name)
+    - lxd/containers: Implement exec output recording in the API
+    - lxd/images: Store the simplestreams cache to disk (allows for
+      offline use of those remote images)
+    - lxd/certificates: Add support for PUT/PATCH of certificates
+    - lxd/containers: Support signal forwarding in exec session
+    - lxd/containers: Add support for GPU hotplug ("gpu" device type)
+
+    - appveyor: Add appveyor config to git
+    - client: Disable keepalives in http.Transports
+    - client: Fix tests of client on Windows/Mac
+    - doc: Add official Windows support to README
+    - doc: Sort API endpoints in rest-api
+    - doc: Use consistent method ordering in rest-api
+    - doc: Use spaces everywhere
+    - doc: We actually require 2.0.0 or higher
+    - doc: Workaround github markdown renderer
+    - examples: Use .yaml as the yaml extension
+    - extra: Added the command network to lxc-client bash-completion
+    - extra: Allow dash in parameters to lxc-client bash-completion
+    - extra: Fix _lxd_profiles in lxc-client bash-completion
+    - lxc/copy: Don't use the operation as a marker of success
+    - lxc/copy: Wait on the source operation too
+    - lxc/exec: Set term to "dumb" on windows
+    - lxc/file: Fix help typo
+    - lxc/file: Fix mkdir -p /
+    - lxc/file: Normalize paths before sending them to the server
+    - lxc/init: Fix typo in nictype value for -n
+    - lxc/list: Fix typo in lxc list help
+    - lxc/push: Fix typo
+    - lxc/remote: Fix remote add with Go tip
+    - lxd/certificates: Export all documented certificate fields
+    - lxd/containers: Be more verbose on mkdir failure
+    - lxd/containers: Catch and return more errors in OnStop
+    - lxd/containers: Clean up apparmor stuff in OnStart when something fails
+    - lxd/containers: Don't destroy ephemeral container on restart
+    - lxd/containers: Don't show invalid logs
+    - lxd/containers: exec: Remove unused code
+    - lxd/containers: Fix forkmount to work with 4.8 and higher
+    - lxd/containers: Fix wording of seccomp error message
+    - lxd/containers: Improve config validation on update
+    - lxd/containers: Log OnStart/OnStop hook errors
+    - lxd/containers: More reliable container autostart
+    - lxd/containers: Only load kernel modules if not loaded
+    - lxd/containers: Properly validate CPU allowance
+    - lxd/containers: Properly validate memory limits
+    - lxd/containers: Record the err from go-lxc
+    - lxd/containers: Remove legacy code from OnStop
+    - lxd/containers: Report correct dev type in log
+    - lxd/containers: Set LXC loglevel to match daemon
+    - lxd/containers: USB vendorid is mandatory, productid isn't
+    - lxd/devices: Be less optimistic about netlink info
+    - lxd/devices: Use DEVNAME entry of netlink for usb
+    - lxd/images: Detect out of disk space unpack errors
+    - lxd/images: Don't make unnecessary image copies
+    - lxd/images: Fix invalid filename of metadata on export
+    - lxd/init: Detect zfs kernel support
+    - lxd/init: Ignore ZFS if in a container
+    - lxd/migration: Fix a race for collecting logs
+    - lxd/migration: Remove debugging by file creation
+    - lxd/migration: Start migration storage at the right time
+    - lxd/networks: Always allow communication with dnsmasq
+    - lxd/networks: Always pass --enable-ra with IPv6
+    - lxd/networks: Fill DHCP checksums
+    - lxd/networks: Fix IPv6 DHCP logic
+    - shared/cert: be more thorough when parsing ip addr
+    - shared: Move Linux specific tests away
+    - travis: Run the client tests
+    - travis: Update to match Jenkins Go versions
+  * Disabling shared libraries for now (broken with Go 1.7)
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Tue, 25 Oct 2016 23:32:02 -0400
+
 lxd (2.4.1-0ubuntu2) zesty; urgency=medium
 
   * Add a logrotate profile for /var/log/lxd/lxd.log (LP: #1635079)
