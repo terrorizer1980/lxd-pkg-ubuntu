@@ -103,7 +103,7 @@ fi
 echo "Configuring the new LXD bridge"
 if [ -n "${LXD_CONFILE}" ] && [ -e "${LXD_CONFILE}" ]; then
     echo "Setting dnsmasq conf-file to ${LXD_CONFILE}"
-    lxc network set "${LXD_BRIDGE}" raw.dnsmasq "conf-file ${LXD_CONFILE}" --force-local
+    lxc network set "${LXD_BRIDGE}" raw.dnsmasq "conf-file=${LXD_CONFILE}" --force-local
 fi
 
 if [ "${LXD_DOMAIN}" != "lxd" ]; then
