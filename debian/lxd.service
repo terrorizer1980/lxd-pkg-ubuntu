@@ -1,6 +1,6 @@
 [Unit]
 Description=LXD - main daemon
-After=network-online.target lxcfs.service lxd.socket
+After=network-online.target openvswitch-switch.service lxcfs.service lxd.socket
 Requires=network-online.target lxcfs.service lxd.socket
 Documentation=man:lxd(1)
 
