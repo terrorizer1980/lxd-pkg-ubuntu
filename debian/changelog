@@ -1,3 +1,10 @@
+lxd (2.6-0ubuntu2) zesty; urgency=medium
+
+  * Add a build-dependency on libsqlite3-dev for PPA/backports that
+    don't use the Go shared libraries.
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 23 Nov 2016 13:42:08 -0500
+
 lxd (2.6-0ubuntu1) zesty; urgency=medium
 
   * New upstream release (2.6):
