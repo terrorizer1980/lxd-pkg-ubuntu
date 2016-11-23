@@ -127,9 +127,10 @@ func (d *Daemon) httpGetSync(url string, certificate string) (*lxd.Response, err
 	}
 
 	tr := &http.Transport{
-		TLSClientConfig: tlsConfig,
-		Dial:            shared.RFC3493Dialer,
-		Proxy:           d.proxy,
+		TLSClientConfig:   tlsConfig,
+		Dial:              shared.RFC3493Dialer,
+		Proxy:             d.proxy,
+		DisableKeepAlives: true,
 	}
 
 	myhttp := http.Client{
@@ -182,9 +183,10 @@ func (d *Daemon) httpGetFile(url string, certificate string) (*http.Response, er
 	}
 
 	tr := &http.Transport{
-		TLSClientConfig: tlsConfig,
-		Dial:            shared.RFC3493Dialer,
-		Proxy:           d.proxy,
+		TLSClientConfig:   tlsConfig,
+		Dial:              shared.RFC3493Dialer,
+		Proxy:             d.proxy,
+		DisableKeepAlives: true,
 	}
 	myhttp := http.Client{
 		Transport: tr,
@@ -731,6 +733,9 @@ func (d *Daemon) Init() error {
 	d.lxcpath = shared.VarPath("containers")
 
 	/* Make sure all our directories are available */
+	if err := os.MkdirAll(shared.CachePath(), 0700); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(shared.VarPath("containers"), 0711); err != nil {
 		return err
 	}
@@ -795,6 +800,12 @@ func (d *Daemon) Init() error {
 
 		/* Apply all patches */
 		err = patchesApplyAll(d)
+		if err != nil {
+			return err
+		}
+
+		/* Restore simplestreams cache */
+		err = imageLoadStreamCache(d)
 		if err != nil {
 			return err
 		}
@@ -1022,8 +1033,13 @@ func (d *Daemon) Ready() error {
 	/* Auto-update images */
 	d.resetAutoUpdateChan = make(chan bool)
 	go func() {
-		autoUpdateImages(d)
+		// Initial image sync
+		interval := daemonConfig["images.auto_update_interval"].GetInt64()
+		if interval > 0 {
+			autoUpdateImages(d)
+		}
 
+		// Background image sync
 		for {
 			interval := daemonConfig["images.auto_update_interval"].GetInt64()
 			if interval > 0 {
@@ -1127,6 +1143,10 @@ func (d *Daemon) Stop() error {
 	shared.LogInfof("Stopping /dev/lxd handler")
 	d.devlxd.Close()
 	shared.LogInfof("Stopped /dev/lxd handler")
+
+	shared.LogInfof("Saving simplestreams cache")
+	imageSaveStreamCache()
+	shared.LogInfof("Saved simplestreams cache")
 
 	if d.MockMode || forceStop {
 		return nil

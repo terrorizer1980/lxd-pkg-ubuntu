@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/gorilla/websocket"
 
@@ -52,7 +53,7 @@ func (s *storageZfs) Init(config map[string]interface{}) (storage, error) {
 	err = s.zfsCheckPool(s.zfsPool)
 	if err != nil {
 		if shared.PathExists(shared.VarPath("zfs.img")) {
-			_ = exec.Command("modprobe", "zfs").Run()
+			_ = loadModule("zfs")
 
 			output, err := exec.Command("zpool", "import",
 				"-d", shared.VarPath(), s.zfsPool).CombinedOutput()
@@ -627,7 +628,7 @@ func (s *storageZfs) ImageCreate(fingerprint string) error {
 		return err
 	}
 
-	err = unpackImage(imagePath, subvol)
+	err = unpackImage(s.d, imagePath, subvol)
 	if err != nil {
 		return cleanup(err)
 	}
@@ -891,20 +892,33 @@ func (s *storageZfs) zfsGet(path string, key string) (string, error) {
 }
 
 func (s *storageZfs) zfsRename(source string, dest string) error {
-	output, err := tryExec(
-		"zfs",
-		"rename",
-		"-p",
-		fmt.Sprintf("%s/%s", s.zfsPool, source),
-		fmt.Sprintf("%s/%s", s.zfsPool, dest))
-	if err != nil {
-		if s.zfsExists(source) || !s.zfsExists(dest) {
-			s.log.Error("zfs rename failed", log.Ctx{"output": string(output)})
-			return fmt.Errorf("Failed to rename ZFS filesystem: %s", output)
+	var err error
+	var output []byte
+
+	for i := 0; i < 20; i++ {
+		output, err = exec.Command(
+			"zfs",
+			"rename",
+			"-p",
+			fmt.Sprintf("%s/%s", s.zfsPool, source),
+			fmt.Sprintf("%s/%s", s.zfsPool, dest)).CombinedOutput()
+
+		// Success
+		if err == nil {
+			return nil
 		}
+
+		// zfs rename can fail because of descendants, yet still manage the rename
+		if !s.zfsExists(source) && s.zfsExists(dest) {
+			return nil
+		}
+
+		time.Sleep(500 * time.Millisecond)
 	}
 
-	return nil
+	// Timeout
+	s.log.Error("zfs rename failed", log.Ctx{"output": string(output)})
+	return fmt.Errorf("Failed to rename ZFS filesystem: %s", output)
 }
 
 func (s *storageZfs) zfsSet(path string, key string, value string) error {

@@ -65,7 +65,7 @@ The currently supported keys are:
 
 Key                         | Type      | Default       | Live update   | Description
 :--                         | :---      | :------       | :----------   | :----------
-boot.autostart              | boolean   | false         | n/a           | Always start the container when LXD starts
+boot.autostart              | boolean   | -             | n/a           | Always start the container when LXD starts (if not set, restore last state)
 boot.autostart.delay        | integer   | 0             | n/a           | Number of seconds to wait after the container started before starting the next one
 boot.autostart.priority     | integer   | 0             | n/a           | What order to start the containers in (starting with highest)
 environment.\*              | string    | -             | yes (exec)    | key/value environment variables to export to the container and set on exec
@@ -82,6 +82,9 @@ limits.processes            | integer   | - (max)       | yes           | Maximu
 linux.kernel\_modules       | string    | -             | yes           | Comma separated list of kernel modules to load before starting the container
 raw.apparmor                | blob      | -             | yes           | Apparmor profile entries to be appended to the generated profile
 raw.lxc                     | blob      | -             | no            | Raw LXC configuration to be appended to the generated one
+raw.idmap                   | blob      | -             | no            | Raw idmap configuration (e.g. "both 1000 1000")
+security.idmap.isolated     | boolean   | false         | no            | Use an idmap for this container that is unique among containers with isolated set.
+security.idmap.size         | integer   | -             | no            | The size of the idmap to use
 security.nesting            | boolean   | false         | yes           | Support running lxd (nested) inside the container
 security.privileged         | boolean   | false         | no            | Runs the container in privileged mode
 user.\*                     | string    | -             | n/a           | Free form user key/value storage (can be used in search)
@@ -94,6 +97,8 @@ volatile.\<name\>.hwaddr    | string    | -             | Network device MAC add
 volatile.\<name\>.name      | string    | -             | Network device name (when no name propery is set on the device itself)
 volatile.apply\_template    | string    | -             | The name of a template hook which should be triggered upon next startup
 volatile.base\_image        | string    | -             | The hash of the image the container was created from, if any.
+volatile.idmap.base         | integer   | -             | The first id in the container's primary idmap range
+volatile.idmap.next         | string    | -             | The idmap to use next time the container starts
 volatile.last\_state.idmap  | string    | -             | Serialized container uid/gid map
 volatile.last\_state.power  | string    | -             | Container state as of last host shutdown
 
@@ -106,6 +111,7 @@ user.network\_mode          | string        | dhcp              | One of "dhcp" 
 user.meta-data              | string        | -                 | Cloud-init meta-data, content is appended to seed value.
 user.user-data              | string        | #!cloud-config    | Cloud-init user-data, content is used as seed value.
 user.vendor-data            | string        | #!cloud-config    | Cloud-init vendor-data, content is used as seed value.
+user.network-config         | string        | DHCP on eth0      | Cloud-init network-config, content is used as seed value.
 
 Note that while a type is defined above as a convenience, all values are
 stored as strings and should be exported over the REST API as strings

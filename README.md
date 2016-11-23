@@ -29,6 +29,15 @@ shell you're going to interact with lxd from.
 After you've got LXD installed and a session with the right permissions, you
 can take your [first steps](#first-steps).
 
+#### Getting started with LXD on Windows
+
+LXD server is not available on Windows, but it is possible to use
+[`lxc` client](https://ci.appveyor.com/project/lxc/lxd/branch/master/artifacts)
+with
+[some limitations](https://github.com/lxc/lxd/issues?utf8=%E2%9C%93&q=is%3Aissue%20is%3Aopen%20windows)
+to control remote containers.
+
+
 ## Using the REST API
 The LXD REST API can be used locally via unauthenticated Unix socket or remotely via SSL encapsulated TCP.
 
@@ -76,7 +85,7 @@ The `hello-ubuntu.json` file referenced above could contain something like:
 
 ## Building from source
 
-We recommend having the latest versions of liblxc (>= 1.1 required) and CRIU
+We recommend having the latest versions of liblxc (>= 2.0.0 required) and CRIU
 (>= 1.7 recommended) available for LXD development. Additionally, LXD requires
 Golang 1.5 or later to work. All the right versions dependencies are available
 via the LXD PPA:
@@ -315,7 +324,7 @@ Yes. The easiest way to do that is using a privileged container:
 1.a) create a container.
 
     lxc launch ubuntu privilegedContainerName -c security.privileged=true
-    
+
 1.b) or, if your container already exists.
 
         lxc config set privilegedContainerName security.privileged true
@@ -333,5 +342,9 @@ apply the docker profile to your container.
 
 Note that the docker profile does not provide a network interface, so the
 common case will want to compose the default and docker profiles.
+
+Also note that Docker coming from [upstream](https://apt.dockerproject.org/repo) doesn't currently run as is inside the lxd container. Look at issue [#2621](https://github.com/lxc/lxd/issues/2621) for more details. You need to download the docker coming from Ubuntu (docker.io package) to get this working. So once you are in the lxd container run
+
+    sudo apt-get install -y docker.io runc containerd
 
 The container must be using the Ubuntu 1.10.2-0ubuntu4 or newer docker package.

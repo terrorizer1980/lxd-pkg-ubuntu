@@ -13,6 +13,7 @@ import (
 	"path"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,27 +31,43 @@ import (
 
 // Operation locking
 type lxcContainerOperation struct {
-	action   string
-	chanDone chan error
-	err      error
-	id       int
-	timeout  int
+	action    string
+	chanDone  chan error
+	chanReset chan bool
+	err       error
+	id        int
+	reusable  bool
 }
 
-func (op *lxcContainerOperation) Create(id int, action string, timeout int) *lxcContainerOperation {
+func (op *lxcContainerOperation) Create(id int, action string, reusable bool) *lxcContainerOperation {
 	op.id = id
 	op.action = action
-	op.timeout = timeout
+	op.reusable = reusable
 	op.chanDone = make(chan error, 0)
+	op.chanReset = make(chan bool, 0)
 
-	if timeout > 1 {
-		go func(op *lxcContainerOperation) {
-			time.Sleep(time.Second * time.Duration(op.timeout))
-			op.Done(fmt.Errorf("Container %s operation timed out after %d seconds", op.action, op.timeout))
-		}(op)
-	}
+	go func(op *lxcContainerOperation) {
+		for {
+			select {
+			case <-op.chanReset:
+				continue
+			case <-time.After(time.Second * 30):
+				op.Done(fmt.Errorf("Container %s operation timed out after 30 seconds", op.action))
+				return
+			}
+		}
+	}(op)
 
 	return op
+}
+
+func (op *lxcContainerOperation) Reset() error {
+	if !op.reusable {
+		return fmt.Errorf("Can't reset a non-reusable operation")
+	}
+
+	op.chanReset <- true
+	return nil
 }
 
 func (op *lxcContainerOperation) Wait() error {
@@ -98,6 +115,9 @@ func lxcValidConfig(rawLxc string) error {
 		if len(line) == 0 {
 			continue
 		}
+
+		// Skip whitespace {"\t", " "}
+		line = strings.TrimLeft(line, "\t ")
 
 		// Ignore comments
 		if strings.HasPrefix(line, "#") {
@@ -212,7 +232,18 @@ func containerLXCCreate(d *Daemon, args containerArgs) (container, error) {
 	}
 
 	// Setup initial idmap config
-	idmap := c.IdmapSet()
+	idmap, base, err := findIdmap(
+		d,
+		args.Name,
+		c.expandedConfig["security.idmap.isolated"],
+		c.expandedConfig["security.idmap.size"],
+		c.expandedConfig["raw.idmap"],
+	)
+	if err != nil {
+		c.Delete()
+		return nil, err
+	}
+
 	var jsonIdmap string
 	if idmap != nil {
 		idmapBytes, err := json.Marshal(idmap.Idmap)
@@ -225,7 +256,29 @@ func containerLXCCreate(d *Daemon, args containerArgs) (container, error) {
 		jsonIdmap = "[]"
 	}
 
-	err = c.ConfigKeySet("volatile.last_state.idmap", jsonIdmap)
+	err = c.ConfigKeySet("volatile.idmap.next", jsonIdmap)
+	if err != nil {
+		c.Delete()
+		return nil, err
+	}
+
+	err = c.ConfigKeySet("volatile.idmap.base", fmt.Sprintf("%v", base))
+	if err != nil {
+		c.Delete()
+		return nil, err
+	}
+
+	// Set last_state to the map we have on disk
+	if c.localConfig["volatile.last_state.idmap"] == "" {
+		err = c.ConfigKeySet("volatile.last_state.idmap", jsonIdmap)
+		if err != nil {
+			c.Delete()
+			return nil, err
+		}
+	}
+
+	// Re-run init to update the idmap
+	err = c.init()
 	if err != nil {
 		c.Delete()
 		return nil, err
@@ -291,17 +344,22 @@ type containerLXC struct {
 	storage  storage
 }
 
-func (c *containerLXC) createOperation(action string, timeout int) (*lxcContainerOperation, error) {
+func (c *containerLXC) createOperation(action string, reusable bool, reuse bool) (*lxcContainerOperation, error) {
 	op, _ := c.getOperation("")
 	if op != nil {
-		return nil, fmt.Errorf("Container is already running a %s operation", op.action)
+		if reuse && op.reusable {
+			op.Reset()
+			return op, nil
+		}
+
+		return nil, fmt.Errorf("Container is busy running a %s operation", op.action)
 	}
 
 	lxcContainerOperationsLock.Lock()
 	defer lxcContainerOperationsLock.Unlock()
 
 	op = &lxcContainerOperation{}
-	op.Create(c.id, action, timeout)
+	op.Create(c.id, action, reusable)
 	lxcContainerOperations[c.id] = op
 
 	return lxcContainerOperations[c.id], nil
@@ -336,6 +394,232 @@ func (c *containerLXC) waitOperation() error {
 	return nil
 }
 
+func idmapSize(daemon *Daemon, isolatedStr string, size string) (int, error) {
+	isolated := false
+	if shared.IsTrue(isolatedStr) {
+		isolated = true
+	}
+
+	var idMapSize int
+	if size == "" || size == "auto" {
+		if isolated {
+			idMapSize = 65536
+		} else {
+			if len(daemon.IdmapSet.Idmap) != 2 {
+				return 0, fmt.Errorf("bad initial idmap: %v", daemon.IdmapSet)
+			}
+
+			idMapSize = daemon.IdmapSet.Idmap[0].Maprange
+		}
+	} else {
+		size, err := strconv.ParseInt(size, 10, 32)
+		if err != nil {
+			return 0, err
+		}
+
+		idMapSize = int(size)
+	}
+
+	return idMapSize, nil
+}
+
+var idmapLock sync.Mutex
+
+func parseRawIdmap(value string) ([]shared.IdmapEntry, error) {
+	getRange := func(r string) (int, int, error) {
+		entries := strings.Split(r, "-")
+		if len(entries) > 2 {
+			return -1, -1, fmt.Errorf("invalid raw.idmap range %s", r)
+		}
+
+		base, err := strconv.Atoi(entries[0])
+		if err != nil {
+			return -1, -1, err
+		}
+
+		size := 1
+		if len(entries) > 1 {
+			size, err = strconv.Atoi(entries[1])
+			if err != nil {
+				return -1, -1, err
+			}
+
+			size -= base
+			size += 1
+		}
+
+		return base, size, nil
+	}
+
+	ret := shared.IdmapSet{}
+
+	for _, line := range strings.Split(value, "\n") {
+		if line == "" {
+			continue
+		}
+
+		entries := strings.Split(line, " ")
+		if len(entries) != 3 {
+			return nil, fmt.Errorf("invalid raw.idmap line %s", line)
+		}
+
+		outsideBase, outsideSize, err := getRange(entries[1])
+		if err != nil {
+			return nil, err
+		}
+
+		insideBase, insideSize, err := getRange(entries[2])
+		if err != nil {
+			return nil, err
+		}
+
+		if insideSize != outsideSize {
+			return nil, fmt.Errorf("idmap ranges of different sizes %s", line)
+		}
+
+		entry := shared.IdmapEntry{
+			Hostid:   outsideBase,
+			Nsid:     insideBase,
+			Maprange: insideSize,
+		}
+
+		switch entries[0] {
+		case "both":
+			entry.Isuid = true
+			entry.Isgid = true
+			err := ret.AddSafe(entry)
+			if err != nil {
+				return nil, err
+			}
+		case "uid":
+			entry.Isuid = true
+			err := ret.AddSafe(entry)
+			if err != nil {
+				return nil, err
+			}
+		case "gid":
+			entry.Isgid = true
+			err := ret.AddSafe(entry)
+			if err != nil {
+				return nil, err
+			}
+		default:
+			return nil, fmt.Errorf("invalid raw.idmap type %s", line)
+		}
+	}
+
+	return ret.Idmap, nil
+}
+
+func findIdmap(daemon *Daemon, cName string, isolatedStr string, configSize string, rawIdmap string) (*shared.IdmapSet, int, error) {
+	isolated := false
+	if shared.IsTrue(isolatedStr) {
+		isolated = true
+	}
+
+	rawMaps, err := parseRawIdmap(rawIdmap)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	if !isolated {
+		newIdmapset := shared.IdmapSet{Idmap: make([]shared.IdmapEntry, len(daemon.IdmapSet.Idmap))}
+		copy(newIdmapset.Idmap, daemon.IdmapSet.Idmap)
+
+		for _, ent := range rawMaps {
+			newIdmapset.AddSafe(ent)
+		}
+
+		return &newIdmapset, 0, nil
+	}
+
+	idmapLock.Lock()
+	defer idmapLock.Unlock()
+
+	cs, err := dbContainersList(daemon.db, cTypeRegular)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	offset := daemon.IdmapSet.Idmap[0].Hostid + 65536
+	size, err := idmapSize(daemon, isolatedStr, configSize)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	mapentries := shared.ByHostid{}
+	for _, name := range cs {
+		/* Don't change our map Just Because. */
+		if name == cName {
+			continue
+		}
+
+		container, err := containerLoadByName(daemon, name)
+		if err != nil {
+			return nil, 0, err
+		}
+
+		if !shared.IsTrue(container.ExpandedConfig()["security.idmap.isolated"]) {
+			continue
+		}
+
+		cBase, err := strconv.ParseInt(container.ExpandedConfig()["volatile.idmap.base"], 10, 32)
+		if err != nil {
+			return nil, 0, err
+		}
+
+		cSize, err := idmapSize(daemon, container.ExpandedConfig()["security.idmap.isolated"], container.ExpandedConfig()["security.idmap.size"])
+		if err != nil {
+			return nil, 0, err
+		}
+
+		mapentries = append(mapentries, &shared.IdmapEntry{Hostid: int(cBase), Maprange: cSize})
+	}
+
+	sort.Sort(mapentries)
+
+	mkIdmap := func(offset int, size int) *shared.IdmapSet {
+		set := &shared.IdmapSet{Idmap: []shared.IdmapEntry{
+			shared.IdmapEntry{Isuid: true, Nsid: 0, Hostid: offset, Maprange: size},
+			shared.IdmapEntry{Isgid: true, Nsid: 0, Hostid: offset, Maprange: size},
+		}}
+
+		for _, ent := range rawMaps {
+			set.AddSafe(ent)
+		}
+
+		return set
+	}
+
+	for i := range mapentries {
+		if i == 0 {
+			if mapentries[0].Hostid < offset+size {
+				offset = mapentries[0].Hostid + mapentries[0].Maprange
+				continue
+			}
+
+			return mkIdmap(offset, size), offset, nil
+		}
+
+		if mapentries[i-1].Hostid+mapentries[i-1].Maprange > offset {
+			offset = mapentries[i-1].Hostid + mapentries[i-1].Maprange
+			continue
+		}
+
+		offset = mapentries[i-1].Hostid + mapentries[i-1].Maprange
+		if offset+size < mapentries[i].Hostid {
+			return mkIdmap(offset, size), offset, nil
+		}
+		offset = mapentries[i].Hostid + mapentries[i].Maprange
+	}
+
+	if offset+size < daemon.IdmapSet.Idmap[0].Hostid+daemon.IdmapSet.Idmap[0].Maprange {
+		return mkIdmap(offset, size), offset, nil
+	}
+
+	return nil, 0, fmt.Errorf("no map range available")
+}
+
 func (c *containerLXC) init() error {
 	// Compute the expanded config and device list
 	err := c.expandConfig()
@@ -353,7 +637,11 @@ func (c *containerLXC) init() error {
 		if c.daemon.IdmapSet == nil {
 			return fmt.Errorf("LXD doesn't have a uid/gid allocation. In this mode, only privileged containers are supported.")
 		}
-		c.idmapset = c.daemon.IdmapSet
+
+		c.idmapset, err = c.NextIdmapSet()
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -526,7 +814,14 @@ func (c *containerLXC) initLXC() error {
 		return err
 	}
 
-	err = lxcSetConfigItem(cc, "lxc.loglevel", "0")
+	logLevel := "warn"
+	if debug {
+		logLevel = "trace"
+	} else if verbose {
+		logLevel = "info"
+	}
+
+	err = lxcSetConfigItem(cc, "lxc.loglevel", logLevel)
 	if err != nil {
 		return err
 	}
@@ -1095,9 +1390,9 @@ func (c *containerLXC) startCommon() (string, error) {
 	if kernelModules != "" {
 		for _, module := range strings.Split(kernelModules, ",") {
 			module = strings.TrimPrefix(module, " ")
-			out, err := exec.Command("modprobe", module).CombinedOutput()
+			err := loadModule(module)
 			if err != nil {
-				return "", fmt.Errorf("Failed to load kernel module '%s': %s", module, out)
+				return "", fmt.Errorf("Failed to load kernel module '%s': %s", module, err)
 			}
 		}
 	}
@@ -1307,7 +1602,7 @@ func (c *containerLXC) Start(stateful bool) error {
 	var ctxMap log.Ctx
 
 	// Setup a new operation
-	op, err := c.createOperation("start", 30)
+	op, err := c.createOperation("start", false, false)
 	if err != nil {
 		return err
 	}
@@ -1451,6 +1746,7 @@ func (c *containerLXC) OnStart() error {
 		// Run any template that needs running
 		err = c.templateApplyNow(c.localConfig[key])
 		if err != nil {
+			AADestroy(c)
 			c.StorageStop()
 			return err
 		}
@@ -1458,6 +1754,7 @@ func (c *containerLXC) OnStart() error {
 		// Remove the volatile key from the DB
 		err := dbContainerConfigRemove(c.daemon.db, c.id, key)
 		if err != nil {
+			AADestroy(c)
 			c.StorageStop()
 			return err
 		}
@@ -1465,6 +1762,7 @@ func (c *containerLXC) OnStart() error {
 
 	err = c.templateApplyNow("start")
 	if err != nil {
+		AADestroy(c)
 		c.StorageStop()
 		return err
 	}
@@ -1503,14 +1801,26 @@ func (c *containerLXC) OnStart() error {
 		}(c, name, m)
 	}
 
+	// Record current state
+	err = dbContainerSetState(c.daemon.db, c.id, "RUNNING")
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
 // Stop functions
 func (c *containerLXC) Stop(stateful bool) error {
 	var ctxMap log.Ctx
+
+	// Check that we're not already stopped
+	if !c.IsRunning() {
+		return fmt.Errorf("The container is already stopped")
+	}
+
 	// Setup a new operation
-	op, err := c.createOperation("stop", 30)
+	op, err := c.createOperation("stop", false, true)
 	if err != nil {
 		return err
 	}
@@ -1566,7 +1876,17 @@ func (c *containerLXC) Stop(stateful bool) error {
 	}
 
 	// Attempt to freeze the container first, helps massively with fork bombs
-	c.Freeze()
+	freezer := make(chan bool, 1)
+	go func() {
+		c.Freeze()
+		freezer <- true
+	}()
+
+	select {
+	case <-freezer:
+	case <-time.After(time.Second * 5):
+		c.Unfreeze()
+	}
 
 	if err := c.c.Stop(); err != nil {
 		op.Done(err)
@@ -1575,26 +1895,31 @@ func (c *containerLXC) Stop(stateful bool) error {
 	}
 
 	err = op.Wait()
-	if err != nil {
+	if err != nil && c.IsRunning() {
 		shared.LogError("Failed stopping container", ctxMap)
 		return err
 	}
 
 	shared.LogInfo("Stopped container", ctxMap)
-	return err
+	return nil
 }
 
 func (c *containerLXC) Shutdown(timeout time.Duration) error {
 	var ctxMap log.Ctx
 
+	// Check that we're not already stopped
+	if !c.IsRunning() {
+		return fmt.Errorf("The container is already stopped")
+	}
+
 	// Setup a new operation
-	op, err := c.createOperation("shutdown", 30)
+	op, err := c.createOperation("stop", true, true)
 	if err != nil {
 		return err
 	}
 
 	ctxMap = log.Ctx{"name": c.name,
-		"action":        op.action,
+		"action":        "shutdown",
 		"creation date": c.creationDate,
 		"ephemeral":     c.ephemeral,
 		"timeout":       timeout}
@@ -1616,20 +1941,26 @@ func (c *containerLXC) Shutdown(timeout time.Duration) error {
 	}
 
 	err = op.Wait()
-	if err != nil {
+	if err != nil && c.IsRunning() {
 		shared.LogError("Failed shutting down container", ctxMap)
 		return err
 	}
 
 	shared.LogInfo("Shut down container", ctxMap)
 
-	return err
+	return nil
 }
 
 func (c *containerLXC) OnStop(target string) error {
+	// Validate target
+	if !shared.StringInSlice(target, []string{"stop", "reboot"}) {
+		shared.LogError("Container sent invalid target to OnStop", log.Ctx{"container": c.Name(), "target": target})
+		return fmt.Errorf("Invalid stop target: %s", target)
+	}
+
 	// Get operation
 	op, _ := c.getOperation("")
-	if op != nil && !shared.StringInSlice(op.action, []string{"stop", "shutdown"}) {
+	if op != nil && op.action != "stop" {
 		return fmt.Errorf("Container is already running a %s operation", op.action)
 	}
 
@@ -1646,82 +1977,66 @@ func (c *containerLXC) OnStop(target string) error {
 		return err
 	}
 
-	// Unload the apparmor profile
-	if err := AADestroy(c); err != nil {
-		shared.LogError("failed to destroy apparmor namespace", log.Ctx{"container": c.Name(), "err": err})
+	// Log user actions
+	if op == nil {
+		ctxMap := log.Ctx{"name": c.name,
+			"action":    target,
+			"created":   c.creationDate,
+			"ephemeral": c.ephemeral,
+			"stateful":  false}
+
+		shared.LogInfo(fmt.Sprintf("Container initiated %s", target), ctxMap)
 	}
 
-	// FIXME: The go routine can go away once we can rely on LXC_TARGET
 	go func(c *containerLXC, target string, op *lxcContainerOperation) {
 		c.fromHook = false
+		err = nil
 
 		// Unlock on return
 		if op != nil {
-			defer op.Done(nil)
+			defer op.Done(err)
 		}
 
-		if target == "unknown" && op != nil {
-			target = "stop"
-		}
+		// Wait for other post-stop actions to be done
+		c.IsRunning()
 
-		if target == "unknown" {
-			time.Sleep(5 * time.Second)
-
-			newContainer, err := containerLoadByName(c.daemon, c.Name())
-			if err != nil {
-				return
-			}
-
-			if newContainer.Id() != c.id {
-				return
-			}
-
-			if newContainer.IsRunning() {
-				return
-			}
+		// Unload the apparmor profile
+		err = AADestroy(c)
+		if err != nil {
+			shared.LogError("Failed to destroy apparmor namespace", log.Ctx{"container": c.Name(), "err": err})
 		}
 
 		// Clean all the unix devices
 		err = c.removeUnixDevices()
 		if err != nil {
-			shared.LogError("Unable to remove unix devices", log.Ctx{"err": err})
+			shared.LogError("Unable to remove unix devices", log.Ctx{"container": c.Name(), "err": err})
 		}
 
 		// Clean all the disk devices
 		err = c.removeDiskDevices()
 		if err != nil {
-			shared.LogError("Unable to remove disk devices", log.Ctx{"err": err})
+			shared.LogError("Unable to remove disk devices", log.Ctx{"container": c.Name(), "err": err})
 		}
 
 		// Reboot the container
 		if target == "reboot" {
-
-			/* This part is a hack to workaround a LXC bug where a
-			   failure from a post-stop script doesn't prevent the container to restart. */
-			ephemeral := c.ephemeral
-			args := containerArgs{
-				Architecture: c.Architecture(),
-				Config:       c.LocalConfig(),
-				Devices:      c.LocalDevices(),
-				Ephemeral:    false,
-				Profiles:     c.Profiles(),
-			}
-			c.Update(args, false)
-			c.Stop(false)
-			args.Ephemeral = ephemeral
-			c.Update(args, true)
-
 			// Start the container again
-			c.Start(false)
+			err = c.Start(false)
 			return
 		}
 
 		// Trigger a rebalance
 		deviceTaskSchedulerTrigger("container", c.name, "stopped")
 
+		// Record current state
+		err = dbContainerSetState(c.daemon.db, c.id, "STOPPED")
+		if err != nil {
+			shared.LogError("Failed to set container state", log.Ctx{"container": c.Name(), "err": err})
+		}
+
 		// Destroy ephemeral containers
 		if c.ephemeral {
-			c.Delete()
+			err = c.Delete()
 		}
 	}(c, target, op)
 
@@ -1734,17 +2049,29 @@ func (c *containerLXC) Freeze() error {
 		"creation date": c.creationDate,
 		"ephemeral":     c.ephemeral}
 
+	// Check that we're not already frozen
+	if c.IsFrozen() {
+		return fmt.Errorf("The container is already frozen")
+	}
+
+	// Check that we're running
+	if !c.IsRunning() {
+		return fmt.Errorf("The container isn't running")
+	}
+
 	shared.LogInfo("Freezing container", ctxMap)
 
 	// Load the go-lxc struct
 	err := c.initLXC()
 	if err != nil {
+		ctxMap["err"] = err
 		shared.LogError("Failed freezing container", ctxMap)
 		return err
 	}
 
 	err = c.c.Freeze()
 	if err != nil {
+		ctxMap["err"] = err
 		shared.LogError("Failed freezing container", ctxMap)
 		return err
 	}
@@ -1758,6 +2085,16 @@ func (c *containerLXC) Unfreeze() error {
 	ctxMap := log.Ctx{"name": c.name,
 		"creation date": c.creationDate,
 		"ephemeral":     c.ephemeral}
+
+	// Check that we're frozen
+	if !c.IsFrozen() {
+		return fmt.Errorf("The container is already running")
+	}
+
+	// Check that we're running
+	if !c.IsRunning() {
+		return fmt.Errorf("The container isn't running")
+	}
 
 	shared.LogInfo("Unfreezing container", ctxMap)
 
@@ -2029,7 +2366,7 @@ func (c *containerLXC) Delete() error {
 		// Delete the container from disk
 		if shared.PathExists(c.Path()) {
 			if err := c.storage.ContainerDelete(c); err != nil {
-				shared.LogError("Failed deleting container", ctxMap)
+				shared.LogError("Failed deleting container storage", ctxMap)
 				return err
 			}
 		}
@@ -2037,7 +2374,7 @@ func (c *containerLXC) Delete() error {
 
 	// Remove the database record
 	if err := dbContainerRemove(c.daemon.db, c.Name()); err != nil {
-		shared.LogError("Failed deleting container", ctxMap)
+		shared.LogError("Failed deleting container entry", ctxMap)
 		return err
 	}
 
@@ -2298,6 +2635,7 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 			c.localConfig = oldLocalConfig
 			c.localDevices = oldLocalDevices
 			c.profiles = oldProfiles
+			c.c = nil
 			c.initLXC()
 			deviceTaskSchedulerTrigger("container", c.name, "changed")
 		}
@@ -2354,14 +2692,46 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 		return err
 	}
 
+	// Run through initLXC to catch anything we missed
+	c.c = nil
+	err = c.initLXC()
+	if err != nil {
+		return err
+	}
+
 	// If apparmor changed, re-validate the apparmor profile
-	for _, key := range changedConfig {
-		if key == "raw.apparmor" || key == "security.nesting" {
-			err = AAParseProfile(c)
+	if shared.StringInSlice("raw.apparmor", changedConfig) || shared.StringInSlice("security.nesting", changedConfig) {
+		err = AAParseProfile(c)
+		if err != nil {
+			return err
+		}
+	}
+
+	if shared.StringInSlice("security.idmap.isolated", changedConfig) || shared.StringInSlice("security.idmap.size", changedConfig) || shared.StringInSlice("raw.idmap", changedConfig) {
+		// update the idmap
+		idmap, base, err := findIdmap(
+			c.daemon,
+			c.Name(),
+			c.expandedConfig["security.idmap.isolated"],
+			c.expandedConfig["security.idmap.size"],
+			c.expandedConfig["raw.idmap"],
+		)
+		if err != nil {
+			return err
+		}
+
+		var jsonIdmap string
+		if idmap != nil {
+			idmapBytes, err := json.Marshal(idmap.Idmap)
 			if err != nil {
 				return err
 			}
+			jsonIdmap = string(idmapBytes)
+		} else {
+			jsonIdmap = "[]"
 		}
+		c.localConfig["volatile.idmap.next"] = jsonIdmap
+		c.localConfig["volatile.idmap.base"] = fmt.Sprintf("%v", base)
 	}
 
 	// Apply disk quota changes
@@ -2424,9 +2794,9 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 			} else if key == "linux.kernel_modules" && value != "" {
 				for _, module := range strings.Split(value, ",") {
 					module = strings.TrimPrefix(module, " ")
-					out, err := exec.Command("modprobe", module).CombinedOutput()
+					err := loadModule(module)
 					if err != nil {
-						return fmt.Errorf("Failed to load kernel module '%s': %s", module, out)
+						return fmt.Errorf("Failed to load kernel module '%s': %s", module, err)
 					}
 				}
 			} else if key == "limits.disk.priority" {
@@ -2734,21 +3104,13 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 		return err
 	}
 
-	// Invalidate the go-lxc cache
-	c.c = nil
-
-	err = c.initLXC()
-	if err != nil {
-		return err
-	}
-
 	// Success, update the closure to mark that the changes should be kept.
 	undoChanges = false
 
 	return nil
 }
 
-func (c *containerLXC) Export(w io.Writer) error {
+func (c *containerLXC) Export(w io.Writer, properties map[string]string) error {
 	ctxMap := log.Ctx{"name": c.name,
 		"created":   c.creationDate,
 		"ephemeral": c.ephemeral}
@@ -2805,13 +3167,13 @@ func (c *containerLXC) Export(w io.Writer) error {
 	fnam := filepath.Join(cDir, "metadata.yaml")
 	if !shared.PathExists(fnam) {
 		// Generate a new metadata.yaml
-		f, err := ioutil.TempFile("", "lxd_lxd_metadata_")
+		tempDir, err := ioutil.TempDir("", "lxd_lxd_metadata_")
 		if err != nil {
 			tw.Close()
 			shared.LogError("Failed exporting container", ctxMap)
 			return err
 		}
-		defer os.Remove(f.Name())
+		defer os.RemoveAll(tempDir)
 
 		// Get the container's architecture
 		var arch string
@@ -2841,6 +3203,7 @@ func (c *containerLXC) Export(w io.Writer) error {
 		meta := imageMetadata{}
 		meta.Architecture = arch
 		meta.CreationDate = time.Now().UTC().Unix()
+		meta.Properties = properties
 
 		data, err := yaml.Marshal(&meta)
 		if err != nil {
@@ -2850,26 +3213,73 @@ func (c *containerLXC) Export(w io.Writer) error {
 		}
 
 		// Write the actual file
-		f.Write(data)
-		f.Close()
-
-		fi, err := os.Lstat(f.Name())
+		fnam = filepath.Join(tempDir, "metadata.yaml")
+		err = ioutil.WriteFile(fnam, data, 0644)
 		if err != nil {
 			tw.Close()
 			shared.LogError("Failed exporting container", ctxMap)
 			return err
 		}
 
-		tmpOffset := len(path.Dir(f.Name())) + 1
-		if err := c.tarStoreFile(linkmap, tmpOffset, tw, f.Name(), fi); err != nil {
+		fi, err := os.Lstat(fnam)
+		if err != nil {
+			tw.Close()
+			shared.LogError("Failed exporting container", ctxMap)
+			return err
+		}
+
+		tmpOffset := len(path.Dir(fnam)) + 1
+		if err := c.tarStoreFile(linkmap, tmpOffset, tw, fnam, fi); err != nil {
 			tw.Close()
 			shared.LogDebugf("Error writing to tarfile: %s", err)
 			shared.LogError("Failed exporting container", ctxMap)
 			return err
 		}
-
-		fnam = f.Name()
 	} else {
+		if properties != nil {
+			// Parse the metadata
+			content, err := ioutil.ReadFile(fnam)
+			if err != nil {
+				tw.Close()
+				shared.LogError("Failed exporting container", ctxMap)
+				return err
+			}
+
+			metadata := new(imageMetadata)
+			err = yaml.Unmarshal(content, &metadata)
+			if err != nil {
+				tw.Close()
+				shared.LogError("Failed exporting container", ctxMap)
+				return err
+			}
+			metadata.Properties = properties
+
+			// Generate a new metadata.yaml
+			tempDir, err := ioutil.TempDir("", "lxd_lxd_metadata_")
+			if err != nil {
+				tw.Close()
+				shared.LogError("Failed exporting container", ctxMap)
+				return err
+			}
+			defer os.RemoveAll(tempDir)
+
+			data, err := yaml.Marshal(&metadata)
+			if err != nil {
+				tw.Close()
+				shared.LogError("Failed exporting container", ctxMap)
+				return err
+			}
+
+			// Write the actual file
+			fnam = filepath.Join(tempDir, "metadata.yaml")
+			err = ioutil.WriteFile(fnam, data, 0644)
+			if err != nil {
+				tw.Close()
+				shared.LogError("Failed exporting container", ctxMap)
+				return err
+			}
+		}
+
 		// Include metadata.yaml in the tarball
 		fi, err := os.Lstat(fnam)
 		if err != nil {
@@ -2879,7 +3289,13 @@ func (c *containerLXC) Export(w io.Writer) error {
 			return err
 		}
 
-		if err := c.tarStoreFile(linkmap, offset, tw, fnam, fi); err != nil {
+		if properties != nil {
+			tmpOffset := len(path.Dir(fnam)) + 1
+			err = c.tarStoreFile(linkmap, tmpOffset, tw, fnam, fi)
+		} else {
+			err = c.tarStoreFile(linkmap, offset, tw, fnam, fi)
+		}
+		if err != nil {
 			tw.Close()
 			shared.LogDebugf("Error writing to tarfile: %s", err)
 			shared.LogError("Failed exporting container", ctxMap)
@@ -2996,8 +3412,19 @@ func (c *containerLXC) Migrate(cmd uint, stateDir string, function string, stop 
 		 * namespace.
 		 */
 		if !c.IsPrivileged() {
-			if err := c.IdmapSet().ShiftRootfs(stateDir); err != nil {
+			err = c.StorageStart()
+			if err != nil {
 				return err
+			}
+
+			err = c.IdmapSet().ShiftRootfs(stateDir)
+			err2 := c.StorageStop()
+			if err != nil {
+				return err
+			}
+
+			if err2 != nil {
+				return err2
 			}
 		}
 
@@ -3227,6 +3654,54 @@ func (c *containerLXC) templateApplyNow(trigger string) error {
 	return nil
 }
 
+func (c *containerLXC) FileExists(path string) error {
+	// Setup container storage if needed
+	if !c.IsRunning() {
+		err := c.StorageStart()
+		if err != nil {
+			return err
+		}
+	}
+
+	// Check if the file exists in the container
+	out, err := exec.Command(
+		execPath,
+		"forkcheckfile",
+		c.RootfsPath(),
+		fmt.Sprintf("%d", c.InitPID()),
+		path,
+	).CombinedOutput()
+
+	// Tear down container storage if needed
+	if !c.IsRunning() {
+		err := c.StorageStop()
+		if err != nil {
+			return err
+		}
+	}
+
+	// Process forkcheckfile response
+	if string(out) != "" {
+		if strings.HasPrefix(string(out), "error:") {
+			return fmt.Errorf(strings.TrimPrefix(strings.TrimSuffix(string(out), "\n"), "error: "))
+		}
+
+		for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+			shared.LogDebugf("forkcheckfile: %s", line)
+		}
+	}
+
+	if err != nil {
+		return fmt.Errorf(
+			"Error calling 'lxd forkcheckfile %s %d': err='%v'",
+			path,
+			c.InitPID(),
+			err)
+	}
+
+	return nil
+}
+
 func (c *containerLXC) FilePull(srcpath string, dstpath string) (int, int, os.FileMode, error) {
 	// Setup container storage if needed
 	if !c.IsRunning() {
@@ -3323,13 +3798,15 @@ func (c *containerLXC) FilePull(srcpath string, dstpath string) (int, int, os.Fi
 	}
 
 	// Unmap uid and gid if needed
-	idmapset, err := c.LastIdmapSet()
-	if err != nil {
-		return -1, -1, 0, err
-	}
+	if !c.IsRunning() {
+		idmapset, err := c.LastIdmapSet()
+		if err != nil {
+			return -1, -1, 0, err
+		}
 
-	if idmapset != nil {
-		uid, gid = idmapset.ShiftFromNs(uid, gid)
+		if idmapset != nil {
+			uid, gid = idmapset.ShiftFromNs(uid, gid)
+		}
 	}
 
 	return uid, gid, os.FileMode(mode), nil
@@ -3340,14 +3817,16 @@ func (c *containerLXC) FilePush(srcpath string, dstpath string, uid int, gid int
 	var rootGid = 0
 
 	// Map uid and gid if needed
-	idmapset, err := c.LastIdmapSet()
-	if err != nil {
-		return err
-	}
+	if !c.IsRunning() {
+		idmapset, err := c.LastIdmapSet()
+		if err != nil {
+			return err
+		}
 
-	if idmapset != nil {
-		uid, gid = idmapset.ShiftIntoNs(uid, gid)
-		rootUid, rootGid = idmapset.ShiftIntoNs(0, 0)
+		if idmapset != nil {
+			uid, gid = idmapset.ShiftIntoNs(uid, gid)
+			rootUid, rootGid = idmapset.ShiftIntoNs(0, 0)
+		}
 	}
 
 	// Setup container storage if needed
@@ -3402,6 +3881,54 @@ func (c *containerLXC) FilePush(srcpath string, dstpath string, uid int, gid int
 			uid,
 			gid,
 			mode,
+			err)
+	}
+
+	return nil
+}
+
+func (c *containerLXC) FileRemove(path string) error {
+	// Setup container storage if needed
+	if !c.IsRunning() {
+		err := c.StorageStart()
+		if err != nil {
+			return err
+		}
+	}
+
+	// Remove the file from the container
+	out, err := exec.Command(
+		execPath,
+		"forkremovefile",
+		c.RootfsPath(),
+		fmt.Sprintf("%d", c.InitPID()),
+		path,
+	).CombinedOutput()
+
+	// Tear down container storage if needed
+	if !c.IsRunning() {
+		err := c.StorageStop()
+		if err != nil {
+			return err
+		}
+	}
+
+	// Process forkremovefile response
+	if string(out) != "" {
+		if strings.HasPrefix(string(out), "error:") {
+			return fmt.Errorf(strings.TrimPrefix(strings.TrimSuffix(string(out), "\n"), "error: "))
+		}
+
+		for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+			shared.LogDebugf("forkremovefile: %s", line)
+		}
+	}
+
+	if err != nil {
+		return fmt.Errorf(
+			"Error calling 'lxd forkremovefile %s %d': err='%v'",
+			path,
+			c.InitPID(),
 			err)
 	}
 
@@ -3936,13 +4463,38 @@ func (c *containerLXC) insertUnixDevice(name string, m shared.Device) error {
 		return fmt.Errorf("Failed to add mount for device: %s", err)
 	}
 
-	// Add the new device cgroup rule
-	dType, dMajor, dMinor, err := deviceGetAttributes(devPath)
-	if err != nil {
-		return fmt.Errorf("Failed to get device attributes: %s", err)
+	// Check if we've been passed major and minor numbers already.
+	var tmp int
+	dMajor := -1
+	if m["major"] != "" {
+		tmp, err = strconv.Atoi(m["major"])
+		if err == nil {
+			dMajor = tmp
+		}
+	}
+
+	dMinor := -1
+	if m["minor"] != "" {
+		tmp, err = strconv.Atoi(m["minor"])
+		if err == nil {
+			dMinor = tmp
+		}
+	}
+
+	dType := ""
+	if m["type"] != "" {
+		dType = m["type"]
+	}
+
+	if dType == "" || dMajor < 0 || dMinor < 0 {
+		dType, dMajor, dMinor, err = deviceGetAttributes(devPath)
+		if err != nil {
+			return err
+		}
 	}
 
 	if c.IsPrivileged() && !runningInUserns && cgDevicesController {
+		// Add the new device cgroup rule
 		if err := c.CGroupSet("devices.allow", fmt.Sprintf("%s %d:%d rwm", dType, dMajor, dMinor)); err != nil {
 			return fmt.Errorf("Failed to add cgroup rule for device")
 		}
@@ -3964,13 +4516,39 @@ func (c *containerLXC) removeUnixDevice(m shared.Device) error {
 	devName := fmt.Sprintf("unix.%s", strings.Replace(tgtPath, "/", "-", -1))
 	devPath := filepath.Join(c.DevicesPath(), devName)
 
-	// Remove the device cgroup rule
-	dType, dMajor, dMinor, err := deviceGetAttributes(devPath)
-	if err != nil {
-		return err
+	// Check if we've been passed major and minor numbers already.
+	var tmp int
+	var err error
+	dMajor := -1
+	if m["major"] != "" {
+		tmp, err = strconv.Atoi(m["major"])
+		if err == nil {
+			dMajor = tmp
+		}
+	}
+
+	dMinor := -1
+	if m["minor"] != "" {
+		tmp, err = strconv.Atoi(m["minor"])
+		if err == nil {
+			dMinor = tmp
+		}
+	}
+
+	dType := ""
+	if m["type"] != "" {
+		dType = m["type"]
+	}
+
+	if dType == "" || dMajor < 0 || dMinor < 0 {
+		dType, dMajor, dMinor, err = deviceGetAttributes(devPath)
+		if err != nil {
+			return err
+		}
 	}
 
 	if c.IsPrivileged() && !runningInUserns && cgDevicesController {
+		// Remove the device cgroup rule
 		err = c.CGroupSet("devices.deny", fmt.Sprintf("%s %d:%d rwm", dType, dMajor, dMinor))
 		if err != nil {
 			return err
@@ -3978,15 +4556,13 @@ func (c *containerLXC) removeUnixDevice(m shared.Device) error {
 	}
 
 	// Remove the bind-mount from the container
-	ctnPath := fmt.Sprintf("/proc/%d/root/%s", pid, tgtPath)
-
-	if shared.PathExists(ctnPath) {
+	if c.FileExists(tgtPath) == nil {
 		err = c.removeMount(m["path"])
 		if err != nil {
 			return fmt.Errorf("Error unmounting the device: %s", err)
 		}
 
-		err = os.Remove(ctnPath)
+		err = c.FileRemove(tgtPath)
 		if err != nil {
 			return fmt.Errorf("Error removing the device: %s", err)
 		}
@@ -4438,9 +5014,7 @@ func (c *containerLXC) removeDiskDevice(name string, m shared.Device) error {
 	devPath := filepath.Join(c.DevicesPath(), devName)
 
 	// Remove the bind-mount from the container
-	ctnPath := fmt.Sprintf("/proc/%d/root/%s", pid, tgtPath)
-
-	if shared.PathExists(ctnPath) {
+	if c.FileExists(tgtPath) == nil {
 		err := c.removeMount(m["path"])
 		if err != nil {
 			return fmt.Errorf("Error unmounting the device: %s", err)
@@ -4885,8 +5459,8 @@ func (c *containerLXC) LocalDevices() shared.Devices {
 	return c.localDevices
 }
 
-func (c *containerLXC) LastIdmapSet() (*shared.IdmapSet, error) {
-	lastJsonIdmap := c.LocalConfig()["volatile.last_state.idmap"]
+func (c *containerLXC) idmapsetFromConfig(k string) (*shared.IdmapSet, error) {
+	lastJsonIdmap := c.LocalConfig()[k]
 
 	if lastJsonIdmap == "" {
 		return c.IdmapSet(), nil
@@ -4903,6 +5477,15 @@ func (c *containerLXC) LastIdmapSet() (*shared.IdmapSet, error) {
 	}
 
 	return lastIdmap, nil
+}
+
+func (c *containerLXC) NextIdmapSet() (*shared.IdmapSet, error) {
+	return c.idmapsetFromConfig("volatile.idmap.next")
+
+}
+
+func (c *containerLXC) LastIdmapSet() (*shared.IdmapSet, error) {
+	return c.idmapsetFromConfig("volatile.last_state.idmap")
 }
 
 func (c *containerLXC) Daemon() *Daemon {

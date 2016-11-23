@@ -285,7 +285,7 @@ func containerExecPost(d *Daemon, r *http.Request) Response {
 	_, ok := env["PATH"]
 	if !ok {
 		env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-		if shared.PathExists(fmt.Sprintf("%s/snap/bin", c.RootfsPath())) {
+		if c.FileExists("/snap") == nil {
 			env["PATH"] = fmt.Sprintf("%s:/snap/bin", env["PATH"])
 		}
 	}
@@ -333,12 +333,6 @@ func containerExecPost(d *Daemon, r *http.Request) Response {
 	}
 
 	run := func(op *operation) error {
-		nullDev, err := os.OpenFile(os.DevNull, os.O_RDWR, 0666)
-		if err != nil {
-			return err
-		}
-		defer nullDev.Close()
-
 		cmdResult, cmdErr := c.Exec(post.Command, env, nil, nil, nil)
 		metadata := shared.Jmap{"return": cmdResult}
 		err = op.UpdateMetadata(metadata)
