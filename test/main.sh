@@ -7,8 +7,15 @@ export "LC_ALL=C"
 # Force UTC for consistency
 export "TZ=UTC"
 
-if [ -n "${LXD_DEBUG:-}" ]; then
+if [ -n "${LXD_VERBOSE:-}" ] || [ -n "${LXD_DEBUG:-}" ]; then
   set -x
+fi
+
+if [ -n "${LXD_VERBOSE:-}" ]; then
+  DEBUG="--verbose"
+fi
+
+if [ -n "${LXD_DEBUG:-}" ]; then
   DEBUG="--debug"
 fi
 
@@ -91,7 +98,7 @@ spawn_lxd() {
 
   echo "==> Setting trust password"
   LXD_DIR="${lxddir}" lxc config set core.trust_password foo
-  if [ -n "${LXD_DEBUG:-}" ]; then
+  if [ -n "${DEBUG:-}" ]; then
     set -x
   fi
 
@@ -132,7 +139,7 @@ lxc_remote() {
   if [ "${injected}" = "0" ]; then
     cmd="${cmd} ${DEBUG-}"
   fi
-  if [ -n "${LXD_DEBUG:-}" ]; then
+  if [ -n "${DEBUG:-}" ]; then
     set -x
   fi
   eval "${cmd}"
@@ -293,7 +300,9 @@ kill_lxd() {
 }
 
 cleanup() {
-  set +e
+  # Allow for failures and stop tracing everything
+  set +ex
+  DEBUG=
 
   # Allow for inspection
   if [ -n "${LXD_INSPECT:-}" ]; then
@@ -476,6 +485,10 @@ test_filemanip
 echo "==> TEST: network"
 TEST_CURRENT=test_network
 test_network
+
+echo "==> TEST: idmap"
+TEST_CURRENT=test_idmap
+test_idmap
 
 echo "==> TEST: devlxd"
 TEST_CURRENT=test_devlxd

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -188,6 +187,10 @@ func containerValidConfig(d *Daemon, config map[string]string, profile bool, exp
 			return fmt.Errorf("Volatile keys can only be set on containers.")
 		}
 
+		if profile && strings.HasPrefix(k, "image.") {
+			return fmt.Errorf("Image keys can only be set on containers.")
+		}
+
 		err := containerValidConfigKey(d, k, v)
 		if err != nil {
 			return err
@@ -340,7 +343,7 @@ type container interface {
 	Update(newConfig containerArgs, userRequested bool) error
 
 	Delete() error
-	Export(w io.Writer) error
+	Export(w io.Writer, properties map[string]string) error
 
 	// Live configuration
 	CGroupGet(key string) (string, error)
@@ -348,19 +351,24 @@ type container interface {
 	ConfigKeySet(key string, value string) error
 
 	// File handling
+	FileExists(path string) error
 	FilePull(srcpath string, dstpath string) (int, int, os.FileMode, string, []string, error)
 	FilePush(srcpath string, dstpath string, uid int, gid int, mode int) error
+	FileRemove(path string) error
 
-	// Command execution: Execute command and wait for it to exit.
-	Exec(command []string, env map[string]string, stdin *os.File, stdout *os.File, stderr *os.File) (int, error)
-
-	// Command execution: Returns a command. If called as exec.Cmd.Start()
-	// ExecNoWait() does not wait for the process to exit. Callers are
-	// expected to pass the write end of a pipe to the pidPipe argument. So
-	// they can read the PID of the executing process from the read end. The
-	// PID read cannot be directly waited upon since it is a child of lxd
-	// forkexec. It can however be used to e.g. send signals.
-	ExecNoWait(command []string, env map[string]string, stdin *os.File, stdout *os.File, stderr *os.File, pidPipe *os.File) (*exec.Cmd, error)
+	/* Command execution:
+		 * 1. passing in false for wait
+		 *    - equivalent to calling cmd.Run()
+		 * 2. passing in true for wait
+	         *    - start the command and return its PID in the first return
+	         *      argument and the PID of the attached process in the second
+	         *      argument. It's the callers responsibility to wait on the
+	         *      command. (Note. The returned PID of the attached process can not
+	         *      be waited upon since it's a child of the lxd forkexec command
+	         *      (the PID returned in the first return argument). It can however
+	         *      be used to e.g. forward signals.)
+	*/
+	Exec(command []string, env map[string]string, stdin *os.File, stdout *os.File, stderr *os.File, wait bool) (int, int, error)
 
 	// Status
 	Render() (interface{}, interface{}, error)
@@ -450,6 +458,19 @@ func containerCreateEmptySnapshot(d *Daemon, args containerArgs) (container, err
 }
 
 func containerCreateFromImage(d *Daemon, args containerArgs, hash string) (container, error) {
+	// Get the image properties
+	_, img, err := dbImageGet(d.db, hash, false, false)
+	if err != nil {
+		return nil, err
+	}
+
+	// Set the "image.*" keys
+	if img.Properties != nil {
+		for k, v := range img.Properties {
+			args.Config[fmt.Sprintf("image.%s", k)] = v
+		}
+	}
+
 	// Create the container
 	c, err := containerCreateInternal(d, args)
 	if err != nil {

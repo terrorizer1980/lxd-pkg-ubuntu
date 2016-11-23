@@ -6,7 +6,6 @@ import (
 	"io/ioutil"
 	"os"
 	"path"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -74,19 +73,19 @@ func (c *fileCmd) push(config *lxd.Config, send_file_perms bool, args []string) 
 		return fmt.Errorf(i18n.G("Invalid target %s"), target)
 	}
 
-	/* Fix up the path. Let's:
-	 * 1. re-add the leading / that got stripped from the SplitN
-	 * 2. clean it and remove any /./, /../, /////, etc.
-	 * 3. keep the trailing slash if it had one, since we use it via
-	 *    filepath.Split below
-	 */
-	pathSpec[1] = filepath.Clean("/" + pathSpec[1])
-	if target[len(target)-1] == '/' {
-		pathSpec[1] = pathSpec[1] + "/"
+	remote, container := config.ParseRemoteAndContainer(pathSpec[0])
+
+	targetIsDir := strings.HasSuffix(target, "/")
+	// re-add leading / that got stripped by the SplitN
+	targetPath := "/" + pathSpec[1]
+	// clean various /./, /../, /////, etc. that users add (#2557)
+	targetPath = path.Clean(targetPath)
+	// normalization may reveal that path is still a dir, e.g. /.
+	if strings.HasSuffix(targetPath, "/") {
+		targetIsDir = true
 	}
 
-	targetPath := pathSpec[1]
-	remote, container := config.ParseRemoteAndContainer(pathSpec[0])
+	shared.LogDebugf("Pushing to: %s  (isdir: %t)", targetPath, targetIsDir)
 
 	d, err := lxd.NewClient(config, remote)
 	if err != nil {
@@ -119,13 +118,13 @@ func (c *fileCmd) push(config *lxd.Config, send_file_perms bool, args []string) 
 		}
 
 		if c.mkdirs {
-			if err := d.MkdirP(container, pathSpec[1], mode); err != nil {
+			if err := d.MkdirP(container, targetPath, mode); err != nil {
 				return err
 			}
 		}
 
 		for _, fname := range sourcefilenames {
-			if err := d.RecursivePushFile(container, fname, pathSpec[1]); err != nil {
+			if err := d.RecursivePushFile(container, fname, targetPath); err != nil {
 				return err
 			}
 		}
@@ -143,9 +142,7 @@ func (c *fileCmd) push(config *lxd.Config, send_file_perms bool, args []string) 
 		gid = c.gid
 	}
 
-	_, targetfilename := filepath.Split(targetPath)
-
-	if (targetfilename != "") && (len(sourcefilenames) > 1) {
+	if (len(sourcefilenames) > 1) && !targetIsDir {
 		return errArgs
 	}
 
@@ -169,12 +166,12 @@ func (c *fileCmd) push(config *lxd.Config, send_file_perms bool, args []string) 
 
 	for _, f := range files {
 		fpath := targetPath
-		if targetfilename == "" {
+		if targetIsDir {
 			fpath = path.Join(fpath, path.Base(f.Name()))
 		}
 
 		if c.mkdirs {
-			if err := d.MkdirP(container, filepath.Dir(fpath), mode); err != nil {
+			if err := d.MkdirP(container, path.Dir(fpath), mode); err != nil {
 				return err
 			}
 		}
