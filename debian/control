@@ -30,6 +30,7 @@ Build-Depends: debhelper (>= 9),
                golang-yaml.v2-dev,
                golang-websocket-dev,
                help2man,
+               libsqlite3-dev,
                lxc-dev (>= 1.1.0~),
                pkg-config,
                protobuf-compiler
