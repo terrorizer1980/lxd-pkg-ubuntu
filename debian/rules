@@ -16,6 +16,10 @@ export USE_EMBEDDED := false
 %:
 	dh $@ --with systemd --buildsystem=golang --with=golang
 
+# Make sure we use the distro libsqlite3
+override_dh_auto_build:
+	dh_auto_build -- -tags libsqlite3
+
 # Ugly workaround for bundled dependencies
 override_dh_auto_configure:
 	dh_auto_configure
