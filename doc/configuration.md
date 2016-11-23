@@ -59,6 +59,7 @@ The key/value configuration is namespaced with the following namespaces
 currently supported:
  - boot (boot related options, timing, dependencies, ...)
  - environment (environment variables)
+ - image (copy of the image properties at time of creation)
  - limits (resource limits)
  - raw (raw container configuration overrides)
  - security (security policies)
@@ -88,13 +89,16 @@ linux.kernel\_modules                | string    | -             | yes          
 raw.apparmor                         | blob      | -             | yes           | -                                    | Apparmor profile entries to be appended to the generated profile
 raw.lxc                              | blob      | -             | no            | -                                    | Raw LXC configuration to be appended to the generated one
 raw.seccomp                          | blob      | -             | no            | container\_syscall\_filtering        | Raw Seccomp configuration
+raw.idmap                            | blob      | -             | no            | id\_map                              | Raw idmap configuration (e.g. "both 1000 1000")
+security.idmap.isolated              | boolean   | false         | no            | id\_map                              | Use an idmap for this container that is unique among containers with isolated set.
+security.idmap.size                  | integer   | -             | no            | id\_map                              | The size of the idmap to use
 security.nesting                     | boolean   | false         | yes           | -                                    | Support running lxd (nested) inside the container
 security.privileged                  | boolean   | false         | no            | -                                    | Runs the container in privileged mode
 security.syscalls.blacklist\_default | boolean   | true          | no            | container\_syscall\_filtering        | Enables the default syscall blacklist
 security.syscalls.blacklist\_compat  | boolean   | false         | no            | container\_syscall\_filtering        | On x86\_64 this enables blocking of compat\_\* syscalls, it is a no-op on other arches
 security.syscalls.blacklist          | string    | -             | no            | container\_syscall\_filtering        | A '\n' separated list of syscalls to blacklist
 security.syscalls.whitelist          | string    | -             | no            | container\_syscall\_filtering        | A '\n' separated list of syscalls to whitelist (mutually exclusive with security.syscalls.blacklist\*)
-user.\*                              | string    | -             | n/a           | -                                    |Free form user key/value storage (can be used in search)
+user.\*                              | string    | -             | n/a           | -                                    | Free form user key/value storage (can be used in search)
 
 The following volatile keys are currently internally used by LXD:
 
@@ -104,6 +108,8 @@ volatile.\<name\>.hwaddr    | string    | -             | Network device MAC add
 volatile.\<name\>.name      | string    | -             | Network device name (when no name propery is set on the device itself)
 volatile.apply\_template    | string    | -             | The name of a template hook which should be triggered upon next startup
 volatile.base\_image        | string    | -             | The hash of the image the container was created from, if any.
+volatile.idmap.base         | integer   | -             | The first id in the container's primary idmap range
+volatile.idmap.next         | string    | -             | The idmap to use next time the container starts
 volatile.last\_state.idmap  | string    | -             | Serialized container uid/gid map
 volatile.last\_state.power  | string    | -             | Container state as of last host shutdown
 
@@ -116,6 +122,7 @@ user.network\_mode          | string        | dhcp              | One of "dhcp" 
 user.meta-data              | string        | -                 | Cloud-init meta-data, content is appended to seed value.
 user.user-data              | string        | #!cloud-config    | Cloud-init user-data, content is used as seed value.
 user.vendor-data            | string        | #!cloud-config    | Cloud-init vendor-data, content is used as seed value.
+user.network-config         | string        | DHCP on eth0      | Cloud-init network-config, content is used as seed value.
 
 Note that while a type is defined above as a convenience, all values are
 stored as strings and should be exported over the REST API as strings
@@ -288,6 +295,7 @@ Key         | Type      | Default           | Required  | Description
 vendorid    | string    | -                 | no        | The vendor id of the GPU device.
 productid   | string    | -                 | no        | The product id of the GPU device.
 id          | string    | -                 | no        | The card id of the GPU device.
+pci         | string    | -                 | no        | The pci address of the GPU device.
 uid         | int       | 0                 | no        | UID of the device owner in the container
 gid         | int       | 0                 | no        | GID of the device owner in the container
 mode        | int       | 0660              | no        | Mode of the device in the container

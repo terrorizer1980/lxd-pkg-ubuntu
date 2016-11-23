@@ -145,7 +145,7 @@ Adds the following to the REST API:
  * PUT of certificate entries
  * PATCH of certificate entries
 
-## container\_exec\_signal_handling
+## container\_exec\_signal\_handling
 Adds support /1.0/containers/<name>/exec for forwarding signals sent to the
 client to the processes executing in the container. Currently SIGTERM and
 SIGHUP are forwarded. Further signals that can be forwarded might be added
@@ -153,3 +153,14 @@ later.
 
 ## gpu\_devices
 Enables adding GPUs to a container.
+
+## container\_image\_properties
+Introduces a new "image" config key space. Read-only, includes the properties of the parent image.
+
+## migration\_progress
+Transfer progress is now exported as part of the operation, on both sending and receiving ends.
+This shows up as a "fs\_progress" attribute in the operation metadata.
+
+## id\_map
+Enables setting the `security.idmap.isolated` and `security.idmap.isolated`,
+`security.idmap.size`, and `raw.id_map` fields.
