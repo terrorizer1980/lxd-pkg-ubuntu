@@ -63,6 +63,10 @@ Files: dist/src/golang.org/x/crypto/*
 Copyright: 2009 The Go Authors.
 License: BSD-3-clause
 
+Files: dist/src/golang.org/x/net/*
+Copyright: 2009 The Go Authors.
+License: BSD-3-clause
+
 Files: dist/src/gopkg.in/flosch/pongo2.v3/*
 Copyright: 2013-2014 Florian Schlachter
 License: Expat
