@@ -127,4 +127,11 @@ if [ -z "${2}" ]; then
     echo ""
 fi
 
+# Fix a rare race condition where LXD is activated halfway through update
+if [ -d /run/systemd/system ]; then
+    if systemctl -q is-active lxd.service; then
+        deb-systemd-invoke restart lxd.service >/dev/null || true
+    fi
+fi
+
 exit 0
