@@ -74,6 +74,19 @@ func containerValidConfigKey(key string, value string) error {
 		return nil
 	}
 
+	isUint32 := func(key string, value string) error {
+		if value == "" {
+			return nil
+		}
+
+		_, err := strconv.ParseInt(value, 10, 32)
+		if err != nil {
+			return fmt.Errorf("Invalid value for uint32: %s: %v", value, err)
+		}
+
+		return nil
+	}
+
 	switch key {
 	case "boot.autostart":
 		return isBool(key, value)
@@ -84,12 +97,60 @@ func containerValidConfigKey(key string, value string) error {
 	case "limits.cpu":
 		return nil
 	case "limits.cpu.allowance":
+		if value == "" {
+			return nil
+		}
+
+		if strings.HasSuffix(value, "%") {
+			// Percentage based allocation
+			_, err := strconv.Atoi(strings.TrimSuffix(value, "%"))
+			if err != nil {
+				return err
+			}
+
+			return nil
+		}
+
+		// Time based allocation
+		fields := strings.SplitN(value, "/", 2)
+		if len(fields) != 2 {
+			return fmt.Errorf("Invalid allowance: %s", value)
+		}
+
+		_, err := strconv.Atoi(strings.TrimSuffix(fields[0], "ms"))
+		if err != nil {
+			return err
+		}
+
+		_, err = strconv.Atoi(strings.TrimSuffix(fields[1], "ms"))
+		if err != nil {
+			return err
+		}
+
 		return nil
 	case "limits.cpu.priority":
 		return isInt64(key, value)
 	case "limits.disk.priority":
 		return isInt64(key, value)
 	case "limits.memory":
+		if value == "" {
+			return nil
+		}
+
+		if strings.HasSuffix(value, "%") {
+			_, err := strconv.ParseInt(strings.TrimSuffix(value, "%"), 10, 64)
+			if err != nil {
+				return err
+			}
+
+			return nil
+		}
+
+		_, err := shared.ParseByteSizeString(value)
+		if err != nil {
+			return err
+		}
+
 		return nil
 	case "limits.memory.enforce":
 		return isOneOf(key, value, []string{"soft", "hard"})
@@ -107,7 +168,13 @@ func containerValidConfigKey(key string, value string) error {
 		return isBool(key, value)
 	case "security.nesting":
 		return isBool(key, value)
+	case "security.idmap.size":
+		return isUint32(key, value)
+	case "security.idmap.isolated":
+		return isBool(key, value)
 	case "raw.apparmor":
+		return nil
+	case "raw.idmap":
 		return nil
 	case "raw.lxc":
 		return lxcValidConfig(value)
@@ -118,6 +185,10 @@ func containerValidConfigKey(key string, value string) error {
 	case "volatile.last_state.idmap":
 		return nil
 	case "volatile.last_state.power":
+		return nil
+	case "volatile.idmap.next":
+		return nil
+	case "volatile.idmap.base":
 		return nil
 	}
 
@@ -358,7 +429,7 @@ type container interface {
 	Update(newConfig containerArgs, userRequested bool) error
 
 	Delete() error
-	Export(w io.Writer) error
+	Export(w io.Writer, properties map[string]string) error
 
 	// Live configuration
 	CGroupGet(key string) (string, error)
@@ -367,7 +438,9 @@ type container interface {
 
 	// File handling
 	FilePull(srcpath string, dstpath string) (int, int, os.FileMode, error)
+	FileExists(path string) error
 	FilePush(srcpath string, dstpath string, uid int, gid int, mode int) error
+	FileRemove(path string) error
 
 	// Command execution
 	Exec(command []string, env map[string]string, stdin *os.File, stdout *os.File, stderr *os.File) (int, error)

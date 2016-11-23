@@ -379,6 +379,8 @@ func (s *migrationSourceWs) Do(migrateOp *operation) error {
 		return abort(err)
 	}
 
+	restoreSuccess := make(chan bool, 1)
+	dumpSuccess := make(chan error, 1)
 	if s.live {
 		if header.Criu == nil {
 			return abort(fmt.Errorf("Got no CRIU socket type for live migration"))
@@ -390,7 +392,6 @@ func (s *migrationSourceWs) Do(migrateOp *operation) error {
 		if err != nil {
 			return abort(err)
 		}
-		defer os.RemoveAll(checkpointDir)
 
 		if lxc.VersionAtLeast(2, 0, 4) {
 			/* What happens below is slightly convoluted. Due to various
@@ -412,6 +413,7 @@ func (s *migrationSourceWs) Do(migrateOp *operation) error {
 			dumpDone := make(chan bool, 1)
 			actionScriptOpSecret, err := shared.RandomCryptoString()
 			if err != nil {
+				os.RemoveAll(checkpointDir)
 				return abort(err)
 			}
 
@@ -420,13 +422,9 @@ func (s *migrationSourceWs) Do(migrateOp *operation) error {
 				nil,
 				nil,
 				func(op *operation) error {
-					_, err := migrateOp.WaitFinal(-1)
-					if err != nil {
-						return err
-					}
-
-					if migrateOp.status != shared.Success {
-						return fmt.Errorf("restore failed: %s", op.status.String())
+					result := <-restoreSuccess
+					if !result {
+						return fmt.Errorf("restore failed, failing CRIU")
 					}
 					return nil
 				},
@@ -453,32 +451,36 @@ func (s *migrationSourceWs) Do(migrateOp *operation) error {
 				},
 			)
 			if err != nil {
+				os.RemoveAll(checkpointDir)
 				return abort(err)
 			}
 
 			if err := writeActionScript(checkpointDir, actionScriptOp.url, actionScriptOpSecret); err != nil {
+				os.RemoveAll(checkpointDir)
 				return abort(err)
 			}
 
 			_, err = actionScriptOp.Run()
 			if err != nil {
+				os.RemoveAll(checkpointDir)
 				return abort(err)
 			}
 
-			migrateDone := make(chan error, 1)
 			go func() {
-				migrateDone <- s.container.Migrate(lxc.MIGRATE_DUMP, checkpointDir, "migration", true, true)
+				dumpSuccess <- s.container.Migrate(lxc.MIGRATE_DUMP, checkpointDir, "migration", true, true)
+				os.RemoveAll(checkpointDir)
 			}()
 
 			select {
 			/* the checkpoint failed, let's just abort */
-			case err = <-migrateDone:
+			case err = <-dumpSuccess:
 				return abort(err)
 			/* the dump finished, let's continue on to the restore */
 			case <-dumpDone:
 				shared.LogDebugf("Dump finished, continuing with restore...")
 			}
 		} else {
+			defer os.RemoveAll(checkpointDir)
 			if err := s.container.Migrate(lxc.MIGRATE_DUMP, checkpointDir, "migration", true, false); err != nil {
 				return abort(err)
 			}
@@ -506,6 +508,14 @@ func (s *migrationSourceWs) Do(migrateOp *operation) error {
 	if err := s.recv(&msg); err != nil {
 		s.disconnect()
 		return err
+	}
+
+	if s.live {
+		restoreSuccess <- *msg.Success
+		err := <-dumpSuccess
+		if err != nil {
+			shared.LogErrorf("dump failed after successful restore?: %q", err)
+		}
 	}
 
 	if !*msg.Success {
@@ -570,19 +580,14 @@ func (c *migrationSink) connectWithSecret(secret string) (*websocket.Conn, error
 func (c *migrationSink) Do(migrateOp *operation) error {
 	var err error
 
-	// Start the storage for this container (LVM mount/umount)
-	c.src.container.StorageStart()
-
 	c.src.controlConn, err = c.connectWithSecret(c.src.controlSecret)
 	if err != nil {
-		c.src.container.StorageStop()
 		return err
 	}
 	defer c.src.disconnect()
 
 	c.src.fsConn, err = c.connectWithSecret(c.src.fsSecret)
 	if err != nil {
-		c.src.container.StorageStop()
 		c.src.sendControl(err)
 		return err
 	}
@@ -590,7 +595,6 @@ func (c *migrationSink) Do(migrateOp *operation) error {
 	if c.src.live {
 		c.src.criuConn, err = c.connectWithSecret(c.src.criuSecret)
 		if err != nil {
-			c.src.container.StorageStop()
 			c.src.sendControl(err)
 			return err
 		}
@@ -598,7 +602,6 @@ func (c *migrationSink) Do(migrateOp *operation) error {
 
 	header := MigrationHeader{}
 	if err := c.src.recv(&header); err != nil {
-		c.src.container.StorageStop()
 		c.src.sendControl(err)
 		return err
 	}
@@ -624,7 +627,6 @@ func (c *migrationSink) Do(migrateOp *operation) error {
 	}
 
 	if err := c.src.send(&resp); err != nil {
-		c.src.container.StorageStop()
 		c.src.sendControl(err)
 		return err
 	}
@@ -716,8 +718,6 @@ func (c *migrationSink) Do(migrateOp *operation) error {
 	}(c)
 
 	source := c.src.controlChannel()
-
-	defer c.src.container.StorageStop()
 
 	for {
 		select {
