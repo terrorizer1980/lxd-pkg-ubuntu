@@ -1,3 +1,10 @@
+lxd (2.6-0ubuntu3) zesty; urgency=medium
+
+  * Disable Go shared libraries as they cause a file templating regression.
+    (LP: #1644566)
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Thu, 24 Nov 2016 13:30:29 -0500
+
 lxd (2.6-0ubuntu2) zesty; urgency=medium
 
   * Add a build-dependency on libsqlite3-dev for PPA/backports that
