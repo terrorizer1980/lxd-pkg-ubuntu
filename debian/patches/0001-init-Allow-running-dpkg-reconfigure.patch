@@ -1,4 +1,4 @@
-From e09efb8190284129400bb1c97b80a641f67a1d6f Mon Sep 17 00:00:00 2001
+From 646e7b985689394ec38d57b136fcab65e711f9c8 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
 Date: Mon, 4 Apr 2016 21:18:28 -0400
 Subject: init: Allow running dpkg-reconfigure
