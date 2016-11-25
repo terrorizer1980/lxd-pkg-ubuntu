@@ -1,3 +1,17 @@
+lxd (2.0.7-0ubuntu1~ubuntu16.04.1) xenial; urgency=medium
+
+  * New upstream bugfix release (2.0.7) (LP: #1644377)
+    - extra/bash: Better parse containers list
+    - lxc/copy: Make container copy more robust
+    - lxd/containers: Don't assign idmaps to privileged containers
+    - lxd/containers: Don't break when parsing old containers
+    - lxd/containers: Don't double apply templates
+    - lxd/containers: Fix concurrent map iteration+modification
+    - lxd/containers: Fix idmap handling of pre-idmap containers
+    - tests: Add tests for file templating
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Thu, 24 Nov 2016 23:01:54 -0500
+
 lxd (2.0.6-0ubuntu1~ubuntu16.04.1) xenial; urgency=medium
 
   * New upstream bugfix release (2.0.6) (LP: #1644377)
