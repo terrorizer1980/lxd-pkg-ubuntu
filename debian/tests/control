@@ -13,4 +13,4 @@ Depends: acl,
          sqlite3,
          uuid-runtime,
          @
-Restrictions: needs-root allow-stderr
+Restrictions: needs-root allow-stderr isolation-machine
