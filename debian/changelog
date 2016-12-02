@@ -1,3 +1,9 @@
+lxd (2.6.2-0ubuntu2) zesty; urgency=medium
+
+  * Restrict autopkgtest to standalone systems.
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Fri, 02 Dec 2016 00:46:31 -0500
+
 lxd (2.6.2-0ubuntu1) zesty; urgency=medium
 
   * New upstream bugfix release (2.6.2):
