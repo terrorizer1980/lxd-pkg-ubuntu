@@ -1,3 +1,12 @@
+lxd (2.0.8-0ubuntu1~ubuntu16.04.2) xenial; urgency=medium
+
+  * Fix container last-state recording (LP: #1647312)
+    - 0001-Fix-container-state-recording.patch
+    - 0002-tests-Test-lxd-shutdown.patch
+    - 0003-Only-mark-ready-once-containers-are-up.patch
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Mon, 05 Dec 2016 13:45:44 +0100
+
 lxd (2.0.8-0ubuntu1~ubuntu16.04.1) xenial; urgency=medium
 
   * New upstream bugfix release (2.0.8) (LP: #1644377)
