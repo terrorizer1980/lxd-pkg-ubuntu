@@ -1,0 +1,44 @@
+From 4f8126fb44b04c3d55a7bf0405ae5af17a5682db Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Mon, 5 Dec 2016 11:09:44 +0100
+Subject: Fix container state recording
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Closes #2686
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ lxd/containers.go | 9 +++++----
+ 1 file changed, 5 insertions(+), 4 deletions(-)
+
+diff --git a/lxd/containers.go b/lxd/containers.go
+index 145888f..c657f62 100644
+--- a/lxd/containers.go
++++ b/lxd/containers.go
+@@ -165,10 +165,7 @@ func containersShutdown(d *Daemon) error {
+ 		}
+ 
+ 		// Record the current state
+-		err = c.ConfigKeySet("volatile.last_state.power", c.State())
+-		if err != nil {
+-			return err
+-		}
++		lastState := c.State()
+ 
+ 		// Stop the container
+ 		if c.IsRunning() {
+@@ -176,8 +173,12 @@ func containersShutdown(d *Daemon) error {
+ 			go func() {
+ 				c.Shutdown(time.Second * 30)
+ 				c.Stop(false)
++				c.ConfigKeySet("volatile.last_state.power", lastState)
++
+ 				wg.Done()
+ 			}()
++		} else {
++			c.ConfigKeySet("volatile.last_state.power", lastState)
+ 		}
+ 	}
+ 	wg.Wait()
