@@ -38,6 +38,7 @@ package main
 #include <libgen.h>
 #include <ifaddrs.h>
 #include <dirent.h>
+#include <grp.h>
 
 // This expects:
 //  ./lxd forkputfile /source/path <pid> /target/path
@@ -52,6 +53,12 @@ package main
 void error(char *msg)
 {
 	int old_errno = errno;
+
+	if (old_errno == 0) {
+		fprintf(stderr, "%s\n", msg);
+		fprintf(stderr, "errno: 0\n");
+		return;
+	}
 
 	perror(msg);
 	fprintf(stderr, "errno: %d\n", old_errno);
@@ -149,8 +156,8 @@ void attach_userns(int pid) {
 				_exit(1);
 			}
 
-			if (setuid(0) < 0) {
-				fprintf(stderr, "Failed setuid to container root user: %s\n", strerror(errno));
+			if (setgroups(0, NULL) < 0) {
+				fprintf(stderr, "Failed setgroups to container root groups: %s\n", strerror(errno));
 				_exit(1);
 			}
 
@@ -158,6 +165,12 @@ void attach_userns(int pid) {
 				fprintf(stderr, "Failed setgid to container root group: %s\n", strerror(errno));
 				_exit(1);
 			}
+
+			if (setuid(0) < 0) {
+				fprintf(stderr, "Failed setuid to container root user: %s\n", strerror(errno));
+				_exit(1);
+			}
+
 		}
 	}
 }
@@ -229,6 +242,11 @@ int manip_file_in_ns(char *rootfs, int pid, char *host, char *container, bool is
 	container_open_flags = O_RDWR;
 	if (is_put)
 		container_open_flags |= O_CREAT;
+
+	if (is_put && !is_dir_manip && exists && S_ISDIR(st.st_mode)) {
+		error("error: Path already exists as a directory");
+		goto close_host;
+	}
 
 	if (exists && S_ISDIR(st.st_mode))
 		container_open_flags = O_DIRECTORY;

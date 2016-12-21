@@ -164,3 +164,15 @@ This shows up as a "fs\_progress" attribute in the operation metadata.
 ## id\_map
 Enables setting the `security.idmap.isolated` and `security.idmap.isolated`,
 `security.idmap.size`, and `raw.id_map` fields.
+
+## network\_firewall\_filtering
+Add two new keys, "ipv4.firewall" and "ipv6.firewall" which if set to
+false will turn off the generation of iptables FORWARDING rules. NAT
+rules will still be added so long as the matching "ipv4.nat" or
+"ipv6.nat" key is set to true.
+
+Rules necessary for dnsmasq to work (DHCP/DNS) will always be applied if
+dnsmasq is enabled on the bridge.
+
+## network\_routes
+Introduces "ipv4.routes" and "ipv6.routes" which allow routing additional subnets to a LXD bridge.

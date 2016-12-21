@@ -25,6 +25,7 @@ import (
 	"gopkg.in/yaml.v2"
 
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/osarch"
 
 	log "gopkg.in/inconshreveable/log15.v2"
 )
@@ -137,6 +138,14 @@ func lxcValidConfig(rawLxc string) error {
 			return fmt.Errorf("Setting lxc.logfile is not allowed")
 		}
 
+		if key == "lxc.syslog" {
+			return fmt.Errorf("Setting lxc.syslog is not allowed")
+		}
+
+		if key == "lxc.ephemeral" {
+			return fmt.Errorf("Setting lxc.ephemeral is not allowed")
+		}
+
 		if strings.HasPrefix(key, "lxc.network.") {
 			fields := strings.Split(key, ".")
 			if len(fields) == 4 && shared.StringInSlice(fields[3], []string{"ipv4", "ipv6"}) {
@@ -152,6 +161,20 @@ func lxcValidConfig(rawLxc string) error {
 	}
 
 	return nil
+}
+
+func lxcStatusCode(state lxc.State) shared.StatusCode {
+	return map[int]shared.StatusCode{
+		1: shared.Stopped,
+		2: shared.Starting,
+		3: shared.Running,
+		4: shared.Stopping,
+		5: shared.Aborting,
+		6: shared.Freezing,
+		7: shared.Frozen,
+		8: shared.Thawed,
+		9: shared.Error,
+	}[int(state)]
 }
 
 // Loader functions
@@ -172,6 +195,11 @@ func containerLXCCreate(d *Daemon, args containerArgs) (container, error) {
 		localDevices: args.Devices,
 	}
 
+	ctxMap := log.Ctx{"name": c.name,
+		"ephemeral": c.ephemeral}
+
+	shared.LogInfo("Creating container", ctxMap)
+
 	// No need to detect storage here, its a new container.
 	c.storage = d.Storage
 
@@ -179,6 +207,7 @@ func containerLXCCreate(d *Daemon, args containerArgs) (container, error) {
 	err := c.init()
 	if err != nil {
 		c.Delete()
+		shared.LogError("Failed creating container", ctxMap)
 		return nil, err
 	}
 
@@ -215,6 +244,7 @@ func containerLXCCreate(d *Daemon, args containerArgs) (container, error) {
 		err = c.Update(updateArgs, false)
 		if err != nil {
 			c.Delete()
+			shared.LogError("Failed creating container", ctxMap)
 			return nil, err
 		}
 	}
@@ -223,12 +253,14 @@ func containerLXCCreate(d *Daemon, args containerArgs) (container, error) {
 	err = containerValidConfig(d, c.expandedConfig, false, true)
 	if err != nil {
 		c.Delete()
+		shared.LogError("Failed creating container", ctxMap)
 		return nil, err
 	}
 
 	err = containerValidDevices(c.expandedDevices, false, true)
 	if err != nil {
 		c.Delete()
+		shared.LogError("Failed creating container", ctxMap)
 		return nil, err
 	}
 
@@ -246,6 +278,7 @@ func containerLXCCreate(d *Daemon, args containerArgs) (container, error) {
 
 		if err != nil {
 			c.Delete()
+			shared.LogError("Failed creating container", ctxMap)
 			return nil, err
 		}
 	}
@@ -255,6 +288,7 @@ func containerLXCCreate(d *Daemon, args containerArgs) (container, error) {
 		idmapBytes, err := json.Marshal(idmap.Idmap)
 		if err != nil {
 			c.Delete()
+			shared.LogError("Failed creating container", ctxMap)
 			return nil, err
 		}
 		jsonIdmap = string(idmapBytes)
@@ -265,12 +299,14 @@ func containerLXCCreate(d *Daemon, args containerArgs) (container, error) {
 	err = c.ConfigKeySet("volatile.idmap.next", jsonIdmap)
 	if err != nil {
 		c.Delete()
+		shared.LogError("Failed creating container", ctxMap)
 		return nil, err
 	}
 
 	err = c.ConfigKeySet("volatile.idmap.base", fmt.Sprintf("%v", base))
 	if err != nil {
 		c.Delete()
+		shared.LogError("Failed creating container", ctxMap)
 		return nil, err
 	}
 
@@ -279,6 +315,7 @@ func containerLXCCreate(d *Daemon, args containerArgs) (container, error) {
 		err = c.ConfigKeySet("volatile.last_state.idmap", jsonIdmap)
 		if err != nil {
 			c.Delete()
+			shared.LogError("Failed creating container", ctxMap)
 			return nil, err
 		}
 	}
@@ -287,11 +324,14 @@ func containerLXCCreate(d *Daemon, args containerArgs) (container, error) {
 	err = c.init()
 	if err != nil {
 		c.Delete()
+		shared.LogError("Failed creating container", ctxMap)
 		return nil, err
 	}
 
 	// Update lease files
-	networkUpdateStatic(d)
+	networkUpdateStatic(d, "")
+
+	shared.LogInfo("Created container", ctxMap)
 
 	return c, nil
 }
@@ -845,9 +885,9 @@ func (c *containerLXC) initLXC() error {
 	}
 
 	// Setup architecture
-	personality, err := shared.ArchitecturePersonality(c.architecture)
+	personality, err := osarch.ArchitecturePersonality(c.architecture)
 	if err != nil {
-		personality, err = shared.ArchitecturePersonality(c.daemon.architectures[0])
+		personality, err = osarch.ArchitecturePersonality(c.daemon.architectures[0])
 		if err != nil {
 			return err
 		}
@@ -1552,6 +1592,7 @@ func (c *containerLXC) startCommon() (string, error) {
 	var usbs []usbDevice
 	var gpus []gpuDevice
 	var nvidiaDevices []nvidiaGpuDevices
+	diskDevices := map[string]shared.Device{}
 
 	// Create the devices
 	for _, k := range c.expandedDevices.DeviceNames() {
@@ -1637,12 +1678,8 @@ func (c *containerLXC) startCommon() (string, error) {
 				}
 			}
 		} else if m["type"] == "disk" {
-			// Disk device
 			if m["path"] != "/" {
-				_, err := c.createDiskDevice(k, m)
-				if err != nil {
-					return "", err
-				}
+				diskDevices[k] = m
 			}
 		} else if m["type"] == "nic" {
 			if m["nictype"] == "bridged" && shared.IsTrue(m["security.mac_filtering"]) {
@@ -1683,6 +1720,14 @@ func (c *containerLXC) startCommon() (string, error) {
 				}
 			}
 		}
+	}
+
+	err = c.addDiskDevices(diskDevices, func(name string, d shared.Device) error {
+		_, err := c.createDiskDevice(name, d)
+		return err
+	})
+	if err != nil {
+		return "", err
 	}
 
 	// Create any missing directory
@@ -1761,6 +1806,23 @@ func (c *containerLXC) startCommon() (string, error) {
 	err = c.c.SaveConfigFile(configPath)
 	if err != nil {
 		os.Remove(configPath)
+		return "", err
+	}
+
+	// Update the backup.yaml file (as storage is guaranteed to be mountable now)
+	err = c.StorageStart()
+	if err != nil {
+		return "", err
+	}
+
+	err = writeBackupFile(c)
+	if err != nil {
+		c.StorageStop()
+		return "", err
+	}
+
+	err = c.StorageStop()
+	if err != nil {
 		return "", err
 	}
 
@@ -2333,7 +2395,7 @@ func (c *containerLXC) Render() (interface{}, interface{}, error) {
 	}
 
 	// Ignore err as the arch string on error is correct (unknown)
-	architectureName, _ := shared.ArchitectureName(c.architecture)
+	architectureName, _ := osarch.ArchitectureName(c.architecture)
 
 	// Prepare the ETag
 	etag := []interface{}{c.architecture, c.localConfig, c.localDevices, c.ephemeral, c.profiles}
@@ -2358,7 +2420,7 @@ func (c *containerLXC) Render() (interface{}, interface{}, error) {
 		if err != nil {
 			return nil, nil, err
 		}
-		statusCode := shared.FromLXCState(int(cState))
+		statusCode := lxcStatusCode(cState)
 
 		return &shared.ContainerInfo{
 			Architecture:    architectureName,
@@ -2389,7 +2451,7 @@ func (c *containerLXC) RenderState() (*shared.ContainerState, error) {
 	if err != nil {
 		return nil, err
 	}
-	statusCode := shared.FromLXCState(int(cState))
+	statusCode := lxcStatusCode(cState)
 	status := shared.ContainerState{
 		Status:     statusCode.String(),
 		StatusCode: statusCode,
@@ -2486,6 +2548,14 @@ func (c *containerLXC) Restore(sourceContainer container) error {
 		return err
 	}
 
+	// The old backup file may be out of date (e.g. it doesn't have all the
+	// current snapshots of the container listed); let's write a new one to
+	// be safe.
+	err = writeBackupFile(c)
+	if err != nil {
+		return err
+	}
+
 	// If the container wasn't running but was stateful, should we restore
 	// it as running?
 	if shared.PathExists(c.StatePath()) {
@@ -2575,7 +2645,7 @@ func (c *containerLXC) Delete() error {
 	}
 
 	// Update lease files
-	networkUpdateStatic(c.daemon)
+	networkUpdateStatic(c.daemon, "")
 
 	shared.LogInfo("Deleted container", ctxMap)
 
@@ -2713,6 +2783,76 @@ func (c *containerLXC) ConfigKeySet(key string, value string) error {
 	return c.Update(args, false)
 }
 
+type backupFile struct {
+	Container *shared.ContainerInfo  `yaml:"container"`
+	Snapshots []*shared.SnapshotInfo `yaml:"snapshots"`
+}
+
+func writeBackupFile(c container) error {
+	/* we only write backup files out for actual containers */
+	if c.IsSnapshot() {
+		return nil
+	}
+
+	/* immediately return if the container directory doesn't exist yet */
+	if !shared.PathExists(c.Path()) {
+		return os.ErrNotExist
+	}
+
+	/* deal with the container occasionaly not being monuted */
+	if !shared.PathExists(c.RootfsPath()) {
+		shared.LogWarn("Unable to update backup.yaml at this time.", log.Ctx{"name": c.Name()})
+		return nil
+	}
+
+	ci, _, err := c.Render()
+	if err != nil {
+		return err
+	}
+
+	snapshots, err := c.Snapshots()
+	if err != nil {
+		return err
+	}
+
+	var sis []*shared.SnapshotInfo
+
+	for _, s := range snapshots {
+		si, _, err := s.Render()
+		if err != nil {
+			return err
+		}
+
+		sis = append(sis, si.(*shared.SnapshotInfo))
+	}
+
+	data, err := yaml.Marshal(&backupFile{
+		Container: ci.(*shared.ContainerInfo),
+		Snapshots: sis,
+	})
+	if err != nil {
+		return err
+	}
+
+	f, err := os.Create(shared.VarPath("containers", c.Name(), "backup.yaml"))
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	err = f.Chmod(0400)
+	if err != nil {
+		return err
+	}
+
+	err = shared.WriteAll(f, data)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 	// Set sane defaults for unset keys
 	if args.Architecture == 0 {
@@ -2757,7 +2897,7 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 
 	// Validate the new architecture
 	if args.Architecture != 0 {
-		_, err = shared.ArchitectureName(args.Architecture)
+		_, err = osarch.ArchitectureName(args.Architecture)
 		if err != nil {
 			return fmt.Errorf("Invalid architecture id: %s", err)
 		}
@@ -3292,6 +3432,8 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 			}
 		}
 
+		diskDevices := map[string]shared.Device{}
+
 		for k, m := range addDevices {
 			if shared.StringInSlice(m["type"], []string{"unix-char", "unix-block"}) {
 				err = c.insertUnixDevice(m)
@@ -3299,10 +3441,7 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 					return err
 				}
 			} else if m["type"] == "disk" && m["path"] != "/" {
-				err = c.insertDiskDevice(k, m)
-				if err != nil {
-					return err
-				}
+				diskDevices[k] = m
 			} else if m["type"] == "nic" {
 				err = c.insertNetworkDevice(k, m)
 				if err != nil {
@@ -3375,6 +3514,11 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 					}
 				}
 			}
+		}
+
+		err = c.addDiskDevices(diskDevices, c.insertDiskDevice)
+		if err != nil {
+			return err
 		}
 
 		updateDiskLimit := false
@@ -3461,6 +3605,14 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 		return err
 	}
 
+	/* we can call Update in some cases when the directory doesn't exist
+	 * yet before container creation; this is okay, because at the end of
+	 * container creation we write the backup file, so let's not worry about
+	 * ENOENT. */
+	if err := writeBackupFile(c); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
 	// Update network leases
 	needsUpdate := false
 	for _, m := range updateDevices {
@@ -3471,7 +3623,7 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 	}
 
 	if needsUpdate {
-		networkUpdateStatic(c.daemon)
+		networkUpdateStatic(c.daemon, "")
 	}
 
 	// Success, update the closure to mark that the changes should be kept.
@@ -3557,13 +3709,13 @@ func (c *containerLXC) Export(w io.Writer, properties map[string]string) error {
 				return err
 			}
 
-			arch, _ = shared.ArchitectureName(parent.Architecture())
+			arch, _ = osarch.ArchitectureName(parent.Architecture())
 		} else {
-			arch, _ = shared.ArchitectureName(c.architecture)
+			arch, _ = osarch.ArchitectureName(c.architecture)
 		}
 
 		if arch == "" {
-			arch, err = shared.ArchitectureName(c.daemon.architectures[0])
+			arch, err = osarch.ArchitectureName(c.daemon.architectures[0])
 			if err != nil {
 				shared.LogError("Failed exporting container", ctxMap)
 				return err
@@ -3981,9 +4133,9 @@ func (c *containerLXC) templateApplyNow(trigger string) error {
 		}
 
 		// Figure out the architecture
-		arch, err := shared.ArchitectureName(c.architecture)
+		arch, err := osarch.ArchitectureName(c.architecture)
 		if err != nil {
-			arch, err = shared.ArchitectureName(c.daemon.architectures[0])
+			arch, err = osarch.ArchitectureName(c.daemon.architectures[0])
 			if err != nil {
 				return err
 			}
@@ -4067,9 +4219,10 @@ func (c *containerLXC) FileExists(path string) error {
 
 	if err != nil {
 		return fmt.Errorf(
-			"Error calling 'lxd forkcheckfile %s %d': err='%v'",
-			path,
+			"Error calling 'lxd forkcheckfile %s %d %s': err='%v'",
+			c.RootfsPath(),
 			c.InitPID(),
+			path,
 			err)
 	}
 
@@ -4108,7 +4261,6 @@ func (c *containerLXC) FilePull(srcpath string, dstpath string) (int, int, os.Fi
 	mode := -1
 	type_ := "unknown"
 	var dirEnts []string
-
 	var errStr string
 
 	// Process forkgetfile response
@@ -4128,6 +4280,7 @@ func (c *containerLXC) FilePull(srcpath string, dstpath string) (int, int, os.Fi
 			if errno == "2" {
 				return -1, -1, 0, "", nil, os.ErrNotExist
 			}
+
 			return -1, -1, 0, "", nil, fmt.Errorf(errStr)
 		}
 
@@ -4178,9 +4331,10 @@ func (c *containerLXC) FilePull(srcpath string, dstpath string) (int, int, os.Fi
 
 	if err != nil {
 		return -1, -1, 0, "", nil, fmt.Errorf(
-			"Error calling 'lxd forkgetfile %s %d %s': err='%v'",
-			dstpath,
+			"Error calling 'lxd forkgetfile %s %d %s %s': err='%v'",
+			c.RootfsPath(),
 			c.InitPID(),
+			dstpath,
 			srcpath,
 			err)
 	}
@@ -4203,6 +4357,7 @@ func (c *containerLXC) FilePull(srcpath string, dstpath string) (int, int, os.Fi
 func (c *containerLXC) FilePush(srcpath string, dstpath string, uid int, gid int, mode int) error {
 	var rootUid = 0
 	var rootGid = 0
+	var errStr string
 
 	// Map uid and gid if needed
 	if !c.IsRunning() {
@@ -4249,26 +4404,41 @@ func (c *containerLXC) FilePush(srcpath string, dstpath string, uid int, gid int
 		}
 	}
 
-	// Process forkputfile response
-	if string(out) != "" {
-		if strings.HasPrefix(string(out), "error:") {
-			return fmt.Errorf(strings.TrimPrefix(strings.TrimSuffix(string(out), "\n"), "error: "))
+	// Process forkgetfile response
+	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		if line == "" {
+			continue
 		}
 
-		for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
-			shared.LogDebugf("forkgetfile: %s", line)
+		// Extract errors
+		if strings.HasPrefix(line, "error: ") {
+			errStr = strings.TrimPrefix(line, "error: ")
+			continue
+		}
+
+		if strings.HasPrefix(line, "errno: ") {
+			errno := strings.TrimPrefix(line, "errno: ")
+			if errno == "2" {
+				return os.ErrNotExist
+			}
+
+			return fmt.Errorf(errStr)
 		}
 	}
 
 	if err != nil {
 		return fmt.Errorf(
-			"Error calling 'lxd forkputfile %s %d %s %d %d %d': err='%v'",
-			srcpath,
+			"Error calling 'lxd forkputfile %s %d %s %s %d %d %d %d %d %d': err='%v'",
+			c.RootfsPath(),
 			c.InitPID(),
+			srcpath,
 			dstpath,
 			uid,
 			gid,
 			mode,
+			rootUid,
+			rootGid,
+			int(os.FileMode(0640)&os.ModePerm),
 			err)
 	}
 
@@ -4314,9 +4484,10 @@ func (c *containerLXC) FileRemove(path string) error {
 
 	if err != nil {
 		return fmt.Errorf(
-			"Error calling 'lxd forkremovefile %s %d': err='%v'",
-			path,
+			"Error calling 'lxd forkremovefile %s %d %s': err='%v'",
+			c.RootfsPath(),
 			c.InitPID(),
+			path,
 			err)
 	}
 
@@ -4638,7 +4809,7 @@ func (c *containerLXC) StorageStart() error {
 		return c.storage.ContainerSnapshotStart(c)
 	}
 
-	return c.storage.ContainerStart(c)
+	return c.storage.ContainerStart(c.Name(), c.Path())
 }
 
 func (c *containerLXC) StorageStop() error {
@@ -4646,7 +4817,7 @@ func (c *containerLXC) StorageStop() error {
 		return c.storage.ContainerSnapshotStop(c)
 	}
 
-	return c.storage.ContainerStop(c)
+	return c.storage.ContainerStop(c.Name(), c.Path())
 }
 
 // Mount handling
@@ -4917,8 +5088,10 @@ func (c *containerLXC) insertUnixDevice(m shared.Device) error {
 	}
 
 	dType := ""
-	if m["type"] != "" {
-		dType = m["type"]
+	if m["type"] == "unix-char" {
+		dType = "c"
+	} else if m["type"] == "unix-block" {
+		dType = "b"
 	}
 
 	if dType == "" || dMajor < 0 || dMinor < 0 {
@@ -5229,6 +5402,26 @@ func (c *containerLXC) fillNetworkDevice(name string, m shared.Device) (shared.D
 		}
 	}
 
+	updateKey := func(key string, value string) error {
+		tx, err := dbBegin(c.daemon.db)
+		if err != nil {
+			return err
+		}
+
+		err = dbContainerConfigInsert(tx, c.id, map[string]string{key: value})
+		if err != nil {
+			tx.Rollback()
+			return err
+		}
+
+		err = txCommit(tx)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	}
+
 	// Fill in the MAC address
 	if m["nictype"] != "physical" && m["hwaddr"] == "" {
 		configKey := fmt.Sprintf("volatile.%s.hwaddr", name)
@@ -5240,24 +5433,20 @@ func (c *containerLXC) fillNetworkDevice(name string, m shared.Device) (shared.D
 				return nil, err
 			}
 
-			c.localConfig[configKey] = volatileHwaddr
-			c.expandedConfig[configKey] = volatileHwaddr
-
 			// Update the database
-			tx, err := dbBegin(c.daemon.db)
+			err = updateKey(configKey, volatileHwaddr)
 			if err != nil {
-				return nil, err
-			}
+				// Check if something else filled it in behind our back
+				value, err1 := dbContainerConfigGet(c.daemon.db, c.id, configKey)
+				if err1 != nil || value == "" {
+					return nil, err
+				}
 
-			err = dbContainerConfigInsert(tx, c.id, map[string]string{configKey: volatileHwaddr})
-			if err != nil {
-				tx.Rollback()
-				return nil, err
-			}
-
-			err = txCommit(tx)
-			if err != nil {
-				return nil, err
+				c.localConfig[configKey] = value
+				c.expandedConfig[configKey] = value
+			} else {
+				c.localConfig[configKey] = volatileHwaddr
+				c.expandedConfig[configKey] = volatileHwaddr
 			}
 		}
 		newDevice["hwaddr"] = volatileHwaddr
@@ -5274,24 +5463,20 @@ func (c *containerLXC) fillNetworkDevice(name string, m shared.Device) (shared.D
 				return nil, err
 			}
 
-			c.localConfig[configKey] = volatileName
-			c.expandedConfig[configKey] = volatileName
-
 			// Update the database
-			tx, err := dbBegin(c.daemon.db)
+			err = updateKey(configKey, volatileName)
 			if err != nil {
-				return nil, err
-			}
+				// Check if something else filled it in behind our back
+				value, err1 := dbContainerConfigGet(c.daemon.db, c.id, configKey)
+				if err1 != nil || value == "" {
+					return nil, err
+				}
 
-			err = dbContainerConfigInsert(tx, c.id, map[string]string{configKey: volatileName})
-			if err != nil {
-				tx.Rollback()
-				return nil, err
-			}
-
-			err = txCommit(tx)
-			if err != nil {
-				return nil, err
+				c.localConfig[configKey] = value
+				c.expandedConfig[configKey] = value
+			} else {
+				c.localConfig[configKey] = volatileName
+				c.expandedConfig[configKey] = volatileName
 			}
 		}
 		newDevice["name"] = volatileName
@@ -5541,6 +5726,38 @@ func (c *containerLXC) insertDiskDevice(name string, m shared.Device) error {
 	err = c.insertMount(devPath, tgtPath, "none", flags)
 	if err != nil {
 		return fmt.Errorf("Failed to add mount for device: %s", err)
+	}
+
+	return nil
+}
+
+type byPath []shared.Device
+
+func (a byPath) Len() int {
+	return len(a)
+}
+
+func (a byPath) Swap(i, j int) {
+	a[i], a[j] = a[j], a[i]
+}
+
+func (a byPath) Less(i, j int) bool {
+	return a[i]["path"] < a[j]["path"]
+}
+
+func (c *containerLXC) addDiskDevices(devices map[string]shared.Device, handler func(string, shared.Device) error) error {
+	ordered := byPath{}
+
+	for _, d := range devices {
+		ordered = append(ordered, d)
+	}
+
+	sort.Sort(ordered)
+	for _, d := range ordered {
+		err := handler(d["path"], d)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil

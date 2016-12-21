@@ -6,8 +6,8 @@ import (
 
 	"github.com/lxc/lxd"
 	"github.com/lxc/lxd/shared"
-	"github.com/lxc/lxd/shared/gnuflag"
 	"github.com/lxc/lxd/shared/i18n"
+	"github.com/lxc/lxd/shared/version"
 )
 
 type launchCmd struct {
@@ -22,7 +22,7 @@ func (c *launchCmd) usage() string {
 	return i18n.G(
 		`Launch a container from a particular image.
 
-lxc launch [remote:]<image> [remote:][<name>] [--ephemeral|-e] [--profile|-p <profile>...] [--config|-c <key=value>...] [--network|-n <network>]
+lxc launch [<remote>:]<image> [<remote>:][<name>] [--ephemeral|-e] [--profile|-p <profile>...] [--config|-c <key=value>...] [--network|-n <network>]
 
 Launches a container using the specified image and name.
 
@@ -30,21 +30,12 @@ Not specifying -p will result in the default profile.
 Specifying "-p" with no argument will result in no profile.
 
 Example:
-lxc launch ubuntu:16.04 u1`)
+    lxc launch ubuntu:16.04 u1`)
 }
 
 func (c *launchCmd) flags() {
 	c.init = initCmd{}
-
-	c.init.massage_args()
-	gnuflag.Var(&c.init.confArgs, "config", i18n.G("Config key/value to apply to the new container"))
-	gnuflag.Var(&c.init.confArgs, "c", i18n.G("Config key/value to apply to the new container"))
-	gnuflag.Var(&c.init.profArgs, "profile", i18n.G("Profile to apply to the new container"))
-	gnuflag.Var(&c.init.profArgs, "p", i18n.G("Profile to apply to the new container"))
-	gnuflag.BoolVar(&c.init.ephem, "ephemeral", false, i18n.G("Ephemeral container"))
-	gnuflag.BoolVar(&c.init.ephem, "e", false, i18n.G("Ephemeral container"))
-	gnuflag.StringVar(&c.init.network, "network", "", i18n.G("Network name"))
-	gnuflag.StringVar(&c.init.network, "n", "", i18n.G("Network name"))
+	c.init.flags()
 }
 
 func (c *launchCmd) run(config *lxd.Config, args []string) error {
@@ -117,9 +108,9 @@ func (c *launchCmd) run(config *lxd.Config, args []string) error {
 			return fmt.Errorf(i18n.G("didn't get any affected image, container or snapshot from server"))
 		}
 
-		var version string
+		var restVersion string
 		toScan := strings.Replace(containers[0], "/", " ", -1)
-		count, err := fmt.Sscanf(toScan, " %s containers %s", &version, &name)
+		count, err := fmt.Sscanf(toScan, " %s containers %s", &restVersion, &name)
 		if err != nil {
 			return err
 		}
@@ -128,7 +119,7 @@ func (c *launchCmd) run(config *lxd.Config, args []string) error {
 			return fmt.Errorf(i18n.G("bad number of things scanned from image, container or snapshot"))
 		}
 
-		if version != shared.APIVersion {
+		if restVersion != version.APIVersion {
 			return fmt.Errorf(i18n.G("got bad version"))
 		}
 	}

@@ -92,8 +92,8 @@ func (s *storageZfs) Init(config map[string]interface{}) (storage, error) {
 }
 
 // Things we don't need to care about
-func (s *storageZfs) ContainerStart(container container) error {
-	fs := fmt.Sprintf("containers/%s", container.Name())
+func (s *storageZfs) ContainerStart(name string, path string) error {
+	fs := fmt.Sprintf("containers/%s", name)
 
 	// Just in case the container filesystem got unmounted
 	if !shared.IsMountPoint(shared.VarPath(fs)) {
@@ -103,7 +103,7 @@ func (s *storageZfs) ContainerStart(container container) error {
 	return nil
 }
 
-func (s *storageZfs) ContainerStop(container container) error {
+func (s *storageZfs) ContainerStop(name string, path string) error {
 	return nil
 }
 
@@ -1217,17 +1217,17 @@ func storageZFSValidatePoolName(d *Daemon, key string, value string) error {
 		if err != nil {
 			return fmt.Errorf("Invalid ZFS pool: %v", err)
 		}
-	}
 
-	// Confirm that the new pool is empty
-	s.zfsPool = value
-	subvols, err := s.zfsListSubvolumes("")
-	if err != nil {
-		return err
-	}
+		// Confirm that the new pool is empty
+		s.zfsPool = value
+		subvols, err := s.zfsListSubvolumes("")
+		if err != nil {
+			return err
+		}
 
-	if len(subvols) > 0 {
-		return fmt.Errorf("Provided ZFS pool (or dataset) isn't empty")
+		if len(subvols) > 0 {
+			return fmt.Errorf("Provided ZFS pool (or dataset) isn't empty")
+		}
 	}
 
 	// Confirm the old pool isn't in use anymore

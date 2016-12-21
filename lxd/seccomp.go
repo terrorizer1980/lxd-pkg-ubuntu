@@ -7,14 +7,13 @@ import (
 	"path"
 
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/osarch"
 )
 
-const SECCOMP_HEADER = `
-2
+const SECCOMP_HEADER = `2
 `
 
-const DEFAULT_SECCOMP_POLICY = `
-reject_force_umount  # comment this to allow umount -f;  not recommended
+const DEFAULT_SECCOMP_POLICY = `reject_force_umount  # comment this to allow umount -f;  not recommended
 [all]
 kexec_load errno 38
 open_by_handle_at errno 38
@@ -22,8 +21,7 @@ init_module errno 38
 finit_module errno 38
 delete_module errno 38
 `
-const COMPAT_BLOCKING_POLICY = `
-[%s]
+const COMPAT_BLOCKING_POLICY = `[%s]
 compat_sys_rt_sigaction errno 38
 stub_x32_rt_sigreturn errno 38
 compat_sys_ioctl errno 38
@@ -124,7 +122,7 @@ func getSeccompProfileContent(c container) (string, error) {
 
 	compat := config["security.syscalls.blacklist_compat"]
 	if shared.IsTrue(compat) {
-		arch, err := shared.ArchitectureName(c.Architecture())
+		arch, err := osarch.ArchitectureName(c.Architecture())
 		if err != nil {
 			return "", err
 		}

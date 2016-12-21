@@ -16,6 +16,7 @@ import (
 	log "gopkg.in/inconshreveable/log15.v2"
 
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/version"
 )
 
 // API endpoints
@@ -35,7 +36,7 @@ func networksGet(d *Daemon, r *http.Request) Response {
 	resultMap := []shared.NetworkConfig{}
 	for _, iface := range ifs {
 		if recursion == 0 {
-			resultString = append(resultString, fmt.Sprintf("/%s/networks/%s", shared.APIVersion, iface))
+			resultString = append(resultString, fmt.Sprintf("/%s/networks/%s", version.APIVersion, iface))
 		} else {
 			net, err := doNetworkGet(d, iface)
 			if err != nil {
@@ -142,7 +143,7 @@ func networksPost(d *Daemon, r *http.Request) Response {
 		return InternalError(err)
 	}
 
-	return SyncResponseLocation(true, nil, fmt.Sprintf("/%s/networks/%s", shared.APIVersion, req.Name))
+	return SyncResponseLocation(true, nil, fmt.Sprintf("/%s/networks/%s", version.APIVersion, req.Name))
 }
 
 var networksCmd = Command{name: "networks", get: networksGet, post: networksPost}
@@ -189,7 +190,7 @@ func doNetworkGet(d *Daemon, name string) (shared.NetworkConfig, error) {
 		}
 
 		if networkIsInUse(c, n.Name) {
-			n.UsedBy = append(n.UsedBy, fmt.Sprintf("/%s/containers/%s", shared.APIVersion, ct))
+			n.UsedBy = append(n.UsedBy, fmt.Sprintf("/%s/containers/%s", version.APIVersion, ct))
 		}
 	}
 
@@ -284,7 +285,7 @@ func networkPost(d *Daemon, r *http.Request) Response {
 		return SmartError(err)
 	}
 
-	return SyncResponseLocation(true, nil, fmt.Sprintf("/%s/networks/%s", shared.APIVersion, req.Name))
+	return SyncResponseLocation(true, nil, fmt.Sprintf("/%s/networks/%s", version.APIVersion, req.Name))
 }
 
 func networkPut(d *Daemon, r *http.Request) Response {
@@ -649,8 +650,13 @@ func (n *network) Start() error {
 		return err
 	}
 
-	// Flush all IPv4 addresses
+	// Flush all IPv4 addresses and routes
 	err = shared.RunCommand("ip", "-4", "addr", "flush", "dev", n.name, "scope", "global")
+	if err != nil {
+		return err
+	}
+
+	err = shared.RunCommand("ip", "-4", "route", "flush", "dev", n.name, "proto", "static")
 	if err != nil {
 		return err
 	}
@@ -660,20 +666,23 @@ func (n *network) Start() error {
 		// Setup basic iptables overrides
 		rules := [][]string{
 			[]string{"ipv4", n.name, "", "INPUT", "-i", n.name, "-p", "udp", "--dport", "67", "-j", "ACCEPT"},
-			[]string{"ipv4", n.name, "", "INPUT", "-i", n.name, "-p", "tcp", "--dport", "67", "-j", "ACCEPT"},
 			[]string{"ipv4", n.name, "", "INPUT", "-i", n.name, "-p", "udp", "--dport", "53", "-j", "ACCEPT"},
 			[]string{"ipv4", n.name, "", "INPUT", "-i", n.name, "-p", "tcp", "--dport", "53", "-j", "ACCEPT"},
 			[]string{"ipv4", n.name, "", "OUTPUT", "-o", n.name, "-p", "udp", "--sport", "67", "-j", "ACCEPT"},
-			[]string{"ipv4", n.name, "", "OUTPUT", "-o", n.name, "-p", "tcp", "--sport", "67", "-j", "ACCEPT"},
 			[]string{"ipv4", n.name, "", "OUTPUT", "-o", n.name, "-p", "udp", "--sport", "53", "-j", "ACCEPT"},
-			[]string{"ipv4", n.name, "", "OUTPUT", "-o", n.name, "-p", "tcp", "--sport", "53", "-j", "ACCEPT"},
-			[]string{"ipv4", n.name, "mangle", "POSTROUTING", "-o", n.name, "-p", "udp", "--dport", "68", "-j", "CHECKSUM", "--checksum-fill"}}
+			[]string{"ipv4", n.name, "", "OUTPUT", "-o", n.name, "-p", "tcp", "--sport", "53", "-j", "ACCEPT"}}
 
 		for _, rule := range rules {
 			err = networkIptablesPrepend(rule[0], rule[1], rule[2], rule[3], rule[4:]...)
 			if err != nil {
 				return err
 			}
+		}
+
+		// Workaround for broken DHCP clients
+		err = networkIptablesPrepend("ipv4", n.name, "mangle", "POSTROUTING", "-o", n.name, "-p", "udp", "--dport", "68", "-j", "CHECKSUM", "--checksum-fill")
+		if err != nil {
+			return err
 		}
 
 		// Allow forwarding
@@ -683,24 +692,28 @@ func (n *network) Start() error {
 				return err
 			}
 
-			err = networkIptablesPrepend("ipv4", n.name, "", "FORWARD", "-i", n.name, "-j", "ACCEPT")
-			if err != nil {
-				return err
-			}
+			if n.config["ipv4.firewall"] == "" || shared.IsTrue(n.config["ipv4.firewall"]) {
+				err = networkIptablesPrepend("ipv4", n.name, "", "FORWARD", "-i", n.name, "-j", "ACCEPT")
+				if err != nil {
+					return err
+				}
 
-			err = networkIptablesPrepend("ipv4", n.name, "", "FORWARD", "-o", n.name, "-j", "ACCEPT")
-			if err != nil {
-				return err
+				err = networkIptablesPrepend("ipv4", n.name, "", "FORWARD", "-o", n.name, "-j", "ACCEPT")
+				if err != nil {
+					return err
+				}
 			}
 		} else {
-			err = networkIptablesPrepend("ipv4", n.name, "", "FORWARD", "-i", n.name, "-j", "REJECT")
-			if err != nil {
-				return err
-			}
+			if n.config["ipv4.firewall"] == "" || shared.IsTrue(n.config["ipv4.firewall"]) {
+				err = networkIptablesPrepend("ipv4", n.name, "", "FORWARD", "-i", n.name, "-j", "REJECT")
+				if err != nil {
+					return err
+				}
 
-			err = networkIptablesPrepend("ipv4", n.name, "", "FORWARD", "-o", n.name, "-j", "REJECT")
-			if err != nil {
-				return err
+				err = networkIptablesPrepend("ipv4", n.name, "", "FORWARD", "-o", n.name, "-j", "REJECT")
+				if err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -749,6 +762,17 @@ func (n *network) Start() error {
 				return err
 			}
 		}
+
+		// Add additional routes
+		if n.config["ipv4.routes"] != "" {
+			for _, route := range strings.Split(n.config["ipv4.routes"], ",") {
+				route = strings.TrimSpace(route)
+				err = shared.RunCommand("ip", "-4", "route", "add", "dev", n.name, route, "proto", "static")
+				if err != nil {
+					return err
+				}
+			}
+		}
 	}
 
 	// Remove any existing IPv6 iptables rules
@@ -762,8 +786,13 @@ func (n *network) Start() error {
 		return err
 	}
 
-	// Flush all IPv6 addresses
+	// Flush all IPv6 addresses and routes
 	err = shared.RunCommand("ip", "-6", "addr", "flush", "dev", n.name, "scope", "global")
+	if err != nil {
+		return err
+	}
+
+	err = shared.RunCommand("ip", "-6", "route", "flush", "dev", n.name, "proto", "static")
 	if err != nil {
 		return err
 	}
@@ -808,11 +837,9 @@ func (n *network) Start() error {
 		// Setup basic iptables overrides
 		rules := [][]string{
 			[]string{"ipv6", n.name, "", "INPUT", "-i", n.name, "-p", "udp", "--dport", "546", "-j", "ACCEPT"},
-			[]string{"ipv6", n.name, "", "INPUT", "-i", n.name, "-p", "tcp", "--dport", "546", "-j", "ACCEPT"},
 			[]string{"ipv6", n.name, "", "INPUT", "-i", n.name, "-p", "udp", "--dport", "53", "-j", "ACCEPT"},
 			[]string{"ipv6", n.name, "", "INPUT", "-i", n.name, "-p", "tcp", "--dport", "53", "-j", "ACCEPT"},
 			[]string{"ipv6", n.name, "", "OUTPUT", "-o", n.name, "-p", "udp", "--sport", "546", "-j", "ACCEPT"},
-			[]string{"ipv6", n.name, "", "OUTPUT", "-o", n.name, "-p", "tcp", "--sport", "546", "-j", "ACCEPT"},
 			[]string{"ipv6", n.name, "", "OUTPUT", "-o", n.name, "-p", "udp", "--sport", "53", "-j", "ACCEPT"},
 			[]string{"ipv6", n.name, "", "OUTPUT", "-o", n.name, "-p", "tcp", "--sport", "53", "-j", "ACCEPT"}}
 
@@ -852,24 +879,28 @@ func (n *network) Start() error {
 				}
 			}
 
-			err = networkIptablesPrepend("ipv6", n.name, "", "FORWARD", "-i", n.name, "-j", "ACCEPT")
-			if err != nil {
-				return err
-			}
+			if n.config["ipv6.firewall"] == "" || shared.IsTrue(n.config["ipv6.firewall"]) {
+				err = networkIptablesPrepend("ipv6", n.name, "", "FORWARD", "-i", n.name, "-j", "ACCEPT")
+				if err != nil {
+					return err
+				}
 
-			err = networkIptablesPrepend("ipv6", n.name, "", "FORWARD", "-o", n.name, "-j", "ACCEPT")
-			if err != nil {
-				return err
+				err = networkIptablesPrepend("ipv6", n.name, "", "FORWARD", "-o", n.name, "-j", "ACCEPT")
+				if err != nil {
+					return err
+				}
 			}
 		} else {
-			err = networkIptablesPrepend("ipv6", n.name, "", "FORWARD", "-i", n.name, "-j", "REJECT")
-			if err != nil {
-				return err
-			}
+			if n.config["ipv6.firewall"] == "" || shared.IsTrue(n.config["ipv6.firewall"]) {
+				err = networkIptablesPrepend("ipv6", n.name, "", "FORWARD", "-i", n.name, "-j", "REJECT")
+				if err != nil {
+					return err
+				}
 
-			err = networkIptablesPrepend("ipv6", n.name, "", "FORWARD", "-o", n.name, "-j", "REJECT")
-			if err != nil {
-				return err
+				err = networkIptablesPrepend("ipv6", n.name, "", "FORWARD", "-o", n.name, "-j", "REJECT")
+				if err != nil {
+					return err
+				}
 			}
 		}
 
@@ -884,6 +915,17 @@ func (n *network) Start() error {
 			err = networkIptablesPrepend("ipv6", n.name, "nat", "POSTROUTING", "-s", subnet.String(), "!", "-d", subnet.String(), "-j", "MASQUERADE")
 			if err != nil {
 				return err
+			}
+		}
+
+		// Add additional routes
+		if n.config["ipv6.routes"] != "" {
+			for _, route := range strings.Split(n.config["ipv6.routes"], ",") {
+				route = strings.TrimSpace(route)
+				err = shared.RunCommand("ip", "-6", "route", "add", "dev", n.name, route, "proto", "static")
+				if err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -1114,7 +1156,7 @@ func (n *network) Start() error {
 		}
 
 		// Update the static leases
-		err = networkUpdateStatic(n.daemon)
+		err = networkUpdateStatic(n.daemon, n.name)
 		if err != nil {
 			return err
 		}
