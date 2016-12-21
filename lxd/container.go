@@ -10,6 +10,7 @@ import (
 	"gopkg.in/lxc/go-lxc.v2"
 
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/osarch"
 )
 
 // Helper functions
@@ -48,9 +49,9 @@ func containerValidConfigKey(d *Daemon, key string, value string) error {
 	}
 	if key == "security.syscalls.blacklist_compat" {
 		for _, arch := range d.architectures {
-			if arch == shared.ARCH_64BIT_INTEL_X86 ||
-				arch == shared.ARCH_64BIT_ARMV8_LITTLE_ENDIAN ||
-				arch == shared.ARCH_64BIT_POWERPC_BIG_ENDIAN {
+			if arch == osarch.ARCH_64BIT_INTEL_X86 ||
+				arch == osarch.ARCH_64BIT_ARMV8_LITTLE_ENDIAN ||
+				arch == osarch.ARCH_64BIT_POWERPC_BIG_ENDIAN {
 				return nil
 			}
 		}
@@ -566,6 +567,12 @@ func containerCreateAsSnapshot(d *Daemon, args containerArgs, sourceContainer co
 		return nil, err
 	}
 
+	err = writeBackupFile(sourceContainer)
+	if err != nil {
+		c.Delete()
+		return nil, err
+	}
+
 	// Once we're done, remove the state directory
 	if args.Stateful {
 		os.RemoveAll(sourceContainer.StatePath())
@@ -617,7 +624,7 @@ func containerCreateInternal(d *Daemon, args containerArgs) (container, error) {
 	}
 
 	// Validate architecture
-	_, err = shared.ArchitectureName(args.Architecture)
+	_, err = osarch.ArchitectureName(args.Architecture)
 	if err != nil {
 		return nil, err
 	}
@@ -634,22 +641,22 @@ func containerCreateInternal(d *Daemon, args containerArgs) (container, error) {
 		}
 	}
 
-	path := containerPath(args.Name, args.Ctype == cTypeSnapshot)
-	if shared.PathExists(path) {
-		if shared.IsSnapshot(args.Name) {
-			return nil, fmt.Errorf("Snapshot '%s' already exists", args.Name)
+	// Create the container entry
+	id, err := dbContainerCreate(d.db, args)
+	if err != nil {
+		if err == DbErrAlreadyDefined {
+			thing := "Container"
+			if shared.IsSnapshot(args.Name) {
+				thing = "Snapshot"
+			}
+			return nil, fmt.Errorf("%s '%s' already exists", thing, args.Name)
 		}
-		return nil, fmt.Errorf("The container already exists")
+		return nil, err
 	}
 
 	// Wipe any existing log for this container name
 	os.RemoveAll(shared.LogPath(args.Name))
 
-	// Create the container entry
-	id, err := dbContainerCreate(d.db, args)
-	if err != nil {
-		return nil, err
-	}
 	args.Id = id
 
 	// Read the timestamp from the database
@@ -660,7 +667,12 @@ func containerCreateInternal(d *Daemon, args containerArgs) (container, error) {
 	args.CreationDate = dbArgs.CreationDate
 	args.LastUsedDate = dbArgs.LastUsedDate
 
-	return containerLXCCreate(d, args)
+	c, err := containerLXCCreate(d, args)
+	if err != nil {
+		return nil, err
+	}
+
+	return c, nil
 }
 
 func containerConfigureInternal(c container) error {
@@ -681,6 +693,11 @@ func containerConfigureInternal(c container) error {
 		}
 
 		break
+	}
+
+	err := writeBackupFile(c)
+	if err != nil {
+		return err
 	}
 
 	return nil

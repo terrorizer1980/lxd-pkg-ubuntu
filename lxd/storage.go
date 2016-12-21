@@ -14,6 +14,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/ioprogress"
 	"github.com/lxc/lxd/shared/logging"
 
 	log "gopkg.in/inconshreveable/log15.v2"
@@ -149,8 +150,8 @@ type storage interface {
 	ContainerCanRestore(container container, sourceContainer container) error
 	ContainerDelete(container container) error
 	ContainerCopy(container container, sourceContainer container) error
-	ContainerStart(container container) error
-	ContainerStop(container container) error
+	ContainerStart(name string, path string) error
+	ContainerStop(name string, path string) error
 	ContainerRename(container container, newName string) error
 	ContainerRestore(container container, sourceContainer container) error
 	ContainerSetQuota(container container, size int64) error
@@ -431,14 +432,14 @@ func (lw *storageLogWrapper) ContainerCopy(
 	return lw.w.ContainerCopy(container, sourceContainer)
 }
 
-func (lw *storageLogWrapper) ContainerStart(container container) error {
-	lw.log.Debug("ContainerStart", log.Ctx{"container": container.Name()})
-	return lw.w.ContainerStart(container)
+func (lw *storageLogWrapper) ContainerStart(name string, path string) error {
+	lw.log.Debug("ContainerStart", log.Ctx{"container": name})
+	return lw.w.ContainerStart(name, path)
 }
 
-func (lw *storageLogWrapper) ContainerStop(container container) error {
-	lw.log.Debug("ContainerStop", log.Ctx{"container": container.Name()})
-	return lw.w.ContainerStop(container)
+func (lw *storageLogWrapper) ContainerStop(name string, path string) error {
+	lw.log.Debug("ContainerStop", log.Ctx{"container": name})
+	return lw.w.ContainerStop(name, path)
 }
 
 func (lw *storageLogWrapper) ContainerRename(
@@ -833,9 +834,9 @@ func StorageProgressReader(op *operation, key string, description string) func(i
 			progressWrapperRender(op, key, description, progressInt, speedInt)
 		}
 
-		readPipe := &shared.ProgressReader{
+		readPipe := &ioprogress.ProgressReader{
 			ReadCloser: reader,
-			Tracker: &shared.ProgressTracker{
+			Tracker: &ioprogress.ProgressTracker{
 				Handler: progress,
 			},
 		}
@@ -854,9 +855,9 @@ func StorageProgressWriter(op *operation, key string, description string) func(i
 			progressWrapperRender(op, key, description, progressInt, speedInt)
 		}
 
-		writePipe := &shared.ProgressWriter{
+		writePipe := &ioprogress.ProgressWriter{
 			WriteCloser: writer,
-			Tracker: &shared.ProgressTracker{
+			Tracker: &ioprogress.ProgressTracker{
 				Handler: progress,
 			},
 		}

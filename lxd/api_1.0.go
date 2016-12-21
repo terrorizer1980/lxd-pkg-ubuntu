@@ -11,6 +11,8 @@ import (
 	"gopkg.in/lxc/go-lxc.v2"
 
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/osarch"
+	"github.com/lxc/lxd/shared/version"
 )
 
 var api10 = []Command{
@@ -79,10 +81,12 @@ func api10Get(d *Daemon, r *http.Request) Response {
 			"container_image_properties",
 			"migration_progress",
 			"id_map",
+			"network_firewall_filtering",
+			"network_routes",
 		},
 
 		"api_status":  "stable",
-		"api_version": shared.APIVersion,
+		"api_version": version.APIVersion,
 	}
 
 	if d.isTrustedClient(r) {
@@ -137,7 +141,7 @@ func api10Get(d *Daemon, r *http.Request) Response {
 		architectures := []string{}
 
 		for _, architecture := range d.architectures {
-			architectureName, err := shared.ArchitectureName(architecture)
+			architectureName, err := osarch.ArchitectureName(architecture)
 			if err != nil {
 				return InternalError(err)
 			}
@@ -157,7 +161,7 @@ func api10Get(d *Daemon, r *http.Request) Response {
 			"storage_version":     d.Storage.GetStorageTypeVersion(),
 			"server":              "lxd",
 			"server_pid":          os.Getpid(),
-			"server_version":      shared.Version}
+			"server_version":      version.Version}
 
 		body["environment"] = env
 		body["public"] = false
