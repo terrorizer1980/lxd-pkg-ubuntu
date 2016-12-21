@@ -1,2 +1,5 @@
 usr/bin/fuidshift
 usr/share/man/man1/fuidshift.1
+
+usr/bin/lxc-to-lxd
+usr/share/man/man1/lxc-to-lxd.1

@@ -5,7 +5,7 @@
 #export DH_VERBOSE=1
 
 PKGDIR=debian/tmp
-VERSION=$(shell grep "var Version" $(CURDIR)/shared/flex.go | cut -d'"' -f2)
+VERSION=$(shell grep "var Version" $(CURDIR)/shared/version/flex.go | cut -d'"' -f2)
 DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
 
 # temporary build path (see http://golang.org/doc/code.html#GOPATH)
@@ -84,12 +84,17 @@ endif
 	mv ${GOPATH}/lxd.tmp ${GOPATH}/src/github.com/lxc/lxd
 
 override_dh_install:
+	# Install lxc-to-lxd
+	cp scripts/lxc-to-lxd $(PKGDIR)/usr/bin/lxc-to-lxd
+
 	# Install the manpages
 	mkdir -p $(PKGDIR)/usr/share/man/man1/
 	help2man $(PKGDIR)/usr/bin/fuidshift -n "uid/gid shifter" --no-info > $(PKGDIR)/usr/share/man/man1/fuidshift.1
 	help2man $(PKGDIR)/usr/bin/lxc -n "The container hypervisor - client" --no-info > $(PKGDIR)/usr/share/man/man1/lxc.1
+	help2man $(PKGDIR)/usr/bin/lxc-to-lxd -n "Convert LXC containers to LXD" --no-info --version-string=$(VERSION) > $(PKGDIR)/usr/share/man/man1/lxc-to-lxd.1
 	help2man $(PKGDIR)/usr/bin/lxd -n "The container hypervisor - daemon" --no-info > $(PKGDIR)/usr/share/man/man1/lxd.1
 
+	# Install bash completion scripts
 	mkdir -p $(PKGDIR)/usr/share/bash-completion/completions/
 	cp config/bash/lxd-client $(PKGDIR)/usr/share/bash-completion/completions/lxc
 
@@ -99,7 +104,7 @@ override_dh_install:
 	cp -RL ${GOPATH}/src/github.com/lxc/lxd $(PKGDIR)/usr/share/gocode/src/github.com/lxc/
 	rm -Rf $(PKGDIR)/usr/share/gocode/src/github.com/lxc/lxd/dist
 
-	# copy dnsmasq configuration
+	# Copy dnsmasq configuration
 	mkdir -p $(PKGDIR)/etc/dnsmasq.d-available
 	cp debian/lxd.dnsmasq $(PKGDIR)/etc/dnsmasq.d-available/lxd
 

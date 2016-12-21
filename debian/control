@@ -33,7 +33,7 @@ Build-Depends: debhelper (>= 9),
                libsqlite3-dev,
                lxc-dev (>= 1.1.0~),
                pkg-config,
-               protobuf-compiler
+               python3-lxc
 
 Package: lxd-client
 Architecture: any
@@ -86,7 +86,7 @@ Description: Container hypervisor based on LXC - metapackage
 
 Package: lxd-tools
 Architecture: any
-Depends: ${misc:Depends}, ${shlibs:Depends}
+Depends: ${misc:Depends}, ${shlibs:Depends}, python3, python3-lxc
 Built-Using: ${misc:Built-Using}
 Description: Container hypervisor based on LXC - extra tools
  LXD offers a REST API to remotely manage containers over the network,
@@ -94,6 +94,7 @@ Description: Container hypervisor based on LXC - extra tools
  .
  This package contains extra tools provided with LXD.
   - fuidshift - A tool to map/unmap filesystem uids/gids
+  - lxc-to-lxd - A tool to migrate LXC containers to LXD
 
 Package: golang-github-lxc-lxd-dev
 Architecture: all
