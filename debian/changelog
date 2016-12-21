@@ -1,3 +1,12 @@
+lxd (2.7-0ubuntu2) zesty; urgency=medium
+
+  * Cherry-pick upstream fix:
+    - tests: Fix shellcheck being confused by cd
+  * Add lxc-to-lxd to lxd-tools.
+  * Re-enable Go shared libraries.
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 21 Dec 2016 03:28:42 -0500
+
 lxd (2.7-0ubuntu1) zesty; urgency=medium
 
   * New upstream release (2.7):
