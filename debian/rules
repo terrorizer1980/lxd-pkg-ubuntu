@@ -21,6 +21,10 @@ endif
 %:
 	dh $@ --with systemd --buildsystem=golang --with=golang
 
+# Make sure we use the distro libsqlite3
+override_dh_auto_build:
+	dh_auto_build -- -tags libsqlite3
+
 # Ugly workaround for bundled dependencies
 override_dh_auto_configure:
 	dh_auto_configure
@@ -86,6 +90,7 @@ override_dh_install:
 	help2man $(PKGDIR)/usr/bin/lxc -n "The container hypervisor - client" --no-info > $(PKGDIR)/usr/share/man/man1/lxc.1
 	help2man $(PKGDIR)/usr/bin/lxd -n "The container hypervisor - daemon" --no-info > $(PKGDIR)/usr/share/man/man1/lxd.1
 
+	# Install bash completion scripts
 	mkdir -p $(PKGDIR)/usr/share/bash-completion/completions/
 	cp config/bash/lxd-client $(PKGDIR)/usr/share/bash-completion/completions/lxc
 
@@ -95,7 +100,7 @@ override_dh_install:
 	cp -RL ${GOPATH}/src/github.com/lxc/lxd $(PKGDIR)/usr/share/gocode/src/github.com/lxc/
 	rm -Rf $(PKGDIR)/usr/share/gocode/src/github.com/lxc/lxd/dist
 
-	# copy dnsmasq configuration
+	# Copy dnsmasq configuration
 	mkdir -p $(PKGDIR)/etc/dnsmasq.d-available
 	cp debian/lxd.dnsmasq $(PKGDIR)/etc/dnsmasq.d-available/lxd
 
