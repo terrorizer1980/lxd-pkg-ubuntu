@@ -1,3 +1,18 @@
+lxd (2.4.1-0ubuntu1.1) yakkety; urgency=medium
+
+  * Rebuild to pick up new golang-go-lxc (LP: #1652291)
+  * Other packaging fixes cherry-picked from Ubuntu 16.04:
+    - Make sure to build using the system libsqlite3-dev
+    - Drop unused build-dependency on protobuf-compiler
+    - Depend on lsb-base (>= 3.0-6)
+    - Properly rotate /var/log/lxd/lxd.log
+    - Make sure lxd is restarted on upgrades
+    - Start LXD after openvswitch (if present)
+    - Restrict autopkgtest to architecture that can run containers
+    - Fix importing dnsmasq config files when migrating network settings
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Fri, 23 Dec 2016 15:17:42 -0500
+
 lxd (2.4.1-0ubuntu1) yakkety; urgency=medium
 
   * New upstream bugfix release (2.4):
