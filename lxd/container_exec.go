@@ -16,20 +16,11 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/version"
 
 	log "gopkg.in/inconshreveable/log15.v2"
 )
-
-type commandPostContent struct {
-	Command      []string          `json:"command"`
-	WaitForWS    bool              `json:"wait-for-websocket"`
-	RecordOutput bool              `json:"record-output"`
-	Interactive  bool              `json:"interactive"`
-	Environment  map[string]string `json:"environment"`
-	Width        int               `json:"width"`
-	Height       int               `json:"height"`
-}
 
 type execWs struct {
 	command   []string
@@ -174,7 +165,7 @@ func (s *execWs) Do(op *operation) error {
 					break
 				}
 
-				command := shared.ContainerExecControl{}
+				command := api.ContainerExecControl{}
 
 				if err := json.Unmarshal(buf, &command); err != nil {
 					shared.LogDebugf("Failed to unmarshal control socket command: %s", err)
@@ -200,11 +191,11 @@ func (s *execWs) Do(op *operation) error {
 						continue
 					}
 				} else if command.Command == "signal" {
-					if err := syscall.Kill(attachedChildPid, command.Signal); err != nil {
+					if err := syscall.Kill(attachedChildPid, syscall.Signal(command.Signal)); err != nil {
 						shared.LogDebugf("Failed forwarding signal '%s' to PID %d.", command.Signal, attachedChildPid)
 						continue
 					}
-					shared.LogDebugf("Forwarded signal '%s' to PID %d.", command.Signal, attachedChildPid)
+					shared.LogDebugf("Forwarded signal '%d' to PID %d.", command.Signal, attachedChildPid)
 				}
 			}
 		}()
@@ -291,12 +282,10 @@ func (s *execWs) Do(op *operation) error {
 		if status.Exited() {
 			return finisher(status.ExitStatus(), nil)
 		}
-		// Backwards compatible behavior. Report success when we exited
-		// due to a signal. Otherwise this may break Jenkins, e.g. when
-		// lxc exec foo reboot receives SIGTERM and status.Exitstats()
-		// would report -1.
+
 		if status.Signaled() {
-			return finisher(0, nil)
+			// COMMENT(brauner): 128 + n == Fatal error signal "n"
+			return finisher(128+int(status.Signal()), nil)
 		}
 	}
 
@@ -318,7 +307,7 @@ func containerExecPost(d *Daemon, r *http.Request) Response {
 		return BadRequest(fmt.Errorf("Container is frozen."))
 	}
 
-	post := commandPostContent{}
+	post := api.ContainerExecPost{}
 	buf, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		return BadRequest(err)

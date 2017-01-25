@@ -6,7 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lxc/lxd/lxd/types"
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/logging"
 )
 
@@ -97,6 +99,9 @@ func Test_deleting_a_container_cascades_on_related_tables(t *testing.T) {
 	// Make sure there are 0 containers_devices_config entries left.
 	statements = `SELECT count(*) FROM containers_devices_config;`
 	err = db.QueryRow(statements).Scan(&count)
+	if err != nil {
+		t.Error(err)
+	}
 
 	if count != 0 {
 		t.Errorf("Deleting a container didn't delete the associated container_devices_config! There are %d left", count)
@@ -149,6 +154,9 @@ func Test_deleting_a_profile_cascades_on_related_tables(t *testing.T) {
 	// Make sure there are 0 profiles_devices_config entries left.
 	statements = `SELECT count(*) FROM profiles_devices_config WHERE profile_device_id == 4;`
 	err = db.QueryRow(statements).Scan(&count)
+	if err != nil {
+		t.Error(err)
+	}
 
 	if count != 0 {
 		t.Errorf("Deleting a profile didn't delete the related profiles_devices_config! There are %d left", count)
@@ -184,6 +192,9 @@ func Test_deleting_an_image_cascades_on_related_tables(t *testing.T) {
 	// Make sure there are 0 images_properties entries left.
 	statements = `SELECT count(*) FROM images_properties;`
 	err = db.QueryRow(statements).Scan(&count)
+	if err != nil {
+		t.Error(err)
+	}
 
 	if count != 0 {
 		t.Errorf("Deleting an image didn't delete the related images_properties! There are %d left", count)
@@ -283,6 +294,9 @@ INSERT INTO containers_config (container_id, key, value) VALUES (1, 'thekey', 't
 	// Make sure there are 0 container_profiles entries left.
 	statements = `SELECT count(*) FROM containers_profiles;`
 	err = d.db.QueryRow(statements).Scan(&count)
+	if err != nil {
+		t.Error(err)
+	}
 
 	if count != 0 {
 		t.Errorf("Deleting a container didn't delete the profile association! There are %d left", count)
@@ -390,6 +404,9 @@ INSERT INTO containers_config (container_id, key, value) VALUES (1, 'thekey', 't
 	// Make sure there are 0 containers_config entries left.
 	statements = `SELECT count(*) FROM containers_config;`
 	err = db.QueryRow(statements).Scan(&count)
+	if err != nil {
+		t.Error(err)
+	}
 
 	if count != 0 {
 		t.Fatal("updateDb did not delete orphaned child entries after adding ON DELETE CASCADE!")
@@ -400,7 +417,7 @@ INSERT INTO containers_config (container_id, key, value) VALUES (1, 'thekey', 't
 func Test_dbImageGet_finds_image_for_fingerprint(t *testing.T) {
 	var db *sql.DB
 	var err error
-	var result *shared.ImageInfo
+	var result *api.Image
 
 	db = createTestDb(t)
 	defer db.Close()
@@ -419,16 +436,16 @@ func Test_dbImageGet_finds_image_for_fingerprint(t *testing.T) {
 		t.Fatal("Filename should be set.")
 	}
 
-	if result.CreationDate.UTC() != time.Unix(1431547174, 0).UTC() {
-		t.Fatal(fmt.Sprintf("%s != %s", result.CreationDate, time.Unix(1431547174, 0)))
+	if result.CreatedAt.UTC() != time.Unix(1431547174, 0).UTC() {
+		t.Fatal(fmt.Sprintf("%s != %s", result.CreatedAt, time.Unix(1431547174, 0)))
 	}
 
-	if result.ExpiryDate.UTC() != time.Unix(1431547175, 0).UTC() { // It was short lived
-		t.Fatal(fmt.Sprintf("%s != %s", result.ExpiryDate, time.Unix(1431547175, 0)))
+	if result.ExpiresAt.UTC() != time.Unix(1431547175, 0).UTC() { // It was short lived
+		t.Fatal(fmt.Sprintf("%s != %s", result.ExpiresAt, time.Unix(1431547175, 0)))
 	}
 
-	if result.UploadDate.UTC() != time.Unix(1431547176, 0).UTC() {
-		t.Fatal(fmt.Sprintf("%s != %s", result.UploadDate, time.Unix(1431547176, 0)))
+	if result.UploadedAt.UTC() != time.Unix(1431547176, 0).UTC() {
+		t.Fatal(fmt.Sprintf("%s != %s", result.UploadedAt, time.Unix(1431547176, 0)))
 	}
 }
 
@@ -580,9 +597,9 @@ func Test_dbContainerProfiles(t *testing.T) {
 func Test_dbDevices_profiles(t *testing.T) {
 	var db *sql.DB
 	var err error
-	var result shared.Devices
-	var subresult shared.Device
-	var expected shared.Device
+	var result types.Devices
+	var subresult types.Device
+	var expected types.Device
 
 	db = createTestDb(t)
 	defer db.Close()
@@ -592,7 +609,7 @@ func Test_dbDevices_profiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	expected = shared.Device{"type": "nic", "devicekey": "devicevalue"}
+	expected = types.Device{"type": "nic", "devicekey": "devicevalue"}
 	subresult = result["devicename"]
 
 	for key, value := range expected {
@@ -606,9 +623,9 @@ func Test_dbDevices_profiles(t *testing.T) {
 func Test_dbDevices_containers(t *testing.T) {
 	var db *sql.DB
 	var err error
-	var result shared.Devices
-	var subresult shared.Device
-	var expected shared.Device
+	var result types.Devices
+	var subresult types.Device
+	var expected types.Device
 
 	db = createTestDb(t)
 	defer db.Close()
@@ -618,7 +635,7 @@ func Test_dbDevices_containers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	expected = shared.Device{"type": "nic", "configkey": "configvalue"}
+	expected = types.Device{"type": "nic", "configkey": "configvalue"}
 	subresult = result["somename"]
 
 	for key, value := range expected {

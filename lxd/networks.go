@@ -16,6 +16,7 @@ import (
 	log "gopkg.in/inconshreveable/log15.v2"
 
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/version"
 )
 
@@ -33,7 +34,7 @@ func networksGet(d *Daemon, r *http.Request) Response {
 	}
 
 	resultString := []string{}
-	resultMap := []shared.NetworkConfig{}
+	resultMap := []api.Network{}
 	for _, iface := range ifs {
 		if recursion == 0 {
 			resultString = append(resultString, fmt.Sprintf("/%s/networks/%s", version.APIVersion, iface))
@@ -54,7 +55,7 @@ func networksGet(d *Daemon, r *http.Request) Response {
 }
 
 func networksPost(d *Daemon, r *http.Request) Response {
-	req := shared.NetworkConfig{}
+	req := api.NetworksPost{}
 
 	// Parse the request
 	err := json.NewDecoder(r.Body).Decode(&req)
@@ -161,18 +162,18 @@ func networkGet(d *Daemon, r *http.Request) Response {
 	return SyncResponseETag(true, &n, etag)
 }
 
-func doNetworkGet(d *Daemon, name string) (shared.NetworkConfig, error) {
+func doNetworkGet(d *Daemon, name string) (api.Network, error) {
 	// Get some information
 	osInfo, _ := net.InterfaceByName(name)
 	_, dbInfo, _ := dbNetworkGet(d.db, name)
 
 	// Sanity check
 	if osInfo == nil && dbInfo == nil {
-		return shared.NetworkConfig{}, os.ErrNotExist
+		return api.Network{}, os.ErrNotExist
 	}
 
 	// Prepare the response
-	n := shared.NetworkConfig{}
+	n := api.Network{}
 	n.Name = name
 	n.UsedBy = []string{}
 	n.Config = map[string]string{}
@@ -180,13 +181,13 @@ func doNetworkGet(d *Daemon, name string) (shared.NetworkConfig, error) {
 	// Look for containers using the interface
 	cts, err := dbContainersList(d.db, cTypeRegular)
 	if err != nil {
-		return shared.NetworkConfig{}, err
+		return api.Network{}, err
 	}
 
 	for _, ct := range cts {
 		c, err := containerLoadByName(d, ct)
 		if err != nil {
-			return shared.NetworkConfig{}, err
+			return api.Network{}, err
 		}
 
 		if networkIsInUse(c, n.Name) {
@@ -204,6 +205,8 @@ func doNetworkGet(d *Daemon, name string) (shared.NetworkConfig, error) {
 		}
 
 		n.Type = "bridge"
+	} else if shared.PathExists(fmt.Sprintf("/proc/net/vlan/%s", n.Name)) {
+		n.Type = "vlan"
 	} else if shared.PathExists(fmt.Sprintf("/sys/class/net/%s/device", n.Name)) {
 		n.Type = "physical"
 	} else if shared.PathExists(fmt.Sprintf("/sys/class/net/%s/bonding", n.Name)) {
@@ -245,7 +248,7 @@ func networkDelete(d *Daemon, r *http.Request) Response {
 
 func networkPost(d *Daemon, r *http.Request) Response {
 	name := mux.Vars(r)["name"]
-	req := shared.NetworkConfig{}
+	req := api.NetworkPost{}
 
 	// Parse the request
 	err := json.NewDecoder(r.Body).Decode(&req)
@@ -305,7 +308,7 @@ func networkPut(d *Daemon, r *http.Request) Response {
 		return PreconditionFailed(err)
 	}
 
-	req := shared.NetworkConfig{}
+	req := api.NetworkPut{}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return BadRequest(err)
 	}
@@ -330,7 +333,7 @@ func networkPatch(d *Daemon, r *http.Request) Response {
 		return PreconditionFailed(err)
 	}
 
-	req := shared.NetworkConfig{}
+	req := api.NetworkPut{}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return BadRequest(err)
 	}
@@ -370,7 +373,7 @@ func doNetworkUpdate(d *Daemon, name string, oldConfig map[string]string, newCon
 		return NotFound
 	}
 
-	err = n.Update(shared.NetworkConfig{Config: newConfig})
+	err = n.Update(api.NetworkPut{Config: newConfig})
 	if err != nil {
 		return SmartError(err)
 	}
@@ -522,7 +525,7 @@ func (n *network) Rename(name string) error {
 func (n *network) Start() error {
 	// Create directory
 	if !shared.PathExists(shared.VarPath("networks", n.name)) {
-		err := os.MkdirAll(shared.VarPath("networks", n.name), 0700)
+		err := os.MkdirAll(shared.VarPath("networks", n.name), 0711)
 		if err != nil {
 			return err
 		}
@@ -665,12 +668,12 @@ func (n *network) Start() error {
 	if n.config["bridge.mode"] == "fan" || !shared.StringInSlice(n.config["ipv4.address"], []string{"", "none"}) {
 		// Setup basic iptables overrides
 		rules := [][]string{
-			[]string{"ipv4", n.name, "", "INPUT", "-i", n.name, "-p", "udp", "--dport", "67", "-j", "ACCEPT"},
-			[]string{"ipv4", n.name, "", "INPUT", "-i", n.name, "-p", "udp", "--dport", "53", "-j", "ACCEPT"},
-			[]string{"ipv4", n.name, "", "INPUT", "-i", n.name, "-p", "tcp", "--dport", "53", "-j", "ACCEPT"},
-			[]string{"ipv4", n.name, "", "OUTPUT", "-o", n.name, "-p", "udp", "--sport", "67", "-j", "ACCEPT"},
-			[]string{"ipv4", n.name, "", "OUTPUT", "-o", n.name, "-p", "udp", "--sport", "53", "-j", "ACCEPT"},
-			[]string{"ipv4", n.name, "", "OUTPUT", "-o", n.name, "-p", "tcp", "--sport", "53", "-j", "ACCEPT"}}
+			{"ipv4", n.name, "", "INPUT", "-i", n.name, "-p", "udp", "--dport", "67", "-j", "ACCEPT"},
+			{"ipv4", n.name, "", "INPUT", "-i", n.name, "-p", "udp", "--dport", "53", "-j", "ACCEPT"},
+			{"ipv4", n.name, "", "INPUT", "-i", n.name, "-p", "tcp", "--dport", "53", "-j", "ACCEPT"},
+			{"ipv4", n.name, "", "OUTPUT", "-o", n.name, "-p", "udp", "--sport", "67", "-j", "ACCEPT"},
+			{"ipv4", n.name, "", "OUTPUT", "-o", n.name, "-p", "udp", "--sport", "53", "-j", "ACCEPT"},
+			{"ipv4", n.name, "", "OUTPUT", "-o", n.name, "-p", "tcp", "--sport", "53", "-j", "ACCEPT"}}
 
 		for _, rule := range rules {
 			err = networkIptablesPrepend(rule[0], rule[1], rule[2], rule[3], rule[4:]...)
@@ -719,7 +722,7 @@ func (n *network) Start() error {
 	}
 
 	// Start building the dnsmasq command line
-	dnsmasqCmd := []string{"dnsmasq", "-u", "root", "--strict-order", "--bind-interfaces",
+	dnsmasqCmd := []string{"dnsmasq", "--strict-order", "--bind-interfaces",
 		fmt.Sprintf("--pid-file=%s", shared.VarPath("networks", n.name, "dnsmasq.pid")),
 		"--except-interface=lo",
 		fmt.Sprintf("--interface=%s", n.name)}
@@ -836,12 +839,12 @@ func (n *network) Start() error {
 
 		// Setup basic iptables overrides
 		rules := [][]string{
-			[]string{"ipv6", n.name, "", "INPUT", "-i", n.name, "-p", "udp", "--dport", "546", "-j", "ACCEPT"},
-			[]string{"ipv6", n.name, "", "INPUT", "-i", n.name, "-p", "udp", "--dport", "53", "-j", "ACCEPT"},
-			[]string{"ipv6", n.name, "", "INPUT", "-i", n.name, "-p", "tcp", "--dport", "53", "-j", "ACCEPT"},
-			[]string{"ipv6", n.name, "", "OUTPUT", "-o", n.name, "-p", "udp", "--sport", "546", "-j", "ACCEPT"},
-			[]string{"ipv6", n.name, "", "OUTPUT", "-o", n.name, "-p", "udp", "--sport", "53", "-j", "ACCEPT"},
-			[]string{"ipv6", n.name, "", "OUTPUT", "-o", n.name, "-p", "tcp", "--sport", "53", "-j", "ACCEPT"}}
+			{"ipv6", n.name, "", "INPUT", "-i", n.name, "-p", "udp", "--dport", "546", "-j", "ACCEPT"},
+			{"ipv6", n.name, "", "INPUT", "-i", n.name, "-p", "udp", "--dport", "53", "-j", "ACCEPT"},
+			{"ipv6", n.name, "", "INPUT", "-i", n.name, "-p", "tcp", "--dport", "53", "-j", "ACCEPT"},
+			{"ipv6", n.name, "", "OUTPUT", "-o", n.name, "-p", "udp", "--sport", "546", "-j", "ACCEPT"},
+			{"ipv6", n.name, "", "OUTPUT", "-o", n.name, "-p", "udp", "--sport", "53", "-j", "ACCEPT"},
+			{"ipv6", n.name, "", "OUTPUT", "-o", n.name, "-p", "tcp", "--sport", "53", "-j", "ACCEPT"}}
 
 		for _, rule := range rules {
 			err = networkIptablesPrepend(rule[0], rule[1], rule[2], rule[3], rule[4:]...)
@@ -1122,12 +1125,12 @@ func (n *network) Start() error {
 
 	// Configure dnsmasq
 	if n.config["bridge.mode"] == "fan" || !shared.StringInSlice(n.config["ipv4.address"], []string{"", "none"}) || !shared.StringInSlice(n.config["ipv6.address"], []string{"", "none"}) {
+		// Setup the dnsmasq domain
 		dnsDomain := n.config["dns.domain"]
 		if dnsDomain == "" {
 			dnsDomain = "lxd"
 		}
 
-		// Setup the dnsmasq domain
 		if n.config["dns.mode"] != "none" {
 			dnsmasqCmd = append(dnsmasqCmd, []string{"-s", dnsDomain, "-S", fmt.Sprintf("/%s/", dnsDomain)}...)
 		}
@@ -1143,13 +1146,24 @@ func (n *network) Start() error {
 
 		// Create DHCP hosts file
 		if !shared.PathExists(shared.VarPath("networks", n.name, "dnsmasq.hosts")) {
-			err = ioutil.WriteFile(shared.VarPath("networks", n.name, "dnsmasq.hosts"), []byte(""), 0)
+			err = ioutil.WriteFile(shared.VarPath("networks", n.name, "dnsmasq.hosts"), []byte(""), 0644)
 			if err != nil {
 				return err
 			}
 		}
 
-		// Start dnsmasq (occasionaly races, try a few times)
+		// Attempt to drop privileges
+		for _, user := range []string{"lxd", "nobody"} {
+			_, err := shared.UserId(user)
+			if err != nil {
+				continue
+			}
+
+			dnsmasqCmd = append(dnsmasqCmd, []string{"-u", user}...)
+			break
+		}
+
+		// Start dnsmasq (occasionally races, try a few times)
 		output, err := tryExec(dnsmasqCmd[0], dnsmasqCmd[1:]...)
 		if err != nil {
 			return fmt.Errorf("Failed to run: %s: %s", strings.Join(dnsmasqCmd, " "), strings.TrimSpace(string(output)))
@@ -1234,7 +1248,7 @@ func (n *network) Stop() error {
 	return nil
 }
 
-func (n *network) Update(newNetwork shared.NetworkConfig) error {
+func (n *network) Update(newNetwork api.NetworkPut) error {
 	err := networkFillAuto(newNetwork.Config)
 	if err != nil {
 		return err
@@ -1262,7 +1276,7 @@ func (n *network) Update(newNetwork shared.NetworkConfig) error {
 	// Diff the configurations
 	changedConfig := []string{}
 	userOnly := true
-	for key, _ := range oldConfig {
+	for key := range oldConfig {
 		if oldConfig[key] != newConfig[key] {
 			if !strings.HasPrefix(key, "user.") {
 				userOnly = false
@@ -1274,7 +1288,7 @@ func (n *network) Update(newNetwork shared.NetworkConfig) error {
 		}
 	}
 
-	for key, _ := range newConfig {
+	for key := range newConfig {
 		if oldConfig[key] != newConfig[key] {
 			if !strings.HasPrefix(key, "user.") {
 				userOnly = false

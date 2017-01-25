@@ -6,6 +6,7 @@ import (
 
 	"github.com/lxc/lxd"
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/i18n"
 	"github.com/lxc/lxd/shared/version"
 )
@@ -62,7 +63,7 @@ func (c *launchCmd) run(config *lxd.Config, args []string) error {
 	 * initRequestedEmptyProfiles means user requested empty
 	 * !initRequestedEmptyProfiles but len(profArgs) == 0 means use profile default
 	 */
-	var resp *lxd.Response
+	var resp *api.Response
 	profiles := []string{}
 	for _, p := range c.init.profArgs {
 		profiles = append(profiles, p)
@@ -70,7 +71,7 @@ func (c *launchCmd) run(config *lxd.Config, args []string) error {
 
 	iremote, image = c.init.guessImage(config, d, remote, iremote, image)
 
-	devicesMap := map[string]shared.Device{}
+	devicesMap := map[string]map[string]string{}
 	if c.init.network != "" {
 		network, err := d.NetworkGet(c.init.network)
 		if err != nil {
@@ -78,9 +79,9 @@ func (c *launchCmd) run(config *lxd.Config, args []string) error {
 		}
 
 		if network.Type == "bridge" {
-			devicesMap[c.init.network] = shared.Device{"type": "nic", "nictype": "bridged", "parent": c.init.network}
+			devicesMap[c.init.network] = map[string]string{"type": "nic", "nictype": "bridged", "parent": c.init.network}
 		} else {
-			devicesMap[c.init.network] = shared.Device{"type": "nic", "nictype": "macvlan", "parent": c.init.network}
+			devicesMap[c.init.network] = map[string]string{"type": "nic", "nictype": "macvlan", "parent": c.init.network}
 		}
 	}
 

@@ -63,7 +63,7 @@ func cmdForkExec(args []string) (int, error) {
 	cmd := []string{}
 
 	section := ""
-	for _, arg := range args[5:len(args)] {
+	for _, arg := range args[5:] {
 		// The "cmd" section must come last as it may contain a --
 		if arg == "--" && section != "cmd" {
 			section = ""
@@ -119,15 +119,13 @@ func cmdForkExec(args []string) (int, error) {
 
 	exCode, ok := procState.Sys().(syscall.WaitStatus)
 	if ok {
+		if exCode.Signaled() {
+			// COMMENT(brauner): 128 + n == Fatal error signal "n"
+			return 128 + int(exCode.Signal()), nil
+		}
+
 		if exCode.Exited() {
 			return exCode.ExitStatus(), nil
-		}
-		// Backwards compatible behavior. Report success when we exited
-		// due to a signal. Otherwise this may break Jenkins, e.g. when
-		// lxc exec foo reboot receives SIGTERM and exCode.Exitstats()
-		// would report -1.
-		if exCode.Signaled() {
-			return 0, nil
 		}
 	}
 

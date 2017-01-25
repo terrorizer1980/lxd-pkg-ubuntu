@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -16,6 +15,7 @@ import (
 	"gopkg.in/yaml.v2"
 
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/ioprogress"
 	"github.com/lxc/lxd/shared/simplestreams"
 	"github.com/lxc/lxd/shared/version"
@@ -25,8 +25,8 @@ import (
 
 // Simplestream cache
 type imageStreamCacheEntry struct {
-	Aliases      shared.ImageAliases `yaml:"aliases"`
-	Fingerprints []string            `yaml:"fingerprints"`
+	Aliases      []api.ImageAliasesEntry `yaml:"aliases"`
+	Fingerprints []string                `yaml:"fingerprints"`
 	expiry       time.Time
 	ss           *simplestreams.SimpleStreams
 }
@@ -188,10 +188,10 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 	}
 
 	// Now check if we already downloading the image
-	d.imagesDownloadingLock.RLock()
+	d.imagesDownloadingLock.Lock()
 	if waitChannel, ok := d.imagesDownloading[fp]; ok {
 		// We already download the image
-		d.imagesDownloadingLock.RUnlock()
+		d.imagesDownloadingLock.Unlock()
 
 		shared.LogDebug(
 			"Already downloading the image, waiting for it to succeed",
@@ -217,18 +217,7 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 		return fp, nil
 	}
 
-	d.imagesDownloadingLock.RUnlock()
-
-	if op == nil {
-		ctxMap = log.Ctx{"alias": alias, "server": server}
-	} else {
-		ctxMap = log.Ctx{"trigger": op.url, "image": fp, "operation": op.id, "alias": alias, "server": server}
-	}
-
-	shared.LogInfo("Downloading image", ctxMap)
-
 	// Add the download to the queue
-	d.imagesDownloadingLock.Lock()
 	d.imagesDownloading[fp] = make(chan bool)
 	d.imagesDownloadingLock.Unlock()
 
@@ -242,9 +231,18 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 		d.imagesDownloadingLock.Unlock()
 	}()
 
+	// Begin downloading
+	if op == nil {
+		ctxMap = log.Ctx{"alias": alias, "server": server}
+	} else {
+		ctxMap = log.Ctx{"trigger": op.url, "image": fp, "operation": op.id, "alias": alias, "server": server}
+	}
+
+	shared.LogInfo("Downloading image", ctxMap)
+
 	exporturl := server
 
-	var info shared.ImageInfo
+	var info api.Image
 	info.Fingerprint = fp
 
 	destDir := shared.VarPath("images")
@@ -263,7 +261,7 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 			meta = make(map[string]interface{})
 		}
 
-		progress := fmt.Sprintf("%d%% (%s/s)", progressInt, shared.GetByteSizeString(speedInt))
+		progress := fmt.Sprintf("%d%% (%s/s)", progressInt, shared.GetByteSizeString(speedInt, 2))
 
 		if meta["download_progress"] != progress {
 			meta["download_progress"] = progress
@@ -291,7 +289,7 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 			return "", err
 		}
 
-		if err := json.Unmarshal(resp.Metadata, &info); err != nil {
+		if err := resp.MetadataAsStruct(&info); err != nil {
 			return "", err
 		}
 
@@ -481,8 +479,8 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 		}
 
 		info.Architecture = imageMeta.Architecture
-		info.CreationDate = time.Unix(imageMeta.CreationDate, 0)
-		info.ExpiryDate = time.Unix(imageMeta.ExpiryDate, 0)
+		info.CreatedAt = time.Unix(imageMeta.CreationDate, 0)
+		info.ExpiresAt = time.Unix(imageMeta.ExpiryDate, 0)
 		info.Properties = imageMeta.Properties
 	}
 

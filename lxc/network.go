@@ -13,6 +13,7 @@ import (
 
 	"github.com/lxc/lxd"
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/i18n"
 	"github.com/lxc/lxd/shared/termios"
 )
@@ -303,7 +304,7 @@ func (c *networkCmd) doNetworkEdit(client *lxd.Client, name string) error {
 			return err
 		}
 
-		newdata := shared.NetworkConfig{}
+		newdata := api.NetworkPut{}
 		err = yaml.Unmarshal(contents, &newdata)
 		if err != nil {
 			return err
@@ -315,6 +316,10 @@ func (c *networkCmd) doNetworkEdit(client *lxd.Client, name string) error {
 	network, err := client.NetworkGet(name)
 	if err != nil {
 		return err
+	}
+
+	if !network.Managed {
+		return fmt.Errorf(i18n.G("Only managed networks can be modified."))
 	}
 
 	data, err := yaml.Marshal(&network)
@@ -330,7 +335,7 @@ func (c *networkCmd) doNetworkEdit(client *lxd.Client, name string) error {
 
 	for {
 		// Parse the text received from the editor
-		newdata := shared.NetworkConfig{}
+		newdata := api.NetworkPut{}
 		err = yaml.Unmarshal(content, &newdata)
 		if err == nil {
 			err = client.NetworkPut(name, newdata)
@@ -440,6 +445,10 @@ func (c *networkCmd) doNetworkSet(client *lxd.Client, name string, args []string
 		return err
 	}
 
+	if !network.Managed {
+		return fmt.Errorf(i18n.G("Only managed networks can be modified."))
+	}
+
 	key := args[0]
 	var value string
 	if len(args) < 2 {
@@ -451,14 +460,14 @@ func (c *networkCmd) doNetworkSet(client *lxd.Client, name string, args []string
 	if !termios.IsTerminal(int(syscall.Stdin)) && value == "-" {
 		buf, err := ioutil.ReadAll(os.Stdin)
 		if err != nil {
-			return fmt.Errorf("Can't read from stdin: %s", err)
+			return fmt.Errorf(i18n.G("Can't read from stdin: %s"), err)
 		}
 		value = string(buf[:])
 	}
 
 	network.Config[key] = value
 
-	return client.NetworkPut(name, network)
+	return client.NetworkPut(name, network.Writable())
 }
 
 func (c *networkCmd) doNetworkShow(client *lxd.Client, name string) error {
@@ -467,7 +476,13 @@ func (c *networkCmd) doNetworkShow(client *lxd.Client, name string) error {
 		return err
 	}
 
+	sort.Strings(network.UsedBy)
+
 	data, err := yaml.Marshal(&network)
+	if err != nil {
+		return err
+	}
+
 	fmt.Printf("%s", data)
 
 	return nil

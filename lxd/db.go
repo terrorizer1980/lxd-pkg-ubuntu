@@ -25,15 +25,6 @@ var (
 	NoSuchObjectError = fmt.Errorf("No such object")
 )
 
-// Profile is here to order Profiles.
-type Profile struct {
-	name  string
-	order int
-}
-
-// Profiles will contain a list of all Profiles.
-type Profiles []Profile
-
 // CURRENT_SCHEMA contains the current SQLite SQL Schema.
 const CURRENT_SCHEMA string = `
 CREATE TABLE IF NOT EXISTS certificates (
@@ -208,6 +199,11 @@ func createDb(db *sql.DB) (err error) {
 	_, err = db.Exec(insertStmt, dbGetLatestSchema())
 	if err != nil {
 		return err
+	}
+
+	// Mark all existing patches as applied
+	for _, p := range patches {
+		dbPatchesMarkApplied(db, p.name)
 	}
 
 	err = dbProfileCreateDefault(db)
