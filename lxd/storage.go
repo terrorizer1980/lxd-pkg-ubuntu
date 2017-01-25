@@ -13,7 +13,9 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/lxc/lxd/lxd/types"
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/ioprogress"
 	"github.com/lxc/lxd/shared/logging"
 
@@ -255,6 +257,12 @@ func storageForFilename(d *Daemon, filename string) (storage, error) {
 		if err != nil {
 			return nil, fmt.Errorf("couldn't detect filesystem for '%s': %v", filename, err)
 		}
+
+		if filesystem == "btrfs" {
+			if !(*storageBtrfs).isSubvolume(nil, filename) {
+				filesystem = ""
+			}
+		}
 	}
 
 	if shared.PathExists(filename + ".lv") {
@@ -274,7 +282,7 @@ func storageForFilename(d *Daemon, filename string) (storage, error) {
 	return newStorageWithConfig(d, storageType, config)
 }
 
-func storageForImage(d *Daemon, imgInfo *shared.ImageInfo) (storage, error) {
+func storageForImage(d *Daemon, imgInfo *api.Image) (storage, error) {
 	imageFilename := shared.VarPath("images", imgInfo.Fingerprint)
 	return storageForFilename(d, imageFilename)
 }
@@ -654,7 +662,7 @@ func snapshotProtobufToContainerArgs(containerName string, snap *Snapshot) conta
 		config[ent.GetKey()] = ent.GetValue()
 	}
 
-	devices := shared.Devices{}
+	devices := types.Devices{}
 	for _, ent := range snap.LocalDevices {
 		props := map[string]string{}
 		for _, prop := range ent.Config {
@@ -813,9 +821,9 @@ func progressWrapperRender(op *operation, key string, description string, progre
 		meta = make(map[string]interface{})
 	}
 
-	progress := fmt.Sprintf("%s (%s/s)", shared.GetByteSizeString(progressInt), shared.GetByteSizeString(speedInt))
+	progress := fmt.Sprintf("%s (%s/s)", shared.GetByteSizeString(progressInt, 2), shared.GetByteSizeString(speedInt, 2))
 	if description != "" {
-		progress = fmt.Sprintf("%s: %s (%s/s)", description, shared.GetByteSizeString(progressInt), shared.GetByteSizeString(speedInt))
+		progress = fmt.Sprintf("%s: %s (%s/s)", description, shared.GetByteSizeString(progressInt, 2), shared.GetByteSizeString(speedInt, 2))
 	}
 
 	if meta[key] != progress {

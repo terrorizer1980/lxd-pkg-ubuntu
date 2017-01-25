@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/lxc/lxd"
-	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/gnuflag"
 	"github.com/lxc/lxd/shared/i18n"
 )
@@ -126,6 +126,7 @@ func (c *initCmd) massage_args() {
 		initRequestedEmptyProfiles = true
 		newargs := os.Args[0 : l-2]
 		newargs = append(newargs, os.Args[l-1])
+		os.Args = newargs
 		return
 	}
 }
@@ -173,7 +174,7 @@ func (c *initCmd) run(config *lxd.Config, args []string) error {
 		profiles = append(profiles, p)
 	}
 
-	var resp *lxd.Response
+	var resp *api.Response
 	if name == "" {
 		fmt.Printf(i18n.G("Creating the container") + "\n")
 	} else {
@@ -182,7 +183,7 @@ func (c *initCmd) run(config *lxd.Config, args []string) error {
 
 	iremote, image = c.guessImage(config, d, remote, iremote, image)
 
-	devicesMap := map[string]shared.Device{}
+	devicesMap := map[string]map[string]string{}
 	if c.network != "" {
 		network, err := d.NetworkGet(c.network)
 		if err != nil {
@@ -190,9 +191,9 @@ func (c *initCmd) run(config *lxd.Config, args []string) error {
 		}
 
 		if network.Type == "bridge" {
-			devicesMap[c.network] = shared.Device{"type": "nic", "nictype": "bridged", "parent": c.network}
+			devicesMap[c.network] = map[string]string{"type": "nic", "nictype": "bridged", "parent": c.network}
 		} else {
-			devicesMap[c.network] = shared.Device{"type": "nic", "nictype": "macvlan", "parent": c.network}
+			devicesMap[c.network] = map[string]string{"type": "nic", "nictype": "macvlan", "parent": c.network}
 		}
 	}
 
@@ -260,7 +261,7 @@ func (c *initCmd) initProgressTracker(d *lxd.Client, progress *ProgressRenderer,
 			return
 		}
 
-		if shared.StatusCode(md["status_code"].(float64)).IsFinal() {
+		if api.StatusCode(md["status_code"].(float64)).IsFinal() {
 			return
 		}
 
@@ -270,7 +271,7 @@ func (c *initCmd) initProgressTracker(d *lxd.Client, progress *ProgressRenderer,
 			progress.Update(opMd["download_progress"].(string))
 		}
 	}
-	go d.Monitor([]string{"operation"}, handler)
+	go d.Monitor([]string{"operation"}, handler, nil)
 }
 
 func (c *initCmd) guessImage(config *lxd.Config, d *lxd.Client, remote string, iremote string, image string) (string, string) {
