@@ -1,3 +1,6 @@
 # It's Go, not much we can do about this
 hardening-no-pie usr/bin/fuidshift
 hardening-no-bindnow usr/bin/fuidshift
+
+# Not coming directly from the lxd code
+spelling-error-in-binary usr/bin/fuidshift ot to
