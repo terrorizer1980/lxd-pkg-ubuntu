@@ -11,6 +11,7 @@ import (
 
 	"github.com/lxc/lxd"
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/i18n"
 	"github.com/lxc/lxd/shared/termios"
 )
@@ -47,19 +48,19 @@ func (c *profileCmd) usage() string {
 	return i18n.G(
 		`Manage configuration profiles.
 
-lxc profile list [filters]                     List available profiles.
-lxc profile show <profile>                     Show details of a profile.
-lxc profile create <profile>                   Create a profile.
-lxc profile copy <profile> <remote>            Copy the profile to the specified remote.
-lxc profile get <profile> <key>                Get profile configuration.
-lxc profile set <profile> <key> <value>        Set profile configuration.
-lxc profile unset <profile> <key>              Unset profile configuration.
-lxc profile delete <profile>                   Delete a profile.
-lxc profile edit <profile>
+lxc profile list [<remote>:]                                    List available profiles.
+lxc profile show [<remote>:]<profile>                           Show details of a profile.
+lxc profile create [<remote>:]<profile>                         Create a profile.
+lxc profile copy [<remote>:]<profile> [<remote>:]<profile>      Copy the profile.
+lxc profile get [<remote>:]<profile> <key>                      Get profile configuration.
+lxc profile set [<remote>:]<profile> <key> <value>              Set profile configuration.
+lxc profile unset [<remote>:]<profile> <key>                    Unset profile configuration.
+lxc profile delete [<remote>:]<profile>                         Delete a profile.
+lxc profile edit [<remote>:]<profile>
     Edit profile, either by launching external editor or reading STDIN.
     Example: lxc profile edit <profile> # launch editor
              cat profile.yaml | lxc profile edit <profile> # read from profile.yaml
-lxc profile apply <container> <profiles>
+lxc profile apply [<remote>:]<container> <profiles>
     Apply a comma-separated list of profiles to a container, in order.
     All profiles passed in this call (and only those) will be applied
     to the specified container.
@@ -69,15 +70,14 @@ lxc profile apply <container> <profiles>
              lxc profile apply bar,default # Apply default second now
 
 Devices:
-lxc profile device list <profile>                                   List devices in the given profile.
-lxc profile device show <profile>                                   Show full device details in the given profile.
-lxc profile device remove <profile> <name>                          Remove a device from a profile.
-lxc profile device get <[remote:]profile> <name> <key>              Get a device property.
-lxc profile device set <[remote:]profile> <name> <key> <value>      Set a device property.
-lxc profile device unset <[remote:]profile> <name> <key>            Unset a device property.
-lxc profile device add <profile name> <device name> <device type> [key=value]...
-    Add a profile device, such as a disk or a nic, to the containers
-    using the specified profile.`)
+lxc profile device list [<remote>:]<profile>                                List devices in the given profile.
+lxc profile device show [<remote>:]<profile>                                Show full device details in the given profile.
+lxc profile device remove [<remote>:]<profile> <name>                       Remove a device from a profile.
+lxc profile device get [<remote>:]<profile> <name> <key>                    Get a device property.
+lxc profile device set [<remote>:]<profile> <name> <key> <value>            Set a device property.
+lxc profile device unset [<remote>:]<profile> <name> <key>                  Unset a device property.
+lxc profile device add [<remote>:]<profile> <device> <type> [key=value...]
+    Add a profile device, such as a disk or a nic, to the containers using the specified profile.`)
 }
 
 func (c *profileCmd) flags() {}
@@ -152,7 +152,7 @@ func (c *profileCmd) doProfileEdit(client *lxd.Client, p string) error {
 			return err
 		}
 
-		newdata := shared.ProfileConfig{}
+		newdata := api.ProfilePut{}
 		err = yaml.Unmarshal(contents, &newdata)
 		if err != nil {
 			return err
@@ -179,7 +179,7 @@ func (c *profileCmd) doProfileEdit(client *lxd.Client, p string) error {
 
 	for {
 		// Parse the text received from the editor
-		newdata := shared.ProfileConfig{}
+		newdata := api.ProfilePut{}
 		err = yaml.Unmarshal(content, &newdata)
 		if err == nil {
 			err = client.PutProfile(p, newdata)
@@ -238,6 +238,10 @@ func (c *profileCmd) doProfileShow(client *lxd.Client, p string) error {
 	}
 
 	data, err := yaml.Marshal(&profile)
+	if err != nil {
+		return err
+	}
+
 	fmt.Printf("%s", data)
 
 	return nil

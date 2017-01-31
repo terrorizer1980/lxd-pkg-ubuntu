@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -16,16 +15,20 @@ import (
 	"gopkg.in/yaml.v2"
 
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/api"
+	"github.com/lxc/lxd/shared/ioprogress"
+	"github.com/lxc/lxd/shared/simplestreams"
+	"github.com/lxc/lxd/shared/version"
 
 	log "gopkg.in/inconshreveable/log15.v2"
 )
 
 // Simplestream cache
 type imageStreamCacheEntry struct {
-	Aliases      shared.ImageAliases `yaml:"aliases"`
-	Fingerprints []string            `yaml:"fingerprints"`
+	Aliases      []api.ImageAliasesEntry `yaml:"aliases"`
+	Fingerprints []string                `yaml:"fingerprints"`
 	expiry       time.Time
-	ss           *shared.SimpleStreams
+	ss           *simplestreams.SimpleStreams
 }
 
 var imageStreamCache = map[string]*imageStreamCacheEntry{}
@@ -65,11 +68,12 @@ func imageLoadStreamCache(d *Daemon) error {
 
 	for url, entry := range imageStreamCache {
 		if entry.ss == nil {
-			ss, err := shared.SimpleStreamsClient(url, d.proxy)
+			myhttp, err := d.httpClient("")
 			if err != nil {
 				return err
 			}
 
+			ss := simplestreams.NewClient(url, *myhttp, version.UserAgent)
 			entry.ss = ss
 		}
 	}
@@ -81,7 +85,7 @@ func imageLoadStreamCache(d *Daemon) error {
 // downloads the image from a remote server.
 func (d *Daemon) ImageDownload(op *operation, server string, protocol string, certificate string, secret string, alias string, forContainer bool, autoUpdate bool) (string, error) {
 	var err error
-	var ss *shared.SimpleStreams
+	var ss *simplestreams.SimpleStreams
 	var ctxMap log.Ctx
 
 	if protocol == "" {
@@ -97,10 +101,12 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 		if entry == nil || entry.expiry.Before(time.Now()) {
 			refresh := func() (*imageStreamCacheEntry, error) {
 				// Setup simplestreams client
-				ss, err = shared.SimpleStreamsClient(server, d.proxy)
+				myhttp, err := d.httpClient(certificate)
 				if err != nil {
 					return nil, err
 				}
+
+				ss = simplestreams.NewClient(server, *myhttp, version.UserAgent)
 
 				// Get all aliases
 				aliases, err := ss.ListAliases()
@@ -182,10 +188,10 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 	}
 
 	// Now check if we already downloading the image
-	d.imagesDownloadingLock.RLock()
+	d.imagesDownloadingLock.Lock()
 	if waitChannel, ok := d.imagesDownloading[fp]; ok {
 		// We already download the image
-		d.imagesDownloadingLock.RUnlock()
+		d.imagesDownloadingLock.Unlock()
 
 		shared.LogDebug(
 			"Already downloading the image, waiting for it to succeed",
@@ -211,18 +217,7 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 		return fp, nil
 	}
 
-	d.imagesDownloadingLock.RUnlock()
-
-	if op == nil {
-		ctxMap = log.Ctx{"alias": alias, "server": server}
-	} else {
-		ctxMap = log.Ctx{"trigger": op.url, "image": fp, "operation": op.id, "alias": alias, "server": server}
-	}
-
-	shared.LogInfo("Downloading image", ctxMap)
-
 	// Add the download to the queue
-	d.imagesDownloadingLock.Lock()
 	d.imagesDownloading[fp] = make(chan bool)
 	d.imagesDownloadingLock.Unlock()
 
@@ -236,9 +231,18 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 		d.imagesDownloadingLock.Unlock()
 	}()
 
+	// Begin downloading
+	if op == nil {
+		ctxMap = log.Ctx{"alias": alias, "server": server}
+	} else {
+		ctxMap = log.Ctx{"trigger": op.url, "image": fp, "operation": op.id, "alias": alias, "server": server}
+	}
+
+	shared.LogInfo("Downloading image", ctxMap)
+
 	exporturl := server
 
-	var info shared.ImageInfo
+	var info api.Image
 	info.Fingerprint = fp
 
 	destDir := shared.VarPath("images")
@@ -247,7 +251,7 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 		d.Storage.ImageDelete(fp)
 	}
 
-	progress := func(progressInt int) {
+	progress := func(progressInt int64, speedInt int64) {
 		if op == nil {
 			return
 		}
@@ -257,7 +261,7 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 			meta = make(map[string]interface{})
 		}
 
-		progress := fmt.Sprintf("%d%%", progressInt)
+		progress := fmt.Sprintf("%d%% (%s/s)", progressInt, shared.GetByteSizeString(speedInt, 2))
 
 		if meta["download_progress"] != progress {
 			meta["download_progress"] = progress
@@ -271,9 +275,9 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 		if secret != "" {
 			url = fmt.Sprintf(
 				"%s/%s/images/%s?secret=%s",
-				server, shared.APIVersion, fp, secret)
+				server, version.APIVersion, fp, secret)
 		} else {
-			url = fmt.Sprintf("%s/%s/images/%s", server, shared.APIVersion, fp)
+			url = fmt.Sprintf("%s/%s/images/%s", server, version.APIVersion, fp)
 		}
 
 		resp, err := d.httpGetSync(url, certificate)
@@ -285,7 +289,7 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 			return "", err
 		}
 
-		if err := json.Unmarshal(resp.Metadata, &info); err != nil {
+		if err := resp.MetadataAsStruct(&info); err != nil {
 			return "", err
 		}
 
@@ -293,12 +297,12 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 		if secret != "" {
 			exporturl = fmt.Sprintf(
 				"%s/%s/images/%s/export?secret=%s",
-				server, shared.APIVersion, fp, secret)
+				server, version.APIVersion, fp, secret)
 
 		} else {
 			exporturl = fmt.Sprintf(
 				"%s/%s/images/%s/export",
-				server, shared.APIVersion, fp)
+				server, version.APIVersion, fp)
 		}
 	} else if protocol == "simplestreams" {
 		err := ss.Download(fp, "meta", destName, nil)
@@ -359,7 +363,13 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 		ctype = "application/octet-stream"
 	}
 
-	body := &shared.TransferProgress{Reader: raw.Body, Length: raw.ContentLength, Handler: progress}
+	body := &ioprogress.ProgressReader{
+		ReadCloser: raw.Body,
+		Tracker: &ioprogress.ProgressTracker{
+			Length:  raw.ContentLength,
+			Handler: progress,
+		},
+	}
 
 	if ctype == "multipart/form-data" {
 		// Parse the POST data
@@ -469,8 +479,8 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 		}
 
 		info.Architecture = imageMeta.Architecture
-		info.CreationDate = time.Unix(imageMeta.CreationDate, 0)
-		info.ExpiryDate = time.Unix(imageMeta.ExpiryDate, 0)
+		info.CreatedAt = time.Unix(imageMeta.CreationDate, 0)
+		info.ExpiresAt = time.Unix(imageMeta.ExpiryDate, 0)
 		info.Properties = imageMeta.Properties
 	}
 

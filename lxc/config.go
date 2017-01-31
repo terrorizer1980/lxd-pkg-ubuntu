@@ -15,6 +15,7 @@ import (
 
 	"github.com/lxc/lxd"
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/gnuflag"
 	"github.com/lxc/lxd/shared/i18n"
 	"github.com/lxc/lxd/shared/termios"
@@ -29,7 +30,7 @@ func (c *configCmd) showByDefault() bool {
 }
 
 func (c *configCmd) flags() {
-	gnuflag.BoolVar(&c.expanded, "expanded", false, i18n.G("Whether to show the expanded configuration"))
+	gnuflag.BoolVar(&c.expanded, "expanded", false, i18n.G("Show the expanded configuration"))
 }
 
 func (c *configCmd) configEditHelp() string {
@@ -57,33 +58,33 @@ func (c *configCmd) usage() string {
 	return i18n.G(
 		`Manage configuration.
 
-lxc config device add <[remote:]container> <name> <type> [key=value]...     Add a device to a container.
-lxc config device get <[remote:]container> <name> <key>                     Get a device property.
-lxc config device set <[remote:]container> <name> <key> <value>             Set a device property.
-lxc config device unset <[remote:]container> <name> <key>                   Unset a device property.
-lxc config device list <[remote:]container>                                 List devices for container.
-lxc config device show <[remote:]container>                                 Show full device details for container.
-lxc config device remove <[remote:]container> <name>                        Remove device from container.
+lxc config device add [<remote>:]<container> <device> <type> [key=value...]   Add a device to a container.
+lxc config device get [<remote>:]<container> <device> <key>                   Get a device property.
+lxc config device set [<remote>:]<container> <device> <key> <value>           Set a device property.
+lxc config device unset [<remote>:]<container> <device> <key>                 Unset a device property.
+lxc config device list [<remote>:]<container>                                 List devices for container.
+lxc config device show [<remote>:]<container>                                 Show full device details for container.
+lxc config device remove [<remote>:]<container> <name>                        Remove device from container.
 
-lxc config get [remote:][container] <key>                                   Get container or server configuration key.
-lxc config set [remote:][container] <key> <value>                           Set container or server configuration key.
-lxc config unset [remote:][container] <key>                                 Unset container or server configuration key.
-lxc config show [remote:][container] [--expanded]                           Show container or server configuration.
-lxc config edit [remote:][container]                                        Edit container or server configuration in external editor.
+lxc config get [<remote>:][container] <key>                                   Get container or server configuration key.
+lxc config set [<remote>:][container] <key> <value>                           Set container or server configuration key.
+lxc config unset [<remote>:][container] <key>                                 Unset container or server configuration key.
+lxc config show [<remote>:][container] [--expanded]                           Show container or server configuration.
+lxc config edit [<remote>:][container]                                        Edit container or server configuration in external editor.
     Edit configuration, either by launching external editor or reading STDIN.
     Example: lxc config edit <container> # launch editor
-             cat config.yaml | lxc config edit <config> # read from config.yaml
+             cat config.yaml | lxc config edit <container> # read from config.yaml
 
-lxc config trust list [remote]                                              List all trusted certs.
-lxc config trust add [remote] <certfile.crt>                                Add certfile.crt to trusted hosts.
-lxc config trust remove [remote] [hostname|fingerprint]                     Remove the cert from trusted hosts.
+lxc config trust list [<remote>:]                                             List all trusted certs.
+lxc config trust add [<remote>:] <certfile.crt>                               Add certfile.crt to trusted hosts.
+lxc config trust remove [<remote>:] [hostname|fingerprint]                    Remove the cert from trusted hosts.
 
 Examples:
 To mount host's /share/c1 onto /opt in the container:
-    lxc config device add [remote:]container1 <device-name> disk source=/share/c1 path=opt
+    lxc config device add [<remote>:]container1 <device-name> disk source=/share/c1 path=opt
 
 To set an lxc config value:
-    lxc config set [remote:]<container> raw.lxc 'lxc.aa_allow_incomplete = 1'
+    lxc config set [<remote>:]<container> raw.lxc 'lxc.aa_allow_incomplete = 1'
 
 To listen on IPv4 and IPv6 port 8443 (you can omit the 8443 its the default):
     lxc config set core.https_address [::]:8443
@@ -341,24 +342,27 @@ func (c *configCmd) run(config *lxd.Config, args []string) error {
 				return err
 			}
 
-			brief := config.Brief()
+			brief := config.Writable()
 			data, err = yaml.Marshal(&brief)
+			if err != nil {
+				return err
+			}
 		} else {
-			var brief shared.BriefContainerInfo
+			var brief api.ContainerPut
 			if shared.IsSnapshot(container) {
 				config, err := d.SnapshotInfo(container)
 				if err != nil {
 					return err
 				}
 
-				brief = shared.BriefContainerInfo{
+				brief = api.ContainerPut{
 					Profiles:  config.Profiles,
 					Config:    config.Config,
 					Devices:   config.Devices,
 					Ephemeral: config.Ephemeral,
 				}
 				if c.expanded {
-					brief = shared.BriefContainerInfo{
+					brief = api.ContainerPut{
 						Profiles:  config.Profiles,
 						Config:    config.ExpandedConfig,
 						Devices:   config.ExpandedDevices,
@@ -371,9 +375,10 @@ func (c *configCmd) run(config *lxd.Config, args []string) error {
 					return err
 				}
 
-				brief = config.Brief()
+				brief = config.Writable()
 				if c.expanded {
-					brief = config.BriefExpanded()
+					brief.Config = config.ExpandedConfig
+					brief.Devices = config.ExpandedDevices
 				}
 			}
 
@@ -491,7 +496,7 @@ func (c *configCmd) doContainerConfigEdit(client *lxd.Client, cont string) error
 			return err
 		}
 
-		newdata := shared.BriefContainerInfo{}
+		newdata := api.ContainerPut{}
 		err = yaml.Unmarshal(contents, &newdata)
 		if err != nil {
 			return err
@@ -505,7 +510,7 @@ func (c *configCmd) doContainerConfigEdit(client *lxd.Client, cont string) error
 		return err
 	}
 
-	brief := config.Brief()
+	brief := config.Writable()
 	data, err := yaml.Marshal(&brief)
 	if err != nil {
 		return err
@@ -519,7 +524,7 @@ func (c *configCmd) doContainerConfigEdit(client *lxd.Client, cont string) error
 
 	for {
 		// Parse the text received from the editor
-		newdata := shared.BriefContainerInfo{}
+		newdata := api.ContainerPut{}
 		err = yaml.Unmarshal(content, &newdata)
 		if err == nil {
 			err = client.UpdateContainerConfig(cont, newdata)
@@ -554,7 +559,7 @@ func (c *configCmd) doDaemonConfigEdit(client *lxd.Client) error {
 			return err
 		}
 
-		newdata := shared.BriefServerState{}
+		newdata := api.ServerPut{}
 		err = yaml.Unmarshal(contents, &newdata)
 		if err != nil {
 			return err
@@ -570,7 +575,7 @@ func (c *configCmd) doDaemonConfigEdit(client *lxd.Client) error {
 		return err
 	}
 
-	brief := config.Brief()
+	brief := config.Writable()
 	data, err := yaml.Marshal(&brief)
 	if err != nil {
 		return err
@@ -584,7 +589,7 @@ func (c *configCmd) doDaemonConfigEdit(client *lxd.Client) error {
 
 	for {
 		// Parse the text received from the editor
-		newdata := shared.BriefServerState{}
+		newdata := api.ServerPut{}
 		err = yaml.Unmarshal(content, &newdata)
 		if err == nil {
 			_, err = client.UpdateServerConfig(newdata)
@@ -631,7 +636,7 @@ func (c *configCmd) deviceAdd(config *lxd.Config, which string, args []string) e
 		props = []string{}
 	}
 
-	var resp *lxd.Response
+	var resp *api.Response
 	if which == "profile" {
 		resp, err = client.ProfileDeviceAdd(name, devname, devtype, props)
 	} else {
@@ -723,7 +728,7 @@ func (c *configCmd) deviceSet(config *lxd.Config, which string, args []string) e
 		dev[key] = value
 		st.Devices[devname] = dev
 
-		err = client.PutProfile(name, *st)
+		err = client.PutProfile(name, st.Writable())
 		if err != nil {
 			return err
 		}
@@ -741,7 +746,7 @@ func (c *configCmd) deviceSet(config *lxd.Config, which string, args []string) e
 		dev[key] = value
 		st.Devices[devname] = dev
 
-		err = client.UpdateContainerConfig(name, st.Brief())
+		err = client.UpdateContainerConfig(name, st.Writable())
 		if err != nil {
 			return err
 		}
@@ -779,7 +784,7 @@ func (c *configCmd) deviceUnset(config *lxd.Config, which string, args []string)
 		delete(dev, key)
 		st.Devices[devname] = dev
 
-		err = client.PutProfile(name, *st)
+		err = client.PutProfile(name, st.Writable())
 		if err != nil {
 			return err
 		}
@@ -797,7 +802,7 @@ func (c *configCmd) deviceUnset(config *lxd.Config, which string, args []string)
 		delete(dev, key)
 		st.Devices[devname] = dev
 
-		err = client.UpdateContainerConfig(name, st.Brief())
+		err = client.UpdateContainerConfig(name, st.Writable())
 		if err != nil {
 			return err
 		}
@@ -818,7 +823,7 @@ func (c *configCmd) deviceRm(config *lxd.Config, which string, args []string) er
 	}
 
 	devname := args[3]
-	var resp *lxd.Response
+	var resp *api.Response
 	if which == "profile" {
 		resp, err = client.ProfileDeviceDelete(name, devname)
 	} else {
@@ -872,7 +877,7 @@ func (c *configCmd) deviceShow(config *lxd.Config, which string, args []string) 
 		return err
 	}
 
-	var devices map[string]shared.Device
+	var devices map[string]map[string]string
 	if which == "profile" {
 		resp, err := client.ProfileConfig(name)
 		if err != nil {

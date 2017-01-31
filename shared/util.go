@@ -19,6 +19,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
+	"unicode"
 )
 
 const SnapshotDelimiter = "/"
@@ -386,6 +388,15 @@ func IntInSlice(key int, list []int) bool {
 	return false
 }
 
+func Int64InSlice(key int64, list []int64) bool {
+	for _, entry := range list {
+		if entry == key {
+			return true
+		}
+	}
+	return false
+}
+
 func IsTrue(value string) bool {
 	if StringInSlice(strings.ToLower(value), []string{"true", "1", "yes", "on"}) {
 		return true
@@ -609,19 +620,32 @@ func ParseMetadata(metadata interface{}) (map[string]interface{}, error) {
 // Parse a size string in bytes (e.g. 200kB or 5GB) into the number of bytes it
 // represents. Supports suffixes up to EB. "" == 0.
 func ParseByteSizeString(input string) (int64, error) {
+	suffixLen := 2
+
 	if input == "" {
 		return 0, nil
 	}
 
-	if len(input) < 3 {
+	if unicode.IsNumber(rune(input[len(input)-1])) {
+		// COMMENT(brauner): No suffix --> bytes.
+		suffixLen = 0
+	} else if (len(input) >= 2) && (input[len(input)-1] == 'B') && unicode.IsNumber(rune(input[len(input)-2])) {
+		// COMMENT(brauner): "B" suffix --> bytes.
+		suffixLen = 1
+	} else if strings.HasSuffix(input, " bytes") {
+		// COMMENT(brauner): Backward compatible behaviour in case we
+		// talk to a LXD that still uses GetByteSizeString() that
+		// returns "n bytes".
+		suffixLen = 6
+	} else if (len(input) < 3) && (suffixLen == 2) {
 		return -1, fmt.Errorf("Invalid value: %s", input)
 	}
 
 	// Extract the suffix
-	suffix := input[len(input)-2:]
+	suffix := input[len(input)-suffixLen:]
 
 	// Extract the value
-	value := input[0 : len(input)-2]
+	value := input[0 : len(input)-suffixLen]
 	valueInt, err := strconv.ParseInt(value, 10, 64)
 	if err != nil {
 		return -1, fmt.Errorf("Invalid integer: %s", input)
@@ -629,6 +653,11 @@ func ParseByteSizeString(input string) (int64, error) {
 
 	if valueInt < 0 {
 		return -1, fmt.Errorf("Invalid value: %d", valueInt)
+	}
+
+	// COMMENT(brauner): The value is already in bytes.
+	if suffixLen != 2 {
+		return valueInt, nil
 	}
 
 	// Figure out the multiplicator
@@ -700,9 +729,9 @@ func ParseBitSizeString(input string) (int64, error) {
 	return valueInt * multiplicator, nil
 }
 
-func GetByteSizeString(input int64) string {
+func GetByteSizeString(input int64, precision uint) string {
 	if input < 1024 {
-		return fmt.Sprintf("%d bytes", input)
+		return fmt.Sprintf("%dB", input)
 	}
 
 	value := float64(input)
@@ -710,46 +739,11 @@ func GetByteSizeString(input int64) string {
 	for _, unit := range []string{"kB", "MB", "GB", "TB", "PB", "EB"} {
 		value = value / 1024
 		if value < 1024 {
-			return fmt.Sprintf("%.2f%s", value, unit)
+			return fmt.Sprintf("%.*f%s", precision, value, unit)
 		}
 	}
 
-	return fmt.Sprintf("%.2fEB", value)
-}
-
-type TransferProgress struct {
-	io.Reader
-	percentage float64
-	total      int64
-
-	Length  int64
-	Handler func(int)
-}
-
-func (pt *TransferProgress) Read(p []byte) (int, error) {
-	n, err := pt.Reader.Read(p)
-
-	if pt.Handler == nil {
-		return n, err
-	}
-
-	if n > 0 {
-		pt.total += int64(n)
-		percentage := float64(pt.total) / float64(pt.Length) * float64(100)
-
-		if percentage-pt.percentage > 0.9 {
-			pt.percentage = percentage
-
-			progressInt := 1 - (int(percentage) % 1) + int(percentage)
-			if progressInt > 100 {
-				progressInt = 100
-			}
-
-			pt.Handler(progressInt)
-		}
-	}
-
-	return n, err
+	return fmt.Sprintf("%.*fEB", precision, value)
 }
 
 func RunCommand(name string, arg ...string) error {
@@ -759,4 +753,16 @@ func RunCommand(name string, arg ...string) error {
 	}
 
 	return nil
+}
+
+func TimeIsSet(ts time.Time) bool {
+	if ts.Unix() <= 0 {
+		return false
+	}
+
+	if ts.UTC().Unix() <= 0 {
+		return false
+	}
+
+	return true
 }

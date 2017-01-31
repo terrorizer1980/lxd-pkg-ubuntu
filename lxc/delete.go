@@ -8,6 +8,7 @@ import (
 
 	"github.com/lxc/lxd"
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/gnuflag"
 	"github.com/lxc/lxd/shared/i18n"
 )
@@ -25,16 +26,16 @@ func (c *deleteCmd) usage() string {
 	return i18n.G(
 		`Delete containers or snapshots.
 
-lxc delete [remote:]<container>[/<snapshot>] [remote:][<container>[/<snapshot>]...]
+lxc delete [<remote>:]<container>[/<snapshot>] [[<remote>:]<container>[/<snapshot>]...]
 
 Destroy containers or snapshots with any attached data (configuration, snapshots, ...).`)
 }
 
 func (c *deleteCmd) flags() {
-	gnuflag.BoolVar(&c.force, "f", false, i18n.G("Force the removal of stopped containers."))
-	gnuflag.BoolVar(&c.force, "force", false, i18n.G("Force the removal of stopped containers."))
-	gnuflag.BoolVar(&c.interactive, "i", false, i18n.G("Require user confirmation."))
-	gnuflag.BoolVar(&c.interactive, "interactive", false, i18n.G("Require user confirmation."))
+	gnuflag.BoolVar(&c.force, "f", false, i18n.G("Force the removal of stopped containers"))
+	gnuflag.BoolVar(&c.force, "force", false, i18n.G("Force the removal of stopped containers"))
+	gnuflag.BoolVar(&c.interactive, "i", false, i18n.G("Require user confirmation"))
+	gnuflag.BoolVar(&c.interactive, "interactive", false, i18n.G("Require user confirmation"))
 }
 
 func (c *deleteCmd) promptDelete(name string) error {
@@ -87,7 +88,7 @@ func (c *deleteCmd) run(config *lxd.Config, args []string) error {
 			return err
 		}
 
-		if ct.StatusCode != 0 && ct.StatusCode != shared.Stopped {
+		if ct.StatusCode != 0 && ct.StatusCode != api.Stopped {
 			if !c.force {
 				return fmt.Errorf(i18n.G("The container is currently running, stop it first or pass --force."))
 			}
@@ -102,7 +103,7 @@ func (c *deleteCmd) run(config *lxd.Config, args []string) error {
 				return err
 			}
 
-			if op.StatusCode == shared.Failure {
+			if op.StatusCode == api.Failure {
 				return fmt.Errorf(i18n.G("Stopping container failed!"))
 			}
 

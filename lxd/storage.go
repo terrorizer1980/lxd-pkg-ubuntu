@@ -12,7 +12,9 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/lxc/lxd/lxd/types"
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/logging"
 
 	log "gopkg.in/inconshreveable/log15.v2"
@@ -148,8 +150,8 @@ type storage interface {
 	ContainerCanRestore(container container, sourceContainer container) error
 	ContainerDelete(container container) error
 	ContainerCopy(container container, sourceContainer container) error
-	ContainerStart(container container) error
-	ContainerStop(container container) error
+	ContainerStart(name string, path string) error
+	ContainerStop(name string, path string) error
 	ContainerRename(container container, newName string) error
 	ContainerRestore(container container, sourceContainer container) error
 	ContainerSetQuota(container container, size int64) error
@@ -253,6 +255,12 @@ func storageForFilename(d *Daemon, filename string) (storage, error) {
 		if err != nil {
 			return nil, fmt.Errorf("couldn't detect filesystem for '%s': %v", filename, err)
 		}
+
+		if filesystem == "btrfs" {
+			if !(*storageBtrfs).isSubvolume(nil, filename) {
+				filesystem = ""
+			}
+		}
 	}
 
 	if shared.PathExists(filename + ".lv") {
@@ -272,7 +280,7 @@ func storageForFilename(d *Daemon, filename string) (storage, error) {
 	return newStorageWithConfig(d, storageType, config)
 }
 
-func storageForImage(d *Daemon, imgInfo *shared.ImageInfo) (storage, error) {
+func storageForImage(d *Daemon, imgInfo *api.Image) (storage, error) {
 	imageFilename := shared.VarPath("images", imgInfo.Fingerprint)
 	return storageForFilename(d, imageFilename)
 }
@@ -430,14 +438,14 @@ func (lw *storageLogWrapper) ContainerCopy(
 	return lw.w.ContainerCopy(container, sourceContainer)
 }
 
-func (lw *storageLogWrapper) ContainerStart(container container) error {
-	lw.log.Debug("ContainerStart", log.Ctx{"container": container.Name()})
-	return lw.w.ContainerStart(container)
+func (lw *storageLogWrapper) ContainerStart(name string, path string) error {
+	lw.log.Debug("ContainerStart", log.Ctx{"container": name})
+	return lw.w.ContainerStart(name, path)
 }
 
-func (lw *storageLogWrapper) ContainerStop(container container) error {
-	lw.log.Debug("ContainerStop", log.Ctx{"container": container.Name()})
-	return lw.w.ContainerStop(container)
+func (lw *storageLogWrapper) ContainerStop(name string, path string) error {
+	lw.log.Debug("ContainerStop", log.Ctx{"container": name})
+	return lw.w.ContainerStop(name, path)
 }
 
 func (lw *storageLogWrapper) ContainerRename(
@@ -649,7 +657,7 @@ func snapshotProtobufToContainerArgs(containerName string, snap *Snapshot) conta
 		config[ent.GetKey()] = ent.GetValue()
 	}
 
-	devices := shared.Devices{}
+	devices := types.Devices{}
 	for _, ent := range snap.LocalDevices {
 		props := map[string]string{}
 		for _, prop := range ent.Config {

@@ -10,7 +10,10 @@ import (
 
 	"gopkg.in/lxc/go-lxc.v2"
 
+	"github.com/lxc/lxd/lxd/types"
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/api"
+	"github.com/lxc/lxd/shared/osarch"
 )
 
 // Helper functions
@@ -308,7 +311,7 @@ func containerValidConfig(config map[string]string, profile bool, expanded bool)
 	return nil
 }
 
-func containerValidDevices(devices shared.Devices, profile bool, expanded bool) error {
+func containerValidDevices(devices types.Devices, profile bool, expanded bool) error {
 	// Empty device list
 	if devices == nil {
 		return nil
@@ -324,7 +327,7 @@ func containerValidDevices(devices shared.Devices, profile bool, expanded bool) 
 			return fmt.Errorf("Invalid device type for device '%s'", name)
 		}
 
-		for k, _ := range m {
+		for k := range m {
 			if !containerValidDeviceConfigKey(m["type"], k) {
 				return fmt.Errorf("Invalid device configuration key for %s: %s", m["type"], k)
 			}
@@ -400,7 +403,7 @@ type containerArgs struct {
 	Config       map[string]string
 	CreationDate time.Time
 	Ctype        containerType
-	Devices      shared.Devices
+	Devices      types.Devices
 	Ephemeral    bool
 	Name         string
 	Profiles     []string
@@ -442,12 +445,23 @@ type container interface {
 	FilePush(srcpath string, dstpath string, uid int, gid int, mode int) error
 	FileRemove(path string) error
 
-	// Command execution
-	Exec(command []string, env map[string]string, stdin *os.File, stdout *os.File, stderr *os.File) (int, error)
+	/* Command execution:
+		 * 1. passing in false for wait
+		 *    - equivalent to calling cmd.Run()
+		 * 2. passing in true for wait
+	         *    - start the command and return its PID in the first return
+	         *      argument and the PID of the attached process in the second
+	         *      argument. It's the callers responsibility to wait on the
+	         *      command. (Note. The returned PID of the attached process can not
+	         *      be waited upon since it's a child of the lxd forkexec command
+	         *      (the PID returned in the first return argument). It can however
+	         *      be used to e.g. forward signals.)
+	*/
+	Exec(command []string, env map[string]string, stdin *os.File, stdout *os.File, stderr *os.File, wait bool) (int, int, error)
 
 	// Status
 	Render() (interface{}, error)
-	RenderState() (*shared.ContainerState, error)
+	RenderState() (*api.ContainerState, error)
 	IsPrivileged() bool
 	IsRunning() bool
 	IsFrozen() bool
@@ -466,9 +480,9 @@ type container interface {
 	Architecture() int
 	CreationDate() time.Time
 	ExpandedConfig() map[string]string
-	ExpandedDevices() shared.Devices
+	ExpandedDevices() types.Devices
 	LocalConfig() map[string]string
-	LocalDevices() shared.Devices
+	LocalDevices() types.Devices
 	Profiles() []string
 	InitPID() int
 	State() string
@@ -650,7 +664,7 @@ func containerCreateInternal(d *Daemon, args containerArgs) (container, error) {
 	}
 
 	if args.Devices == nil {
-		args.Devices = shared.Devices{}
+		args.Devices = types.Devices{}
 	}
 
 	if args.Architecture == 0 {
@@ -678,7 +692,7 @@ func containerCreateInternal(d *Daemon, args containerArgs) (container, error) {
 	}
 
 	// Validate architecture
-	_, err = shared.ArchitectureName(args.Architecture)
+	_, err = osarch.ArchitectureName(args.Architecture)
 	if err != nil {
 		return nil, err
 	}
@@ -695,22 +709,22 @@ func containerCreateInternal(d *Daemon, args containerArgs) (container, error) {
 		}
 	}
 
-	path := containerPath(args.Name, args.Ctype == cTypeSnapshot)
-	if shared.PathExists(path) {
-		if shared.IsSnapshot(args.Name) {
-			return nil, fmt.Errorf("Snapshot '%s' already exists", args.Name)
+	// Create the container entry
+	id, err := dbContainerCreate(d.db, args)
+	if err != nil {
+		if err == DbErrAlreadyDefined {
+			thing := "Container"
+			if shared.IsSnapshot(args.Name) {
+				thing = "Snapshot"
+			}
+			return nil, fmt.Errorf("%s '%s' already exists", thing, args.Name)
 		}
-		return nil, fmt.Errorf("The container already exists")
+		return nil, err
 	}
 
 	// Wipe any existing log for this container name
 	os.RemoveAll(shared.LogPath(args.Name))
 
-	// Create the container entry
-	id, err := dbContainerCreate(d.db, args)
-	if err != nil {
-		return nil, err
-	}
 	args.Id = id
 
 	// Read the timestamp from the database

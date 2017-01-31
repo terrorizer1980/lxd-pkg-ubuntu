@@ -7,7 +7,6 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"sync"
 
 	"github.com/gorilla/websocket"
 
@@ -97,7 +96,7 @@ func RsyncSend(path string, conn *websocket.Conn) error {
 		return err
 	}
 
-	readDone, writeDone := shared.WebsocketMirror(conn, dataSocket, dataSocket)
+	readDone, writeDone := shared.WebsocketMirror(conn, dataSocket, dataSocket, nil, nil)
 
 	output, err := ioutil.ReadAll(stderr)
 	if err != nil {
@@ -147,7 +146,7 @@ func RsyncRecv(path string, conn *websocket.Conn) error {
 		return err
 	}
 
-	readDone, writeDone := shared.WebsocketMirror(conn, stdin, stdout)
+	readDone, writeDone := shared.WebsocketMirror(conn, stdin, stdout, nil, nil)
 	data, err2 := ioutil.ReadAll(stderr)
 	if err2 != nil {
 		shared.LogDebugf("error reading rsync stderr: %s", err2)
@@ -163,44 +162,4 @@ func RsyncRecv(path string, conn *websocket.Conn) error {
 	<-writeDone
 
 	return err
-}
-
-// Netcat is called with:
-//
-//    lxd netcat /path/to/unix/socket
-//
-// and does unbuffered netcatting of to socket to stdin/stdout. Any arguments
-// after the path to the unix socket are ignored, so that this can be passed
-// directly to rsync as the sync command.
-func Netcat(args []string) error {
-	if len(args) < 2 {
-		return fmt.Errorf("Bad arguments %q", args)
-	}
-
-	uAddr, err := net.ResolveUnixAddr("unix", args[1])
-	if err != nil {
-		return err
-	}
-
-	conn, err := net.DialUnix("unix", nil, uAddr)
-	if err != nil {
-		return err
-	}
-
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-
-	go func() {
-		io.Copy(os.Stdout, conn)
-		conn.Close()
-		wg.Done()
-	}()
-
-	go func() {
-		io.Copy(conn, os.Stdin)
-	}()
-
-	wg.Wait()
-
-	return nil
 }

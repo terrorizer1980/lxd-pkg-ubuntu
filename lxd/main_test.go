@@ -16,7 +16,7 @@ func mockStartDaemon() (*Daemon, error) {
 	d := &Daemon{
 		MockMode:              true,
 		imagesDownloading:     map[string]chan bool{},
-		imagesDownloadingLock: sync.RWMutex{},
+		imagesDownloadingLock: sync.Mutex{},
 	}
 
 	if err := d.Init(); err != nil {
@@ -24,8 +24,8 @@ func mockStartDaemon() (*Daemon, error) {
 	}
 
 	d.IdmapSet = &shared.IdmapSet{Idmap: []shared.IdmapEntry{
-		shared.IdmapEntry{Isuid: true, Hostid: 100000, Nsid: 0, Maprange: 500000},
-		shared.IdmapEntry{Isgid: true, Hostid: 100000, Nsid: 0, Maprange: 500000},
+		{Isuid: true, Hostid: 100000, Nsid: 0, Maprange: 500000},
+		{Isgid: true, Hostid: 100000, Nsid: 0, Maprange: 500000},
 	}}
 
 	// Call this after Init so we have a log object.

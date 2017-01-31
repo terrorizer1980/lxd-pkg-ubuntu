@@ -9,23 +9,16 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
 
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/api"
 
 	log "gopkg.in/inconshreveable/log15.v2"
 )
-
-type commandPostContent struct {
-	Command     []string          `json:"command"`
-	WaitForWS   bool              `json:"wait-for-websocket"`
-	Interactive bool              `json:"interactive"`
-	Environment map[string]string `json:"environment"`
-	Width       int               `json:"width"`
-	Height      int               `json:"height"`
-}
 
 type execWs struct {
 	command   []string
@@ -137,11 +130,14 @@ func (s *execWs) Do(op *operation) error {
 	}
 
 	controlExit := make(chan bool)
+	attachedChildIsBorn := make(chan int)
+	attachedChildIsDead := make(chan bool, 1)
 	var wgEOF sync.WaitGroup
 
 	if s.interactive {
 		wgEOF.Add(1)
 		go func() {
+			<-attachedChildIsBorn
 			select {
 			case <-s.controlConnected:
 				break
@@ -167,7 +163,7 @@ func (s *execWs) Do(op *operation) error {
 					break
 				}
 
-				command := shared.ContainerExecControl{}
+				command := api.ContainerExecControl{}
 
 				if err := json.Unmarshal(buf, &command); err != nil {
 					shared.LogDebugf("Failed to unmarshal control socket command: %s", err)
@@ -195,13 +191,15 @@ func (s *execWs) Do(op *operation) error {
 				}
 			}
 		}()
+
 		go func() {
-			readDone, writeDone := shared.WebsocketMirror(s.conns[0], ptys[0], ptys[0])
+			readDone, writeDone := shared.WebsocketExecMirror(s.conns[0], ptys[0], ptys[0], attachedChildIsDead, int(ptys[0].Fd()))
 			<-readDone
 			<-writeDone
 			s.conns[0].Close()
 			wgEOF.Done()
 		}()
+
 	} else {
 		wgEOF.Add(len(ttys) - 1)
 		for i := 0; i < len(ttys); i++ {
@@ -218,33 +216,72 @@ func (s *execWs) Do(op *operation) error {
 		}
 	}
 
-	cmdResult, cmdErr := s.container.Exec(s.command, s.env, stdin, stdout, stderr)
-
-	for _, tty := range ttys {
-		tty.Close()
-	}
-
-	if s.conns[-1] == nil {
-		if s.interactive {
-			controlExit <- true
+	finisher := func(cmdResult int, cmdErr error) error {
+		for _, tty := range ttys {
+			tty.Close()
 		}
-	} else {
-		s.conns[-1].Close()
+
+		if s.conns[-1] == nil {
+			if s.interactive {
+				controlExit <- true
+			}
+		} else {
+			s.conns[-1].Close()
+		}
+
+		attachedChildIsDead <- true
+
+		wgEOF.Wait()
+
+		for _, pty := range ptys {
+			pty.Close()
+		}
+
+		metadata := shared.Jmap{"return": cmdResult}
+		err = op.UpdateMetadata(metadata)
+		if err != nil {
+			return err
+		}
+
+		return cmdErr
 	}
 
-	wgEOF.Wait()
-
-	for _, pty := range ptys {
-		pty.Close()
-	}
-
-	metadata := shared.Jmap{"return": cmdResult}
-	err = op.UpdateMetadata(metadata)
+	pid, attachedPid, err := s.container.Exec(s.command, s.env, stdin, stdout, stderr, false)
 	if err != nil {
 		return err
 	}
 
-	return cmdErr
+	if s.interactive {
+		attachedChildIsBorn <- attachedPid
+	}
+
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return finisher(-1, fmt.Errorf("Failed finding process: %q", err))
+	}
+
+	procState, err := proc.Wait()
+	if err != nil {
+		return finisher(-1, fmt.Errorf("Failed waiting on process %d: %q", pid, err))
+	}
+
+	if procState.Success() {
+		return finisher(0, nil)
+	}
+
+	status, ok := procState.Sys().(syscall.WaitStatus)
+	if ok {
+		if status.Exited() {
+			return finisher(status.ExitStatus(), nil)
+		}
+
+		if status.Signaled() {
+			// COMMENT(brauner): 128 + n == Fatal error signal "n"
+			return finisher(128+int(status.Signal()), nil)
+		}
+	}
+
+	return finisher(-1, nil)
 }
 
 func containerExecPost(d *Daemon, r *http.Request) Response {
@@ -262,7 +299,7 @@ func containerExecPost(d *Daemon, r *http.Request) Response {
 		return BadRequest(fmt.Errorf("Container is frozen."))
 	}
 
-	post := commandPostContent{}
+	post := api.ContainerExecPost{}
 	buf, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		return BadRequest(err)
@@ -337,7 +374,7 @@ func containerExecPost(d *Daemon, r *http.Request) Response {
 	}
 
 	run := func(op *operation) error {
-		cmdResult, cmdErr := c.Exec(post.Command, env, nil, nil, nil)
+		cmdResult, _, cmdErr := c.Exec(post.Command, env, nil, nil, nil, true)
 		metadata := shared.Jmap{"return": cmdResult}
 		err = op.UpdateMetadata(metadata)
 		if err != nil {
