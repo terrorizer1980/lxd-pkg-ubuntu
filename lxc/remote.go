@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/sha256"
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
@@ -38,13 +37,13 @@ func (c *remoteCmd) usage() string {
 	return i18n.G(
 		`Manage remote LXD servers.
 
-lxc remote add <name> <url> [--accept-certificate] [--password=PASSWORD]
-                            [--public] [--protocol=PROTOCOL]                Add the remote <name> at <url>.
-lxc remote remove <name>                                                    Remove the remote <name>.
+lxc remote add <remote> <IP|FQDN|URL> [--accept-certificate] [--password=PASSWORD]
+                                      [--public] [--protocol=PROTOCOL]      Add the remote <remote> at <url>.
+lxc remote remove <remote>                                                  Remove the remote <remote>.
 lxc remote list                                                             List all remotes.
-lxc remote rename <old> <new>                                               Rename remote <old> to <new>.
-lxc remote set-url <name> <url>                                             Update <name>'s url to <url>.
-lxc remote set-default <name>                                               Set the default remote.
+lxc remote rename <old name> <new name>                                     Rename remote <old name> to <new name>.
+lxc remote set-url <remote> <url>                                           Update <remote>'s url to <url>.
+lxc remote set-default <remote>                                             Set the default remote.
 lxc remote get-default                                                      Print the default remote.`)
 }
 
@@ -190,7 +189,7 @@ func (c *remoteCmd) addServer(config *lxd.Config, server string, addr string, ac
 
 	if certificate != nil {
 		if !acceptCert {
-			digest := sha256.Sum256(certificate.Raw)
+			digest := shared.CertFingerprint(certificate)
 
 			fmt.Printf(i18n.G("Certificate fingerprint: %x")+"\n", digest)
 			fmt.Printf(i18n.G("ok (y/n)?") + " ")

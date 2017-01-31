@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/lxc/lxd"
+	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/gnuflag"
 	"github.com/lxc/lxd/shared/i18n"
 
@@ -25,7 +26,7 @@ func (c *publishCmd) usage() string {
 	return i18n.G(
 		`Publish containers as images.
 
-lxc publish [remote:]container [remote:] [--alias=ALIAS]... [prop-key=prop-value]...`)
+lxc publish [<remote>:]<container>[/<snapshot>] [<remote>:] [--alias=ALIAS...] [prop-key=prop-value...]`)
 }
 
 func (c *publishCmd) flags() {
@@ -81,7 +82,7 @@ func (c *publishCmd) run(config *lxd.Config, args []string) error {
 			return err
 		}
 
-		wasRunning := ct.StatusCode != 0 && ct.StatusCode != shared.Stopped
+		wasRunning := ct.StatusCode != 0 && ct.StatusCode != api.Stopped
 		wasEphemeral := ct.Ephemeral
 
 		if wasRunning {
@@ -91,7 +92,7 @@ func (c *publishCmd) run(config *lxd.Config, args []string) error {
 
 			if ct.Ephemeral {
 				ct.Ephemeral = false
-				err := s.UpdateContainerConfig(cName, ct.Brief())
+				err := s.UpdateContainerConfig(cName, ct.Writable())
 				if err != nil {
 					return err
 				}
@@ -107,14 +108,14 @@ func (c *publishCmd) run(config *lxd.Config, args []string) error {
 				return err
 			}
 
-			if op.StatusCode == shared.Failure {
+			if op.StatusCode == api.Failure {
 				return fmt.Errorf(i18n.G("Stopping container failed!"))
 			}
 			defer s.Action(cName, shared.Start, -1, true, false)
 
 			if wasEphemeral {
 				ct.Ephemeral = true
-				err := s.UpdateContainerConfig(cName, ct.Brief())
+				err := s.UpdateContainerConfig(cName, ct.Writable())
 				if err != nil {
 					return err
 				}

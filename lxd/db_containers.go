@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/lxc/lxd/lxd/types"
 	"github.com/lxc/lxd/shared"
 
 	log "gopkg.in/inconshreveable/log15.v2"
@@ -100,7 +101,7 @@ func dbContainerGet(db *sql.DB, name string) (containerArgs, error) {
 	args.Profiles = profiles
 
 	/* get container_devices */
-	args.Devices = shared.Devices{}
+	args.Devices = types.Devices{}
 	newdevs, err := dbDevices(db, name, false)
 	if err != nil {
 		return args, err
@@ -213,6 +214,15 @@ func dbContainerConfigInsert(tx *sql.Tx, id int, config map[string]string) error
 	}
 
 	return nil
+}
+
+func dbContainerConfigGet(db *sql.DB, id int, key string) (string, error) {
+	q := "SELECT value FROM containers_config WHERE container_id=? AND key=?"
+	value := ""
+	arg1 := []interface{}{id, key}
+	arg2 := []interface{}{&value}
+	err := dbQueryRowScan(db, q, arg1, arg2)
+	return value, err
 }
 
 func dbContainerConfigRemove(db *sql.DB, id int, name string) error {

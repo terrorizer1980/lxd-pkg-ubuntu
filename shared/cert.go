@@ -8,6 +8,7 @@ package shared
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -21,14 +22,6 @@ import (
 	"path"
 	"time"
 )
-
-// CertInfo is the representation of a Certificate in the API.
-type CertInfo struct {
-	Certificate string `json:"certificate"`
-	Fingerprint string `json:"fingerprint"`
-	Name        string `json:"name"`
-	Type        string `json:"type"`
-}
 
 /*
  * Generate a list of names for which the certificate will be valid.
@@ -210,4 +203,22 @@ func ReadCert(fpath string) (*x509.Certificate, error) {
 	}
 
 	return x509.ParseCertificate(certBlock.Bytes)
+}
+
+func CertFingerprint(cert *x509.Certificate) string {
+	return fmt.Sprintf("%x", sha256.Sum256(cert.Raw))
+}
+
+func CertFingerprintStr(c string) (string, error) {
+	pemCertificate, _ := pem.Decode([]byte(c))
+	if pemCertificate == nil {
+		return "", fmt.Errorf("invalid certificate")
+	}
+
+	cert, err := x509.ParseCertificate(pemCertificate.Bytes)
+	if err != nil {
+		return "", err
+	}
+
+	return CertFingerprint(cert), nil
 }

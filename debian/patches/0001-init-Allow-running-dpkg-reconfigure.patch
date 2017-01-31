@@ -1,4 +1,4 @@
-From 646e7b985689394ec38d57b136fcab65e711f9c8 Mon Sep 17 00:00:00 2001
+From ac1cb9d2383340e3739eb187755a3a268bdb6875 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
 Date: Mon, 4 Apr 2016 21:18:28 -0400
 Subject: init: Allow running dpkg-reconfigure
@@ -8,14 +8,14 @@ Content-Transfer-Encoding: 8bit
 
 Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
 ---
- lxd/main.go | 21 +++++++++++++++++++++
+ lxd/main_init.go | 21 +++++++++++++++++++++
  1 file changed, 21 insertions(+)
 
-diff --git a/lxd/main.go b/lxd/main.go
-index 0fa3b94..5236991 100644
---- a/lxd/main.go
-+++ b/lxd/main.go
-@@ -603,6 +603,7 @@ func cmdInit() error {
+diff --git a/lxd/main_init.go b/lxd/main_init.go
+index 76ddb1f..c85f952 100644
+--- a/lxd/main_init.go
++++ b/lxd/main_init.go
+@@ -26,6 +26,7 @@ func cmdInit() error {
  	var networkAddress string // Address
  	var networkPort int64     // Port
  	var trustPassword string  // Trust password
@@ -23,19 +23,19 @@ index 0fa3b94..5236991 100644
  
  	// Detect userns
  	defaultPrivileged = -1
-@@ -744,6 +745,11 @@ func cmdInit() error {
+@@ -167,6 +168,11 @@ func cmdInit() error {
  	}
  
  	if len(containers) > 0 || len(images) > 0 {
 +		fmt.Printf(`LXD init cannot be used at this time.
-+However if all you want to do is reconfigure the network,
-+you can still do so by running "sudo dpkg-reconfigure -p medium lxd"
+++However if all you want to do is reconfigure the network,
+++you can still do so by running "sudo dpkg-reconfigure -p medium lxd"
 +
 +`)
  		return fmt.Errorf("You have existing containers or images. lxd init requires an empty LXD.")
  	}
  
-@@ -898,6 +904,10 @@ they otherwise would.
+@@ -321,6 +327,10 @@ they otherwise would.
  			networkPort = askInt("Port to bind LXD to [default=8443]: ", 1, 65535, "8443")
  			trustPassword = askPassword("Trust password for new clients: ")
  		}
@@ -46,7 +46,7 @@ index 0fa3b94..5236991 100644
  	}
  
  	if !shared.StringInSlice(storageBackend, []string{"dir", "zfs"}) {
-@@ -983,6 +993,17 @@ they otherwise would.
+@@ -406,6 +416,17 @@ they otherwise would.
  		}
  	}
  

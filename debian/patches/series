@@ -1,4 +1,1 @@
 0001-init-Allow-running-dpkg-reconfigure.patch
-0002-Fix-container-state-recording.patch
-0003-tests-Test-lxd-shutdown.patch
-0004-Only-mark-ready-once-containers-are-up.patch

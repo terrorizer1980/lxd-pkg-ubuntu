@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -974,12 +975,13 @@ func TestRunCommandNoWait(t *testing.T) {
 		t.FailNow()
 	}
 
-	argsThree = []string{"/bin/sh", "-c", "exit 0"}
+	argsThree = []string{"/bin/sh", "-c", "exit 1"}
 	pid, err = c.RunCommandNoWait(argsThree, DefaultAttachOptions)
 	if err != nil {
 		t.Errorf(err.Error())
 		t.FailNow()
 	}
+
 	proc, err = os.FindProcess(pid)
 	if err != nil {
 		t.Errorf(err.Error())
@@ -991,6 +993,7 @@ func TestRunCommandNoWait(t *testing.T) {
 		t.Errorf(err.Error())
 		t.FailNow()
 	}
+
 	if procState.Success() {
 		t.Errorf("Expected failure")
 		t.FailNow()
@@ -1102,6 +1105,23 @@ func TestCommandWithUIDGID(t *testing.T) {
 }
 
 func TestCommandWithArch(t *testing.T) {
+	uname := syscall.Utsname{}
+	if err := syscall.Uname(&uname); err != nil {
+		t.Errorf(err.Error())
+	}
+
+	arch := ""
+	for _, c := range uname.Machine {
+		if c == 0 {
+			break
+		}
+		arch += string(byte(c))
+	}
+
+	if arch != "x86_64" && arch != "i686" {
+		t.Skip("skipping architecture test, not on x86")
+	}
+
 	c, err := NewContainer(ContainerName)
 	if err != nil {
 		t.Errorf(err.Error())
@@ -1222,7 +1242,9 @@ func TestIPv4Addresses(t *testing.T) {
 }
 
 func TestIPv6Addresses(t *testing.T) {
-	t.Skip("skipping test")
+	if !unprivileged() {
+		t.Skip("skipping test in privileged mode.")
+	}
 
 	c, err := NewContainer(ContainerName)
 	if err != nil {

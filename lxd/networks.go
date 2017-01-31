@@ -10,6 +10,8 @@ import (
 	"github.com/gorilla/mux"
 
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/api"
+	"github.com/lxc/lxd/shared/version"
 )
 
 // Helper functions
@@ -49,10 +51,10 @@ func networksGet(d *Daemon, r *http.Request) Response {
 	}
 
 	resultString := []string{}
-	resultMap := []network{}
+	resultMap := []api.Network{}
 	for _, iface := range ifs {
 		if recursion == 0 {
-			resultString = append(resultString, fmt.Sprintf("/%s/networks/%s", shared.APIVersion, iface.Name))
+			resultString = append(resultString, fmt.Sprintf("/%s/networks/%s", version.APIVersion, iface.Name))
 		} else {
 			net, err := doNetworkGet(d, iface.Name)
 			if err != nil {
@@ -72,12 +74,6 @@ func networksGet(d *Daemon, r *http.Request) Response {
 
 var networksCmd = Command{name: "networks", get: networksGet}
 
-type network struct {
-	Name   string   `json:"name"`
-	Type   string   `json:"type"`
-	UsedBy []string `json:"used_by"`
-}
-
 func networkGet(d *Daemon, r *http.Request) Response {
 	name := mux.Vars(r)["name"]
 
@@ -89,31 +85,31 @@ func networkGet(d *Daemon, r *http.Request) Response {
 	return SyncResponse(true, &n)
 }
 
-func doNetworkGet(d *Daemon, name string) (network, error) {
+func doNetworkGet(d *Daemon, name string) (api.Network, error) {
 	iface, err := net.InterfaceByName(name)
 	if err != nil {
-		return network{}, err
+		return api.Network{}, err
 	}
 
 	// Prepare the response
-	n := network{}
+	n := api.Network{}
 	n.Name = iface.Name
 	n.UsedBy = []string{}
 
 	// Look for containers using the interface
 	cts, err := dbContainersList(d.db, cTypeRegular)
 	if err != nil {
-		return network{}, err
+		return api.Network{}, err
 	}
 
 	for _, ct := range cts {
 		c, err := containerLoadByName(d, ct)
 		if err != nil {
-			return network{}, err
+			return api.Network{}, err
 		}
 
 		if networkIsInUse(c, n.Name) {
-			n.UsedBy = append(n.UsedBy, fmt.Sprintf("/%s/containers/%s", shared.APIVersion, ct))
+			n.UsedBy = append(n.UsedBy, fmt.Sprintf("/%s/containers/%s", version.APIVersion, ct))
 		}
 	}
 
@@ -122,6 +118,8 @@ func doNetworkGet(d *Daemon, name string) (network, error) {
 		n.Type = "loopback"
 	} else if shared.PathExists(fmt.Sprintf("/sys/class/net/%s/bridge", n.Name)) {
 		n.Type = "bridge"
+	} else if shared.PathExists(fmt.Sprintf("/proc/net/vlan/%s", n.Name)) {
+		n.Type = "vlan"
 	} else if shared.PathExists(fmt.Sprintf("/sys/class/net/%s/device", n.Name)) {
 		n.Type = "physical"
 	} else if shared.PathExists(fmt.Sprintf("/sys/class/net/%s/bonding", n.Name)) {

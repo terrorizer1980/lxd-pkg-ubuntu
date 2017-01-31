@@ -14,6 +14,7 @@ import (
 
 	"github.com/lxc/lxd"
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/gnuflag"
 	"github.com/lxc/lxd/shared/i18n"
 	"github.com/lxc/lxd/shared/termios"
@@ -108,19 +109,19 @@ Images can be referenced by their full hash, shortest unique partial
 hash or alias name (if one is set).
 
 
-lxc image import <tarball> [rootfs tarball|URL] [remote:] [--public] [--created-at=ISO-8601] [--expires-at=ISO-8601] [--fingerprint=FINGERPRINT] [--alias=ALIAS].. [prop=value]
+lxc image import <tarball> [<rootfs tarball>|<URL>] [<remote>:] [--public] [--created-at=ISO-8601] [--expires-at=ISO-8601] [--fingerprint=FINGERPRINT] [--alias=ALIAS...] [prop=value]
     Import an image tarball (or tarballs) into the LXD image store.
 
-lxc image copy [remote:]<image> <remote>: [--alias=ALIAS].. [--copy-aliases] [--public] [--auto-update]
+lxc image copy [<remote>:]<image> <remote>: [--alias=ALIAS...] [--copy-aliases] [--public] [--auto-update]
     Copy an image from one LXD daemon to another over the network.
 
     The auto-update flag instructs the server to keep this image up to
     date. It requires the source to be an alias and for it to be public.
 
-lxc image delete [remote:]<image>
-    Delete an image from the LXD image store.
+lxc image delete [<remote>:]<image> [[<remote>:]<image>...]
+    Delete one or more images from the LXD image store.
 
-lxc image export [remote:]<image> [target]
+lxc image export [<remote>:]<image> [target]
     Export an image from the LXD image store into a distributable tarball.
 
     The output target is optional and defaults to the working directory.
@@ -132,31 +133,30 @@ lxc image export [remote:]<image> [target]
     the appropriate extension will be appended to the provided file name
     based on the algorithm used to compress the image. 
 
-lxc image info [remote:]<image>
+lxc image info [<remote>:]<image>
     Print everything LXD knows about a given image.
 
-lxc image list [remote:] [filter]
+lxc image list [<remote>:] [filter]
     List images in the LXD image store. Filters may be of the
     <key>=<value> form for property based filtering, or part of the image
     hash or part of the image alias name.
 
-lxc image show [remote:]<image>
+lxc image show [<remote>:]<image>
     Yaml output of the user modifiable properties of an image.
 
-lxc image edit [remote:]<image>
+lxc image edit [<remote>:]<image>
     Edit image, either by launching external editor or reading STDIN.
     Example: lxc image edit <image> # launch editor
              cat image.yaml | lxc image edit <image> # read from image.yaml
 
-lxc image alias create [remote:]<alias> <fingerprint>
+lxc image alias create [<remote>:]<alias> <fingerprint>
     Create a new alias for an existing image.
 
-lxc image alias delete [remote:]<alias>
+lxc image alias delete [<remote>:]<alias>
     Delete an alias.
 
-lxc image alias list [remote:] [filter]
-    List the aliases. Filters may be part of the image hash or part of the image alias name.
-`)
+lxc image alias list [<remote>:] [filter]
+    List the aliases. Filters may be part of the image hash or part of the image alias name.`)
 }
 
 func (c *imageCmd) flags() {
@@ -282,7 +282,7 @@ func (c *imageCmd) run(config *lxd.Config, args []string) error {
 		return err
 
 	case "delete":
-		/* delete [<remote>:]<image> */
+		/* delete [<remote>:]<image> [<image>...] */
 		if len(args) < 2 {
 			return errArgs
 		}
@@ -292,14 +292,28 @@ func (c *imageCmd) run(config *lxd.Config, args []string) error {
 			inName = "default"
 		}
 
+		imageNames := []string{inName}
+
+		if len(args) > 2 {
+			for _, extraImage := range args[2:] {
+				imageNames = append(imageNames, extraImage)
+			}
+		}
+
 		d, err := lxd.NewClient(config, remote)
 		if err != nil {
 			return err
 		}
 
-		image := c.dereferenceAlias(d, inName)
-		err = d.DeleteImage(image)
-		return err
+		for _, imageName := range imageNames {
+			image := c.dereferenceAlias(d, imageName)
+			err = d.DeleteImage(image)
+			if err != nil {
+				return err
+			}
+		}
+
+		return nil
 
 	case "info":
 		if len(args) < 2 {
@@ -338,14 +352,19 @@ func (c *imageCmd) run(config *lxd.Config, args []string) error {
 		fmt.Printf(i18n.G("Public: %s")+"\n", public)
 		fmt.Printf(i18n.G("Timestamps:") + "\n")
 		const layout = "2006/01/02 15:04 UTC"
-		if info.CreationDate.UTC().Unix() != 0 {
-			fmt.Printf("    "+i18n.G("Created: %s")+"\n", info.CreationDate.UTC().Format(layout))
+		if shared.TimeIsSet(info.CreatedAt) {
+			fmt.Printf("    "+i18n.G("Created: %s")+"\n", info.CreatedAt.UTC().Format(layout))
 		}
-		fmt.Printf("    "+i18n.G("Uploaded: %s")+"\n", info.UploadDate.UTC().Format(layout))
-		if info.ExpiryDate.UTC().Unix() != 0 {
-			fmt.Printf("    "+i18n.G("Expires: %s")+"\n", info.ExpiryDate.UTC().Format(layout))
+		fmt.Printf("    "+i18n.G("Uploaded: %s")+"\n", info.UploadedAt.UTC().Format(layout))
+		if shared.TimeIsSet(info.ExpiresAt) {
+			fmt.Printf("    "+i18n.G("Expires: %s")+"\n", info.ExpiresAt.UTC().Format(layout))
 		} else {
 			fmt.Printf("    " + i18n.G("Expires: never") + "\n")
+		}
+		if shared.TimeIsSet(info.LastUsedAt) {
+			fmt.Printf("    "+i18n.G("Last used: %s")+"\n", info.LastUsedAt.UTC().Format(layout))
+		} else {
+			fmt.Printf("    " + i18n.G("Last used: never") + "\n")
 		}
 		fmt.Println(i18n.G("Properties:"))
 		for key, value := range info.Properties {
@@ -356,11 +375,11 @@ func (c *imageCmd) run(config *lxd.Config, args []string) error {
 			fmt.Printf("    - %s\n", alias.Name)
 		}
 		fmt.Printf(i18n.G("Auto update: %s")+"\n", autoUpdate)
-		if info.Source != nil {
+		if info.UpdateSource != nil {
 			fmt.Println(i18n.G("Source:"))
-			fmt.Printf("    Server: %s\n", info.Source.Server)
-			fmt.Printf("    Protocol: %s\n", info.Source.Protocol)
-			fmt.Printf("    Alias: %s\n", info.Source.Alias)
+			fmt.Printf("    Server: %s\n", info.UpdateSource.Server)
+			fmt.Printf("    Protocol: %s\n", info.UpdateSource.Protocol)
+			fmt.Printf("    Alias: %s\n", info.UpdateSource.Alias)
 		}
 		return nil
 
@@ -416,8 +435,8 @@ func (c *imageCmd) run(config *lxd.Config, args []string) error {
 			return fmt.Errorf(i18n.G("Only https:// is supported for remote image import."))
 		} else {
 			progress := ProgressRenderer{Format: i18n.G("Transferring image: %s")}
-			handler := func(percent int) {
-				progress.Update(fmt.Sprintf("%d%%", percent))
+			handler := func(percent int64, speed int64) {
+				progress.Update(fmt.Sprintf("%d%% (%s/s)", percent, shared.GetByteSizeString(speed, 2)))
 			}
 
 			fingerprint, err = d.PostImage(imageFile, rootfsFile, properties, c.publicImage, c.addAliases, handler)
@@ -540,7 +559,7 @@ func (c *imageCmd) run(config *lxd.Config, args []string) error {
 			return err
 		}
 
-		properties := info.Brief()
+		properties := info.Writable()
 
 		data, err := yaml.Marshal(&properties)
 		fmt.Printf("%s", data)
@@ -559,7 +578,7 @@ func (c *imageCmd) dereferenceAlias(d *lxd.Client, inName string) string {
 	return result
 }
 
-func (c *imageCmd) shortestAlias(list []shared.ImageAlias) string {
+func (c *imageCmd) shortestAlias(list []api.ImageAlias) string {
 	shortest := ""
 	for _, l := range list {
 		if shortest == "" {
@@ -583,7 +602,7 @@ func (c *imageCmd) findDescription(props map[string]string) string {
 	return ""
 }
 
-func (c *imageCmd) showImages(images []shared.ImageInfo, filters []string) error {
+func (c *imageCmd) showImages(images []api.Image, filters []string) error {
 	data := [][]string{}
 	for _, image := range images {
 		if !c.imageShouldShow(filters, &image) {
@@ -603,7 +622,7 @@ func (c *imageCmd) showImages(images []shared.ImageInfo, filters []string) error
 		}
 
 		const layout = "Jan 2, 2006 at 3:04pm (MST)"
-		uploaded := image.UploadDate.UTC().Format(layout)
+		uploaded := image.UploadedAt.UTC().Format(layout)
 		size := fmt.Sprintf("%.2fMB", float64(image.Size)/1024.0/1024.0)
 		data = append(data, []string{shortest, fp, public, description, image.Architecture, size, uploaded})
 	}
@@ -627,7 +646,7 @@ func (c *imageCmd) showImages(images []shared.ImageInfo, filters []string) error
 	return nil
 }
 
-func (c *imageCmd) showAliases(aliases shared.ImageAliases, filters []string) error {
+func (c *imageCmd) showAliases(aliases []api.ImageAliasesEntry, filters []string) error {
 	data := [][]string{}
 	for _, alias := range aliases {
 		if !c.aliasShouldShow(filters, &alias) {
@@ -660,7 +679,7 @@ func (c *imageCmd) doImageEdit(client *lxd.Client, image string) error {
 			return err
 		}
 
-		newdata := shared.BriefImageInfo{}
+		newdata := api.ImagePut{}
 		err = yaml.Unmarshal(contents, &newdata)
 		if err != nil {
 			return err
@@ -674,7 +693,7 @@ func (c *imageCmd) doImageEdit(client *lxd.Client, image string) error {
 		return err
 	}
 
-	brief := config.Brief()
+	brief := config.Writable()
 	data, err := yaml.Marshal(&brief)
 	if err != nil {
 		return err
@@ -688,7 +707,7 @@ func (c *imageCmd) doImageEdit(client *lxd.Client, image string) error {
 
 	for {
 		// Parse the text received from the editor
-		newdata := shared.BriefImageInfo{}
+		newdata := api.ImagePut{}
 		err = yaml.Unmarshal(content, &newdata)
 		if err == nil {
 			err = client.PutImageInfo(image, newdata)
@@ -715,7 +734,7 @@ func (c *imageCmd) doImageEdit(client *lxd.Client, image string) error {
 	return nil
 }
 
-func (c *imageCmd) imageShouldShow(filters []string, state *shared.ImageInfo) bool {
+func (c *imageCmd) imageShouldShow(filters []string, state *api.Image) bool {
 	if len(filters) == 0 {
 		return true
 	}
@@ -774,7 +793,7 @@ func (c *imageCmd) imageShouldShow(filters []string, state *shared.ImageInfo) bo
 	return true
 }
 
-func (c *imageCmd) aliasShouldShow(filters []string, state *shared.ImageAliasesEntry) bool {
+func (c *imageCmd) aliasShouldShow(filters []string, state *api.ImageAliasesEntry) bool {
 	if len(filters) == 0 {
 		return true
 	}
