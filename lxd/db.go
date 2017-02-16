@@ -179,7 +179,46 @@ CREATE TABLE IF NOT EXISTS schema (
     version INTEGER NOT NULL,
     updated_at DATETIME NOT NULL,
     UNIQUE (version)
+);
+CREATE TABLE IF NOT EXISTS storage_pools (
+    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    driver VARCHAR(255) NOT NULL,
+    UNIQUE (name)
+);
+CREATE TABLE IF NOT EXISTS storage_pools_config (
+    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+    storage_pool_id INTEGER NOT NULL,
+    key VARCHAR(255) NOT NULL,
+    value TEXT,
+    UNIQUE (storage_pool_id, key),
+    FOREIGN KEY (storage_pool_id) REFERENCES storage_pools (id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS storage_volumes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    storage_pool_id INTEGER NOT NULL,
+    type INTEGER NOT NULL,
+    UNIQUE (storage_pool_id, name, type),
+    FOREIGN KEY (storage_pool_id) REFERENCES storage_pools (id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS storage_volumes_config (
+    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+    storage_volume_id INTEGER NOT NULL,
+    key VARCHAR(255) NOT NULL,
+    value TEXT,
+    UNIQUE (storage_volume_id, key),
+    FOREIGN KEY (storage_volume_id) REFERENCES storage_volumes (id) ON DELETE CASCADE
 );`
+
+func enableForeignKeys(conn *sqlite3.SQLiteConn) error {
+	_, err := conn.Exec("PRAGMA foreign_keys=ON;", nil)
+	return err
+}
+
+func init() {
+	sql.Register("sqlite3_with_fk", &sqlite3.SQLiteDriver{ConnectHook: enableForeignKeys})
+}
 
 // Create the initial (current) schema for a given SQLite DB connection.
 func createDb(db *sql.DB) (err error) {
@@ -240,7 +279,7 @@ func initializeDbObject(d *Daemon, path string) (err error) {
 	openPath = fmt.Sprintf("%s?_busy_timeout=%d&_txlock=exclusive", path, timeout*1000)
 
 	// Open the database. If the file doesn't exist it is created.
-	d.db, err = sql.Open("sqlite3", openPath)
+	d.db, err = sql.Open("sqlite3_with_fk", openPath)
 	if err != nil {
 		return err
 	}
@@ -250,9 +289,6 @@ func initializeDbObject(d *Daemon, path string) (err error) {
 	if err != nil {
 		return fmt.Errorf("Error creating database: %s", err)
 	}
-
-	// Run PRAGMA statements now since they are *per-connection*.
-	d.db.Exec("PRAGMA foreign_keys=ON;") // This allows us to use ON DELETE CASCADE
 
 	// Apply any update
 	err = dbUpdatesApplyAll(d)
@@ -287,7 +323,7 @@ func isNoMatchError(err error) bool {
 }
 
 func dbBegin(db *sql.DB) (*sql.Tx, error) {
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 1000; i++ {
 		tx, err := db.Begin()
 		if err == nil {
 			return tx, nil
@@ -296,7 +332,7 @@ func dbBegin(db *sql.DB) (*sql.Tx, error) {
 			shared.LogDebugf("DbBegin: error %q", err)
 			return nil, err
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(30 * time.Millisecond)
 	}
 
 	shared.LogDebugf("DbBegin: DB still locked")
@@ -305,7 +341,7 @@ func dbBegin(db *sql.DB) (*sql.Tx, error) {
 }
 
 func txCommit(tx *sql.Tx) error {
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 1000; i++ {
 		err := tx.Commit()
 		if err == nil {
 			return nil
@@ -314,7 +350,7 @@ func txCommit(tx *sql.Tx) error {
 			shared.LogDebugf("Txcommit: error %q", err)
 			return err
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(30 * time.Millisecond)
 	}
 
 	shared.LogDebugf("Txcommit: db still locked")
@@ -323,7 +359,7 @@ func txCommit(tx *sql.Tx) error {
 }
 
 func dbQueryRowScan(db *sql.DB, q string, args []interface{}, outargs []interface{}) error {
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 1000; i++ {
 		err := db.QueryRow(q, args...).Scan(outargs...)
 		if err == nil {
 			return nil
@@ -334,7 +370,7 @@ func dbQueryRowScan(db *sql.DB, q string, args []interface{}, outargs []interfac
 		if !isDbLockedError(err) {
 			return err
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(30 * time.Millisecond)
 	}
 
 	shared.LogDebugf("DbQueryRowScan: query %q args %q, DB still locked", q, args)
@@ -343,7 +379,7 @@ func dbQueryRowScan(db *sql.DB, q string, args []interface{}, outargs []interfac
 }
 
 func dbQuery(db *sql.DB, q string, args ...interface{}) (*sql.Rows, error) {
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 1000; i++ {
 		result, err := db.Query(q, args...)
 		if err == nil {
 			return result, nil
@@ -352,7 +388,7 @@ func dbQuery(db *sql.DB, q string, args ...interface{}) (*sql.Rows, error) {
 			shared.LogDebugf("DbQuery: query %q error %q", q, err)
 			return nil, err
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(30 * time.Millisecond)
 	}
 
 	shared.LogDebugf("DbQuery: query %q args %q, DB still locked", q, args)
@@ -423,7 +459,7 @@ func doDbQueryScan(db *sql.DB, q string, args []interface{}, outargs []interface
  * of interfaces, containing pointers to the actual output arguments.
  */
 func dbQueryScan(db *sql.DB, q string, inargs []interface{}, outfmt []interface{}) ([][]interface{}, error) {
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 1000; i++ {
 		result, err := doDbQueryScan(db, q, inargs, outfmt)
 		if err == nil {
 			return result, nil
@@ -432,7 +468,7 @@ func dbQueryScan(db *sql.DB, q string, inargs []interface{}, outfmt []interface{
 			shared.LogDebugf("DbQuery: query %q error %q", q, err)
 			return nil, err
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(30 * time.Millisecond)
 	}
 
 	shared.LogDebugf("DbQueryscan: query %q inargs %q, DB still locked", q, inargs)
@@ -441,7 +477,7 @@ func dbQueryScan(db *sql.DB, q string, inargs []interface{}, outfmt []interface{
 }
 
 func dbExec(db *sql.DB, q string, args ...interface{}) (sql.Result, error) {
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 1000; i++ {
 		result, err := db.Exec(q, args...)
 		if err == nil {
 			return result, nil
@@ -450,7 +486,7 @@ func dbExec(db *sql.DB, q string, args ...interface{}) (sql.Result, error) {
 			shared.LogDebugf("DbExec: query %q error %q", q, err)
 			return nil, err
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(30 * time.Millisecond)
 	}
 
 	shared.LogDebugf("DbExec: query %q args %q, DB still locked", q, args)

@@ -152,9 +152,24 @@ func dbImageGet(db *sql.DB, fingerprint string, public bool, strictMatching bool
 	}
 
 	err = dbQueryRowScan(db, query, inargs, outfmt)
-
 	if err != nil {
 		return -1, nil, err // Likely: there are no rows for this fingerprint
+	}
+
+	// Validate we only have a single match
+	if !strictMatching {
+		query = "SELECT COUNT(id) FROM images WHERE fingerprint LIKE ?"
+		count := 0
+		outfmt := []interface{}{&count}
+
+		err = dbQueryRowScan(db, query, inargs, outfmt)
+		if err != nil {
+			return -1, nil, err
+		}
+
+		if count > 1 {
+			return -1, nil, fmt.Errorf("Partial fingerprint matches more than one image")
+		}
 	}
 
 	// Some of the dates can be nil in the DB, let's process them.
@@ -228,17 +243,8 @@ func dbImageGet(db *sql.DB, fingerprint string, public bool, strictMatching bool
 }
 
 func dbImageDelete(db *sql.DB, id int) error {
-	tx, err := dbBegin(db)
+	_, err := dbExec(db, "DELETE FROM images WHERE id=?", id)
 	if err != nil {
-		return err
-	}
-
-	_, _ = tx.Exec("DELETE FROM images_aliases WHERE image_id=?", id)
-	_, _ = tx.Exec("DELETE FROM images_properties WHERE image_id=?", id)
-	_, _ = tx.Exec("DELETE FROM images_source WHERE image_id=?", id)
-	_, _ = tx.Exec("DELETE FROM images WHERE id=?", id)
-
-	if err := txCommit(tx); err != nil {
 		return err
 	}
 
@@ -441,4 +447,47 @@ func dbImageInsert(db *sql.DB, fp string, fname string, sz int64, public bool, a
 	}
 
 	return nil
+}
+
+// Get the names of all storage pools on which a given image exists.
+func dbImageGetPools(db *sql.DB, imageFingerprint string) ([]int64, error) {
+	poolID := int64(-1)
+	query := "SELECT storage_pool_id FROM storage_volumes WHERE name=? AND type=?"
+	inargs := []interface{}{imageFingerprint, storagePoolVolumeTypeImage}
+	outargs := []interface{}{poolID}
+
+	result, err := dbQueryScan(db, query, inargs, outargs)
+	if err != nil {
+		return []int64{}, err
+	}
+
+	poolIDs := []int64{}
+	for _, r := range result {
+		poolIDs = append(poolIDs, r[0].(int64))
+	}
+
+	return poolIDs, nil
+}
+
+// Get the names of all storage pools on which a given image exists.
+func dbImageGetPoolNamesFromIDs(db *sql.DB, poolIDs []int64) ([]string, error) {
+	var poolName string
+	query := "SELECT name FROM storage_pools WHERE id=?"
+
+	poolNames := []string{}
+	for _, poolID := range poolIDs {
+		inargs := []interface{}{poolID}
+		outargs := []interface{}{poolName}
+
+		result, err := dbQueryScan(db, query, inargs, outargs)
+		if err != nil {
+			return []string{}, err
+		}
+
+		for _, r := range result {
+			poolNames = append(poolNames, r[0].(string))
+		}
+	}
+
+	return poolNames, nil
 }

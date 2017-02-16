@@ -149,7 +149,11 @@ func (s *execWs) Do(op *operation) error {
 			}
 
 			for {
-				mt, r, err := s.conns[-1].NextReader()
+				s.connsLock.Lock()
+				conn := s.conns[-1]
+				s.connsLock.Unlock()
+
+				mt, r, err := conn.NextReader()
 				if mt == websocket.CloseMessage {
 					break
 				}
@@ -201,10 +205,16 @@ func (s *execWs) Do(op *operation) error {
 		}()
 
 		go func() {
-			readDone, writeDone := shared.WebsocketExecMirror(s.conns[0], ptys[0], ptys[0], attachedChildIsDead, int(ptys[0].Fd()))
+			s.connsLock.Lock()
+			conn := s.conns[0]
+			s.connsLock.Unlock()
+
+			readDone, writeDone := shared.WebsocketExecMirror(conn, ptys[0], ptys[0], attachedChildIsDead, int(ptys[0].Fd()))
+
 			<-readDone
 			<-writeDone
-			s.conns[0].Close()
+
+			conn.Close()
 			wgEOF.Done()
 		}()
 
@@ -213,10 +223,18 @@ func (s *execWs) Do(op *operation) error {
 		for i := 0; i < len(ttys); i++ {
 			go func(i int) {
 				if i == 0 {
-					<-shared.WebsocketRecvStream(ttys[i], s.conns[i])
+					s.connsLock.Lock()
+					conn := s.conns[i]
+					s.connsLock.Unlock()
+
+					<-shared.WebsocketRecvStream(ttys[i], conn)
 					ttys[i].Close()
 				} else {
-					<-shared.WebsocketSendStream(s.conns[i], ptys[i], -1)
+					s.connsLock.Lock()
+					conn := s.conns[i]
+					s.connsLock.Unlock()
+
+					<-shared.WebsocketSendStream(conn, ptys[i], -1)
 					ptys[i].Close()
 					wgEOF.Done()
 				}
@@ -229,12 +247,16 @@ func (s *execWs) Do(op *operation) error {
 			tty.Close()
 		}
 
-		if s.conns[-1] == nil {
+		s.connsLock.Lock()
+		conn := s.conns[-1]
+		s.connsLock.Unlock()
+
+		if conn == nil {
 			if s.interactive {
 				controlExit <- true
 			}
 		} else {
-			s.conns[-1].Close()
+			conn.Close()
 		}
 
 		attachedChildIsDead <- true
@@ -284,7 +306,7 @@ func (s *execWs) Do(op *operation) error {
 		}
 
 		if status.Signaled() {
-			// COMMENT(brauner): 128 + n == Fatal error signal "n"
+			// 128 + n == Fatal error signal "n"
 			return finisher(128+int(status.Signal()), nil)
 		}
 	}
@@ -331,12 +353,31 @@ func containerExecPost(d *Daemon, r *http.Request) Response {
 		}
 	}
 
+	// Set default value for PATH
 	_, ok := env["PATH"]
 	if !ok {
 		env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 		if c.FileExists("/snap") == nil {
 			env["PATH"] = fmt.Sprintf("%s:/snap/bin", env["PATH"])
 		}
+	}
+
+	// Set default value for HOME
+	_, ok = env["HOME"]
+	if !ok {
+		env["HOME"] = "/root"
+	}
+
+	// Set default value for USER
+	_, ok = env["USER"]
+	if !ok {
+		env["USER"] = "root"
+	}
+
+	// Set default value for USER
+	_, ok = env["LANG"]
+	if !ok {
+		env["LANG"] = "C.UTF-8"
 	}
 
 	if post.WaitForWS {
