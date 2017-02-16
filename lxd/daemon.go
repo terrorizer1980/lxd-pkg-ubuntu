@@ -80,8 +80,6 @@ type Daemon struct {
 	shutdownChan        chan bool
 	resetAutoUpdateChan chan bool
 
-	Storage storage
-
 	TCPSocket  *Socket
 	UnixSocket *Socket
 
@@ -89,9 +87,6 @@ type Daemon struct {
 
 	MockMode  bool
 	SetupMode bool
-
-	imagesDownloading     map[string]chan bool
-	imagesDownloadingLock sync.Mutex
 
 	tlsConfig *tls.Config
 
@@ -140,6 +135,14 @@ func (d *Daemon) httpClient(certificate string) (*http.Client, error) {
 
 	myhttp := http.Client{
 		Transport: tr,
+	}
+
+	// Setup redirect policy
+	myhttp.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		// Replicate the headers
+		req.Header = via[len(via)-1].Header
+
+		return nil
 	}
 
 	return &myhttp, nil
@@ -353,37 +356,53 @@ func (d *Daemon) createCmd(version string, c Command) {
 }
 
 func (d *Daemon) SetupStorageDriver() error {
-	var err error
-
-	lvmVgName := daemonConfig["storage.lvm_vg_name"].Get()
-	zfsPoolName := daemonConfig["storage.zfs_pool_name"].Get()
-
-	if lvmVgName != "" {
-		d.Storage, err = newStorage(d, storageTypeLvm)
-		if err != nil {
-			shared.LogErrorf("Could not initialize storage type LVM: %s - falling back to dir", err)
-		} else {
+	pools, err := dbStoragePools(d.db)
+	if err != nil {
+		if err == NoSuchObjectError {
+			shared.LogDebugf("No existing storage pools detected.")
 			return nil
 		}
-	} else if zfsPoolName != "" {
-		d.Storage, err = newStorage(d, storageTypeZfs)
+		shared.LogDebugf("Failed to retrieve existing storage pools.")
+		return err
+	}
+
+	for _, pool := range pools {
+		shared.LogDebugf("Initializing and checking storage pool \"%s\".", pool)
+		ps, err := storagePoolInit(d, pool)
 		if err != nil {
-			shared.LogErrorf("Could not initialize storage type ZFS: %s - falling back to dir", err)
-		} else {
-			return nil
+			shared.LogErrorf("Error initializing storage pool \"%s\": %s. Correct functionality of the storage pool cannot be guaranteed.", pool, err)
+			continue
 		}
-	} else if d.BackingFs == "btrfs" {
-		d.Storage, err = newStorage(d, storageTypeBtrfs)
+
+		err = ps.StoragePoolCheck()
 		if err != nil {
-			shared.LogErrorf("Could not initialize storage type btrfs: %s - falling back to dir", err)
-		} else {
-			return nil
+			shared.LogErrorf("Error checking storage pool \"%s\": %s. Correct functionality of the storage pool cannot be guaranteed.", pool, err)
 		}
 	}
 
-	d.Storage, err = newStorage(d, storageTypeDir)
+	// Get a list of all storage drivers currently in use
+	// on this LXD instance. Only do this when we do not already have done
+	// this once to avoid unnecessarily querying the db. All subsequent
+	// updates of the cache will be done when we create or delete storage
+	// pools in the db. Since this is a rare event, this cache
+	// implementation is a classic frequent-read, rare-update case so
+	// copy-on-write semantics without locking in the read case seems
+	// appropriate. (Should be cheaper then querying the db all the time,
+	// especially if we keep adding more storage drivers.)
+	if !storagePoolDriversCacheInitialized {
+		tmp, err := dbStoragePoolsGetDrivers(d.db)
+		if err != nil && err != NoSuchObjectError {
+			return nil
+		}
 
-	return err
+		storagePoolDriversCacheLock.Lock()
+		storagePoolDriversCacheVal.Store(tmp)
+		storagePoolDriversCacheLock.Unlock()
+
+		storagePoolDriversCacheInitialized = true
+	}
+
+	return nil
 }
 
 // have we setup shared mounts?
@@ -391,35 +410,28 @@ var sharedMounted bool
 var sharedMountsLock sync.Mutex
 
 func setupSharedMounts() error {
+	// Check if we already went through this
 	if sharedMounted {
 		return nil
 	}
 
+	// Get a lock to prevent races
 	sharedMountsLock.Lock()
 	defer sharedMountsLock.Unlock()
 
-	if sharedMounted {
-		return nil
-	}
-
+	// Check if already setup
 	path := shared.VarPath("shmounts")
-
-	isShared, err := shared.IsOnSharedMount(path)
-	if err != nil {
-		return err
-	}
-
-	if isShared {
-		// / may already be ms-shared, or shmounts may have
-		// been mounted by a previous lxd run
+	if shared.IsMountPoint(path) {
 		sharedMounted = true
 		return nil
 	}
 
-	if err := syscall.Mount(path, path, "none", syscall.MS_BIND, ""); err != nil {
+	// Mount a new tmpfs
+	if err := syscall.Mount("tmpfs", path, "tmpfs", 0, "size=100k,mode=0711"); err != nil {
 		return err
 	}
 
+	// Mark as MS_SHARED and MS_REC
 	var flags uintptr = syscall.MS_SHARED | syscall.MS_REC
 	if err := syscall.Mount(path, path, "none", flags, ""); err != nil {
 		return err
@@ -545,8 +557,6 @@ func haveMacAdmin() bool {
 
 func (d *Daemon) Init() error {
 	/* Initialize some variables */
-	d.imagesDownloading = map[string]chan bool{}
-
 	d.readyChan = make(chan bool)
 	d.shutdownChan = make(chan bool)
 
@@ -772,6 +782,12 @@ func (d *Daemon) Init() error {
 	if err := os.MkdirAll(shared.VarPath("networks"), 0711); err != nil {
 		return err
 	}
+	if err := os.MkdirAll(shared.VarPath("disks"), 0700); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(shared.VarPath("storage-pools"), 0711); err != nil {
+		return err
+	}
 
 	/* Detect the filesystem */
 	d.BackingFs, err = filesystemDetect(d.lxcpath)
@@ -804,10 +820,10 @@ func (d *Daemon) Init() error {
 	}
 
 	if !d.MockMode {
-		/* Setup the storage driver */
+		/* Read the storage pools */
 		err = d.SetupStorageDriver()
 		if err != nil {
-			return fmt.Errorf("Failed to setup storage: %s", err)
+			return err
 		}
 
 		/* Apply all patches */
@@ -851,6 +867,17 @@ func (d *Daemon) Init() error {
 		daemonConfig["core.proxy_http"].Get(),
 		daemonConfig["core.proxy_ignore_hosts"].Get(),
 	)
+
+	/* Setup some mounts (nice to have) */
+	if !d.MockMode {
+		// Attempt to mount the shmounts tmpfs
+		setupSharedMounts()
+
+		// Attempt to Mount the devlxd tmpfs
+		if !shared.IsMountPoint(shared.VarPath("devlxd")) {
+			syscall.Mount("tmpfs", shared.VarPath("devlxd"), "tmpfs", 0, "size=100k,mode=0755")
+		}
+	}
 
 	/* Setup /dev/lxd */
 	shared.LogInfof("Starting /dev/lxd handler")
@@ -1159,22 +1186,23 @@ func (d *Daemon) Stop() error {
 		}
 	}
 
-	if n, err := d.numRunningContainers(); err != nil || n == 0 {
-		shared.LogInfof("Unmounting shmounts")
+	shared.LogInfof("Stopping /dev/lxd handler")
+	d.devlxd.Close()
+	shared.LogInfof("Stopped /dev/lxd handler")
 
+	if n, err := d.numRunningContainers(); err != nil || n == 0 {
+		shared.LogInfof("Unmounting temporary filesystems")
+
+		syscall.Unmount(shared.VarPath("devlxd"), syscall.MNT_DETACH)
 		syscall.Unmount(shared.VarPath("shmounts"), syscall.MNT_DETACH)
 
-		shared.LogInfof("Done unmounting shmounts")
+		shared.LogInfof("Done unmounting temporary filesystems")
 	} else {
-		shared.LogDebugf("Not unmounting shmounts (containers are still running)")
+		shared.LogDebugf("Not unmounting temporary filesystems (containers are still running)")
 	}
 
 	shared.LogInfof("Closing the database")
 	d.db.Close()
-
-	shared.LogInfof("Stopping /dev/lxd handler")
-	d.devlxd.Close()
-	shared.LogInfof("Stopped /dev/lxd handler")
 
 	shared.LogInfof("Saving simplestreams cache")
 	imageSaveStreamCache()

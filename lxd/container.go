@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -133,6 +135,8 @@ func containerValidDeviceConfigKey(t, k string) bool {
 		case "source":
 			return true
 		case "recursive":
+			return true
+		case "pool":
 			return true
 		default:
 			return false
@@ -271,6 +275,16 @@ func containerValidDevices(devices types.Devices, profile bool, expanded bool) e
 			if (m["path"] == "/" || !shared.IsDir(m["source"])) && m["recursive"] != "" {
 				return fmt.Errorf("The recursive option is only supported for additional bind-mounted paths.")
 			}
+
+			if m["pool"] != "" {
+				if storageValidName(m["pool"]) != nil {
+					return fmt.Errorf("The specified storage pool name is not valid.")
+				}
+				if filepath.IsAbs(m["source"]) {
+					return fmt.Errorf("Storage volumes cannot be specified as absolute paths.")
+				}
+			}
+
 		} else if shared.StringInSlice(m["type"], []string{"unix-char", "unix-block"}) {
 			if m["path"] == "" {
 				return fmt.Errorf("Unix device entry is missing the required \"path\" property.")
@@ -356,7 +370,7 @@ type container interface {
 	// File handling
 	FileExists(path string) error
 	FilePull(srcpath string, dstpath string) (int, int, os.FileMode, string, []string, error)
-	FilePush(srcpath string, dstpath string, uid int, gid int, mode int) error
+	FilePush(srcpath string, dstpath string, uid int, gid int, mode int, write string) error
 	FileRemove(path string) error
 
 	/* Command execution:
@@ -409,6 +423,8 @@ type container interface {
 	StatePath() string
 	LogFilePath() string
 	LogPath() string
+
+	StoragePool() string
 
 	// FIXME: Those should be internal functions
 	StorageStart() error
@@ -527,15 +543,16 @@ func containerCreateAsSnapshot(d *Daemon, args containerArgs, sourceContainer co
 	// Deal with state
 	if args.Stateful {
 		if !sourceContainer.IsRunning() {
-			return nil, fmt.Errorf("Container not running, cannot do stateful snapshot")
+			return nil, fmt.Errorf("Unable to create a stateful snapshot. The container isn't running.")
 		}
 
-		if err := findCriu("snapshot"); err != nil {
-			return nil, err
+		_, err := exec.LookPath("criu")
+		if err != nil {
+			return nil, fmt.Errorf("Unable to create a stateful snapshot. CRIU isn't installed.")
 		}
 
 		stateDir := sourceContainer.StatePath()
-		err := os.MkdirAll(stateDir, 0700)
+		err = os.MkdirAll(stateDir, 0700)
 		if err != nil {
 			return nil, err
 		}

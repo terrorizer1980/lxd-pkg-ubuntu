@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -17,6 +18,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -121,7 +123,7 @@ func LogPath(path ...string) string {
 	return filepath.Join(items...)
 }
 
-func ParseLXDFileHeaders(headers http.Header) (uid int, gid int, mode int, type_ string) {
+func ParseLXDFileHeaders(headers http.Header) (uid int, gid int, mode int, type_ string, write string) {
 	uid, err := strconv.Atoi(headers.Get("X-LXD-uid"))
 	if err != nil {
 		uid = -1
@@ -150,7 +152,15 @@ func ParseLXDFileHeaders(headers http.Header) (uid int, gid int, mode int, type_
 		type_ = "file"
 	}
 
-	return uid, gid, mode, type_
+	write = headers.Get("X-LXD-write")
+	/* backwards compat: before "write" was introduced, we could only
+	 * overwrite files
+	 */
+	if write == "" {
+		write = "overwrite"
+	}
+
+	return uid, gid, mode, type_, write
 }
 
 func ReadToJSON(r io.Reader, req interface{}) error {
@@ -275,10 +285,15 @@ func FileCopy(source string, dest string) error {
 	}
 	defer s.Close()
 
+	fi, err := s.Stat()
+	if err != nil {
+		return err
+	}
+
 	d, err := os.Create(dest)
 	if err != nil {
 		if os.IsExist(err) {
-			d, err = os.OpenFile(dest, os.O_WRONLY, 0700)
+			d, err = os.OpenFile(dest, os.O_WRONLY, fi.Mode())
 			if err != nil {
 				return err
 			}
@@ -289,7 +304,17 @@ func FileCopy(source string, dest string) error {
 	defer d.Close()
 
 	_, err = io.Copy(d, s)
-	return err
+	if err != nil {
+		return err
+	}
+
+	/* chown not supported on windows */
+	if runtime.GOOS != "windows" {
+		_, uid, gid := GetOwnerMode(fi)
+		return d.Chown(uid, gid)
+	}
+
+	return nil
 }
 
 type BytesReadCloser struct {
@@ -411,42 +436,6 @@ func IsTrue(value string) bool {
 	}
 
 	return false
-}
-
-func IsOnSharedMount(pathName string) (bool, error) {
-	file, err := os.Open("/proc/self/mountinfo")
-	if err != nil {
-		return false, err
-	}
-	defer file.Close()
-
-	absPath, err := filepath.Abs(pathName)
-	if err != nil {
-		return false, err
-	}
-
-	expPath, err := os.Readlink(absPath)
-	if err != nil {
-		expPath = absPath
-	}
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text()
-		rows := strings.Fields(line)
-
-		if rows[4] != expPath {
-			continue
-		}
-
-		if strings.HasPrefix(rows[6], "shared:") {
-			return true, nil
-		} else {
-			return false, nil
-		}
-	}
-
-	return false, nil
 }
 
 func IsBlockdev(fm os.FileMode) bool {
@@ -635,15 +624,14 @@ func ParseByteSizeString(input string) (int64, error) {
 	}
 
 	if unicode.IsNumber(rune(input[len(input)-1])) {
-		// COMMENT(brauner): No suffix --> bytes.
+		// No suffix --> bytes.
 		suffixLen = 0
 	} else if (len(input) >= 2) && (input[len(input)-1] == 'B') && unicode.IsNumber(rune(input[len(input)-2])) {
-		// COMMENT(brauner): "B" suffix --> bytes.
+		// "B" suffix --> bytes.
 		suffixLen = 1
 	} else if strings.HasSuffix(input, " bytes") {
-		// COMMENT(brauner): Backward compatible behaviour in case we
-		// talk to a LXD that still uses GetByteSizeString() that
-		// returns "n bytes".
+		// Backward compatible behaviour in case we talk to a LXD that
+		// still uses GetByteSizeString() that returns "n bytes".
 		suffixLen = 6
 	} else if (len(input) < 3) && (suffixLen == 2) {
 		return -1, fmt.Errorf("Invalid value: %s", input)
@@ -663,7 +651,7 @@ func ParseByteSizeString(input string) (int64, error) {
 		return -1, fmt.Errorf("Invalid value: %d", valueInt)
 	}
 
-	// COMMENT(brauner): The value is already in bytes.
+	// The value is already in bytes.
 	if suffixLen != 2 {
 		return valueInt, nil
 	}
@@ -785,4 +773,12 @@ func TimeIsSet(ts time.Time) bool {
 	}
 
 	return true
+}
+
+func Round(x float64) int64 {
+	if x < 0 {
+		return int64(math.Ceil(x - 0.5))
+	}
+
+	return int64(math.Floor(x + 0.5))
 }
