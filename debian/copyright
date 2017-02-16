@@ -15,10 +15,6 @@ Files: dist/src/github.com/golang/protobuf/*
 Copyright: 2010 The Go Authors
 License: BSD-3-clause
 
-Files: dist/src/github.com/gorilla/context/*
-Copyright: 2012 Rodrigo Moraes
-License: BSD-2-clause
-
 Files: dist/src/github.com/gorilla/mux/*
 Copyright: 2012 Rodrigo Moraes
 License: BSD-2-clause

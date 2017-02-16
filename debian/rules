@@ -62,7 +62,6 @@ else
 	# Packaged dependencies
 	debian/helpers/link-from-installed github.com/dustinkirkland/golang-petname
 	debian/helpers/link-from-installed github.com/golang/protobuf
-	debian/helpers/link-from-installed github.com/gorilla/context
 	debian/helpers/link-from-installed github.com/gorilla/mux
 	debian/helpers/link-from-installed github.com/gorilla/websocket
 	debian/helpers/link-from-installed github.com/gosexy/gettext
