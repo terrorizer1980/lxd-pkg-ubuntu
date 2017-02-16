@@ -1,3 +1,76 @@
+lxd (2.9.1-0ubuntu1) zesty; urgency=medium
+
+  * New upstream bugfix release (2.9.1):
+    - doc: Document the "pool" property for disk devices
+    - lxc/storage: Fix help output for create
+    - lxc/storage: simplify
+    - lxd/daemon: Allow unsetting the deprecated storage keys
+    - lxd/patches: Add more comments to storage upgrade code
+    - lxd/storage: Improve logging
+    - lxd/storage: Rename and add opcode functions
+    - lxd/storage: Use existing ZFS {pool, dataset} or create it
+    - lxd/storage: Use unified operation ids when locking
+    - tests: Use dataset as pool or existing pool for ZFS
+
+  * New upstream release (2.9):
+    - Introduce the LXD storage management API
+    - Updated "lxd init" to support creating storage pools
+    - Allow setting network interface name with "lxc network attach"
+    - New "lxc file delete" command and API
+    - Ability to append to rather than overwrite a file through the API
+    - New "ipv4.dhcp.expiry" and "ipv6.dhcp.expiry" options for DHCP leases
+
+    - doc: Clarify PUT vs PATCH
+    - doc: Note that LXD assumes full control over its ZFS dataset
+    - doc: Update database.md to match current DB schema
+    - lxc: Don't include spaces in translated strings
+    - lxc/list: Fix regression in json output
+    - lxd/containers: Disable IPv6 on host side veth when bridged
+    - lxd/containers: Don't block resolution on non-existing paths
+    - lxd/containers: Don't check the image fingerprint twice
+    - lxd/containers: Fix concurent read/write to s.conns in exec
+    - lxd/containers: Fix error handling on FileRemove
+    - lxd/containers: Set default values for USER, HOME and LANG
+    - lxd/daemon: Mount a tmpfs under devlxd
+    - lxd/daemon: Use a tmpfs for shmounts
+    - lxd/db: Actually enable foreign keys per connection
+    - lxd/db: Raise DB lock timeout to 30s, retry every 30ms
+    - lxd/db: Rely on CASCADE
+    - lxd/db: Remove some extra cleanup code
+    - lxd/devlxd: Fix extraction of fd from UnixConn with go tip
+    - lxd/images: Fix partial image fingerprint matches
+    - lxd/images: Move imagesDownloading out of the daemon struct
+    - lxd/init: Don't check the storage backend twice
+    - lxd/migration: Clarify CRIU related errors
+    - lxd/migration: Don't report migration success on failure
+    - lxd/nsexec: Close *DIR stream returned by fdopendir()
+    - lxd/nsexec: Free allocated memory
+    - lxd/storage/btrfs: Fix recursive subvol deletion
+    - lxd/storage/zfs: Simplify device tracking logic
+    - Makefile: Use system libsqlite3 if available
+    - network: Skip ip6tables clear on non-ipv6 hosts
+    - shared: Forward user-agent and other headers on redirect
+    - shared/api: Use consistent json and yaml field names
+    - shared/simplestreams: Always prefer squashfs when available
+    - shared/utils: Don't do chown on windows
+    - shared/utils: FileCopy should also keep owner
+    - shared/utils: FileCopy should keep the same mode
+    - tests: Add golint for shared/api
+    - tests: Avoid a zfs race
+    - tests: Empty and validate network tables
+    - tests: Fix typo
+    - tests: Properly cleanup in template testsuite
+    - tests: Switch to use gofmt instead of "go fmt"
+    - tests: The monitor can exit on its own (ignore kill failure)
+
+  * Drop gorilla/context:
+    - Drop golang-context-dev from build-depend
+    - Update debian/rules
+
+  * Remove unused lintian override
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Thu, 16 Feb 2017 00:38:53 -0500
+
 lxd (2.8-0ubuntu1) zesty; urgency=medium
 
   * New upstream release (2.8):
