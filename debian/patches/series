@@ -1,0 +1,5 @@
+0001-tests-Fix-mixed-tab-spaces-again.patch
+0002-init-Fix-regressions-caused-by-storage-work.patch
+0003-lxd-main_init-small-fixes.patch
+0004-test-add-lxd-init-auto-tests.patch
+0005-test-execute-tests-based-on-available-tools.patch
