@@ -1,3 +1,12 @@
+lxd (2.9.1-0ubuntu3) zesty; urgency=medium
+
+  * Re-introduce gorilla/context as it's needed for backports (Go < 1.7)
+    - Add 0006-Re-introduce-gorilla-context.patch to debian/patches
+    - Update debian/copyright
+    - Don't re-introduce the build-dependency as backports don't use those
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Fri, 17 Feb 2017 16:12:32 -0500
+
 lxd (2.9.1-0ubuntu2) zesty; urgency=medium
 
   * Cherry-pick upstream fixes:
