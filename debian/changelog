@@ -1,3 +1,14 @@
+lxd (2.9.1-0ubuntu2) zesty; urgency=medium
+
+  * Cherry-pick upstream fixes:
+    - 0001-tests-Fix-mixed-tab-spaces-again.patch
+    - 0002-init-Fix-regressions-caused-by-storage-work.patch
+    - 0003-lxd-main_init-small-fixes.patch
+    - 0004-test-add-lxd-init-auto-tests.patch
+    - 0005-test-execute-tests-based-on-available-tools.patch
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Thu, 16 Feb 2017 20:17:28 -0500
+
 lxd (2.9.1-0ubuntu1) zesty; urgency=medium
 
   * New upstream bugfix release (2.9.1):
