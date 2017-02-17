@@ -3,3 +3,4 @@
 0003-lxd-main_init-small-fixes.patch
 0004-test-add-lxd-init-auto-tests.patch
 0005-test-execute-tests-based-on-available-tools.patch
+0006-Re-introduce-gorilla-context.patch
