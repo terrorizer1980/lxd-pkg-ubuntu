@@ -1,3 +1,31 @@
+lxd (2.9.2-0ubuntu1) zesty; urgency=medium
+
+  * New upstream bugfix release (2.9.2):
+    - lxd/containers: Add fun to detect root disk device
+    - lxd/containers: Ensure proper root disk device
+    - lxd/containers: Helper to retrieve pool from devices
+    - lxd/containers: Path may only be used by one disk
+    - lxd/init: Fix regressions caused by storage work
+    - lxd/init: Small fixes
+    - lxd/migration: Call helper to detect valid storage pool
+    - lxd/migration: Fix moving containers with storage api
+    - lxd/patches: Handle partial upgrades + pool fixes
+    - lxd/patches: Handle partial upgrades + pool fixes
+    - lxd/patches: Improve btrfs upgrade
+    - lxd/patches: Improve dir upgrade
+    - lxd/patches: Only rerun pool updates
+    - lxd/profiles: Verify root disk devices
+    - lxd/storage/btrfs: Enable quotas on the pools we create
+    - lxd/storage/dir: Delete image from database
+    - Makefile: Always include gorilla/context
+    - Makefile: Drop repeated calls to "go get"
+    - tests: Add lxd init --auto tests
+    - tests: Add test for root disk devices in profiles
+    - tests: Execute tests based on available tools
+    - tests: Fix mixed tab/spaces again
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Tue, 21 Feb 2017 00:11:01 -0500
+
 lxd (2.9.1-0ubuntu3) zesty; urgency=medium
 
   * Re-introduce gorilla/context as it's needed for backports (Go < 1.7)
