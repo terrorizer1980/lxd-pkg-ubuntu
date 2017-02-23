@@ -1,3 +1,10 @@
+lxd (2.0.9-0ubuntu1~16.04.2) xenial; urgency=medium
+
+  * Cherry-pick upstream regression fix:
+    - 0002-list-Fix-regression-in-json-output.patch (LP: #1667406)
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Thu, 23 Feb 2017 12:56:02 -0500
+
 lxd (2.0.9-0ubuntu1~16.04.1) xenial; urgency=medium
 
   * New upstream bugfix release (2.0.9) (LP: #1660506)
