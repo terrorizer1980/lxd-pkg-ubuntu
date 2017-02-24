@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -34,7 +33,8 @@ var storagePoolConfigKeys = map[string]func(value string) error{
 	},
 	"volume.zfs.use_refquota":     shared.IsBool,
 	"volume.zfs.remove_snapshots": shared.IsBool,
-	"volume.lvm.thinpool_name":    shared.IsAny,
+	"lvm.thinpool_name":           shared.IsAny,
+	"lvm.vg_name":                 shared.IsAny,
 	"zfs.pool_name":               shared.IsAny,
 }
 
@@ -44,14 +44,6 @@ func storagePoolValidateConfig(name string, driver string, config map[string]str
 	}(driver)
 	if err != nil {
 		return err
-	}
-
-	if config["source"] == "" {
-		if driver == "dir" {
-			config["source"] = filepath.Join(shared.VarPath("storage-pools"), name)
-		} else {
-			config["source"] = filepath.Join(shared.VarPath("disks"), name)
-		}
 	}
 
 	for key, val := range config {
@@ -104,17 +96,11 @@ func storagePoolValidateConfig(name string, driver string, config map[string]str
 		}
 	}
 
-	err = storagePoolFillDefault(name, driver, config)
-	if err != nil {
-		return err
-	}
-
 	return nil
 }
 
 func storagePoolFillDefault(name string, driver string, config map[string]string) error {
 	if driver != "dir" {
-		var size uint64
 		if config["size"] == "" {
 			st := syscall.Statfs_t{}
 			err := syscall.Statfs(shared.VarPath(), &st)
@@ -123,54 +109,33 @@ func storagePoolFillDefault(name string, driver string, config map[string]string
 			}
 
 			/* choose 15 GB < x < 100GB, where x is 20% of the disk size */
-			gb := uint64(1024 * 1024 * 1024)
-			size = uint64(st.Frsize) * st.Blocks / 5
-			if (size / gb) > 100 {
-				size = 100 * gb
+			size := uint64(st.Frsize) * st.Blocks / (1024 * 1024 * 1024) / 5
+			if size > 100 {
+				size = 100
 			}
-			if (size / gb) < 15 {
-				size = 15 * gb
+			if size < 15 {
+				size = 15
 			}
+			config["size"] = strconv.FormatUint(uint64(size), 10) + "GB"
 		} else {
-			sz, err := shared.ParseByteSizeString(config["size"])
+			_, err := shared.ParseByteSizeString(config["size"])
 			if err != nil {
 				return err
 			}
-			size = uint64(sz)
-		}
-		config["size"] = strconv.FormatUint(uint64(size), 10)
-	}
-
-	if driver == "zfs" {
-		if val, ok := config["zfs.pool_name"]; !ok || val == "" {
-			config["zfs.pool_name"] = name
 		}
 	}
 
 	if driver == "lvm" {
-		if config["volume.lvm.thinpool_name"] == "" {
-			config["volume.lvm.thinpool_name"] = "LXDThinpool"
+		if config["lvm.thinpool_name"] == "" {
+			// Unchangeable pool property: Set unconditionally.
+			config["lvm.thinpool_name"] = "LXDThinpool"
 		}
 
-		if config["volume.block.filesystem"] == "" {
-			config["volume.block.filesystem"] = "ext4"
-		}
-
-		if config["volume.block.mount_options"] == "" {
-			config["volume.block.mount_options"] = "discard"
-		}
-	}
-
-	if config["volume.size"] == "" {
-		if driver == "lvm" {
-			sz, err := shared.ParseByteSizeString("10GB")
+		if config["volume.size"] != "" {
+			_, err := shared.ParseByteSizeString(config["volume.size"])
 			if err != nil {
 				return err
 			}
-			size := uint64(sz)
-			config["volume.size"] = strconv.FormatUint(uint64(size), 10)
-		} else {
-			config["volume.size"] = "0"
 		}
 	}
 

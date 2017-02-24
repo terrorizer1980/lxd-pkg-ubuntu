@@ -55,6 +55,14 @@ func getContainerUmountLockID(poolName string, containerName string) string {
 	return fmt.Sprintf("umount/container/%s/%s", poolName, containerName)
 }
 
+func getCustomMountLockID(poolName string, volumeName string) string {
+	return fmt.Sprintf("mount/custom/%s/%s", poolName, volumeName)
+}
+
+func getCustomUmountLockID(poolName string, volumeName string) string {
+	return fmt.Sprintf("umount/custom/%s/%s", poolName, volumeName)
+}
+
 // Filesystem magic numbers
 const (
 	filesystemSuperMagicTmpfs = 0x01021994
@@ -243,6 +251,7 @@ type storage interface {
 	ContainerGetUsage(container container) (int64, error)
 	ContainerPoolGet() string
 	ContainerPoolIDGet() int64
+	ContainerStorageReady(name string) bool
 
 	ContainerSnapshotCreate(snapshotContainer container, sourceContainer container) error
 	ContainerSnapshotDelete(snapshotContainer container) error
@@ -711,10 +720,18 @@ func (ss *storageShared) setUnprivUserAcl(c container, destPath string) error {
 }
 
 func (ss *storageShared) createImageDbPoolVolume(fingerprint string) error {
-	// Create a db entry for the storage volume of the image.
+	// Fill in any default volume config.
 	volumeConfig := map[string]string{}
-	_, err := dbStoragePoolVolumeCreate(ss.d.db, fingerprint, storagePoolVolumeTypeImage, ss.poolID, volumeConfig)
+	err := storageVolumeFillDefault(ss.pool.Name, volumeConfig, ss.pool)
 	if err != nil {
+		return err
+	}
+
+	// Create a db entry for the storage volume of the image.
+	_, err = dbStoragePoolVolumeCreate(ss.d.db, fingerprint, storagePoolVolumeTypeImage, ss.poolID, volumeConfig)
+	if err != nil {
+		// Try to delete the db entry on error.
+		dbStoragePoolVolumeDelete(ss.d.db, fingerprint, storagePoolVolumeTypeImage, ss.poolID)
 		return err
 	}
 
@@ -835,6 +852,10 @@ func (lw *storageLogWrapper) ContainerPoolGet() string {
 
 func (lw *storageLogWrapper) ContainerPoolIDGet() int64 {
 	return lw.w.ContainerPoolIDGet()
+}
+
+func (lw *storageLogWrapper) ContainerStorageReady(name string) bool {
+	return lw.w.ContainerStorageReady(name)
 }
 
 func (lw *storageLogWrapper) ContainerCreate(container container) error {

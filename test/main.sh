@@ -267,6 +267,7 @@ kill_lxd() {
 
     # Cleanup shmounts (needed due to the forceful kill)
     find "${daemon_dir}" -name shmounts -exec "umount" "-l" "{}" \; >/dev/null 2>&1 || true
+    find "${daemon_dir}" -name devlxd -exec "umount" "-l" "{}" \; >/dev/null 2>&1 || true
 
     check_leftovers="true"
   fi
@@ -405,6 +406,7 @@ configure_lvm_loop_device() {
     echo "failed to setup loop"
     false
   fi
+  echo "${pvloopdev}" >> "${TEST_DIR}/loops"
 
   pvcreate "${pvloopdev}"
 
@@ -450,6 +452,7 @@ deconfigure_lvm_loop_device() {
   fi
 
   rm -f "${lv_loop_file}"
+  sed -i "\|^${loopdev}|d" "${TEST_DIR}/loops"
 }
 
 configure_loop_device() {
@@ -460,6 +463,7 @@ configure_loop_device() {
     echo "failed to setup loop"
     false
   fi
+  echo "${pvloopdev}" >> "${TEST_DIR}/loops"
 
   # The following code enables to return a value from a shell function by
   # calling the function as: fun VAR1
@@ -502,6 +506,7 @@ deconfigure_loop_device() {
   fi
 
   rm -f "${lv_loop_file}"
+  sed -i "\|^${loopdev}|d" "${TEST_DIR}/loops"
 }
 
 # Must be set before cleanup()
