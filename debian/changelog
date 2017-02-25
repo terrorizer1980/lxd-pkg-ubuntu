@@ -1,3 +1,12 @@
+lxd (2.9.3-0ubuntu2) zesty; urgency=medium
+
+  * Cherry-pick some upstream fixes:
+    - 0001-tests-Don-t-leak-zpools-in-lxd-init-test.patch
+    - 0002-btrfs-Quotas-can-t-be-enabled-when-unprivileged.patch
+    - 0003-patches-fix-zfs-upgrade-from-existing-dataset.patch
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Sat, 25 Feb 2017 11:30:03 -0500
+
 lxd (2.9.3-0ubuntu1) zesty; urgency=medium
 
   * New upstream bugfix release (2.9.3):
