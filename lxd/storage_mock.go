@@ -13,43 +13,41 @@ type storageMock struct {
 	storageShared
 }
 
-func (s *storageMock) StorageCoreInit() (*storageCore, error) {
-	sCore := storageCore{}
-	sCore.sType = storageTypeMock
-	typeName, err := storageTypeToString(sCore.sType)
+func (s *storageMock) StorageCoreInit() error {
+	s.sType = storageTypeMock
+	typeName, err := storageTypeToString(s.sType)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	sCore.sTypeName = typeName
+	s.sTypeName = typeName
 
-	err = sCore.initShared()
-	if err != nil {
-		return nil, err
-	}
-
-	s.storageCore = sCore
-
-	return &sCore, nil
+	shared.LogDebugf("Initializing a MOCK driver.")
+	return nil
 }
 
-func (s *storageMock) StoragePoolInit(config map[string]interface{}) (storage, error) {
-	_, err := s.StorageCoreInit()
+func (s *storageMock) StoragePoolInit() error {
+	err := s.StorageCoreInit()
 	if err != nil {
-		return s, err
+		return err
 	}
 
-	return s, nil
+	return nil
 }
 
 func (s *storageMock) StoragePoolCheck() error {
+	shared.LogDebugf("Checking MOCK storage pool \"%s\".", s.pool.Name)
 	return nil
 }
 
 func (s *storageMock) StoragePoolCreate() error {
+	shared.LogInfof("Creating MOCK storage pool \"%s\".", s.pool.Name)
+	shared.LogInfof("Created MOCK storage pool \"%s\".", s.pool.Name)
 	return nil
 }
 
 func (s *storageMock) StoragePoolDelete() error {
+	shared.LogInfof("Deleting MOCK storage pool \"%s\".", s.pool.Name)
+	shared.LogInfof("Deleted MOCK storage pool \"%s\".", s.pool.Name)
 	return nil
 }
 
@@ -77,12 +75,8 @@ func (s *storageMock) SetStoragePoolVolumeWritable(writable *api.StorageVolumePu
 	s.volume.StorageVolumePut = *writable
 }
 
-func (s *storageMock) ContainerPoolGet() string {
-	return s.pool.Name
-}
-
-func (s *storageMock) ContainerPoolIDGet() int64 {
-	return s.poolID
+func (s *storageMock) GetContainerPoolInfo() (int64, string) {
+	return s.poolID, s.pool.Name
 }
 
 func (s *storageMock) StoragePoolVolumeCreate() error {
@@ -105,7 +99,7 @@ func (s *storageMock) StoragePoolVolumeUpdate(changedConfig []string) error {
 	return nil
 }
 
-func (s *storageMock) StoragePoolUpdate(changedConfig []string) error {
+func (s *storageMock) StoragePoolUpdate(writable *api.StoragePoolPut, changedConfig []string) error {
 	return nil
 }
 
@@ -157,9 +151,7 @@ func (s *storageMock) ContainerRestore(
 	return nil
 }
 
-func (s *storageMock) ContainerSetQuota(
-	container container, size int64) error {
-
+func (s *storageMock) ContainerSetQuota(container container, size int64) error {
 	return nil
 }
 

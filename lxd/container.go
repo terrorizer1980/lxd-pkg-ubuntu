@@ -218,6 +218,10 @@ func containerValidConfig(d *Daemon, config map[string]string, profile bool, exp
 		return fmt.Errorf("security.syscalls.whitelist is mutually exclusive with security.syscalls.blacklist*")
 	}
 
+	if expanded && (config["security.privileged"] == "" || !shared.IsTrue(config["security.privileged"])) && d.IdmapSet == nil {
+		return fmt.Errorf("LXD doesn't have a uid/gid allocation. In this mode, only privileged containers are supported.")
+	}
+
 	return nil
 }
 
@@ -419,8 +423,8 @@ type container interface {
 
 	// File handling
 	FileExists(path string) error
-	FilePull(srcpath string, dstpath string) (int, int, os.FileMode, string, []string, error)
-	FilePush(srcpath string, dstpath string, uid int, gid int, mode int, write string) error
+	FilePull(srcpath string, dstpath string) (int64, int64, os.FileMode, string, []string, error)
+	FilePush(srcpath string, dstpath string, uid int64, gid int64, mode int, write string) error
 	FileRemove(path string) error
 
 	/* Command execution:
@@ -474,14 +478,14 @@ type container interface {
 	LogFilePath() string
 	LogPath() string
 
-	StoragePool() string
+	StoragePool() (string, error)
 
 	// FIXME: Those should be internal functions
 	// Needed for migration for now.
 	StorageStart() error
 	StorageStop() error
 	Storage() storage
-	IdmapSet() *shared.IdmapSet
+	IdmapSet() (*shared.IdmapSet, error)
 	LastIdmapSet() (*shared.IdmapSet, error)
 	TemplateApply(trigger string) error
 	Daemon() *Daemon
@@ -697,6 +701,10 @@ func containerCreateInternal(d *Daemon, args containerArgs) (container, error) {
 	_, err = osarch.ArchitectureName(args.Architecture)
 	if err != nil {
 		return nil, err
+	}
+
+	if !shared.IntInSlice(args.Architecture, d.architectures) {
+		return nil, fmt.Errorf("Requested architecture isn't supported by this host")
 	}
 
 	// Validate profiles

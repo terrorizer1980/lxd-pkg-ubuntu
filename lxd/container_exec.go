@@ -27,8 +27,8 @@ type execWs struct {
 	container container
 	env       map[string]string
 
-	rootUid          int
-	rootGid          int
+	rootUid          int64
+	rootGid          int64
 	conns            map[int]*websocket.Conn
 	connsLock        sync.Mutex
 	allConnected     chan bool
@@ -160,7 +160,23 @@ func (s *execWs) Do(op *operation) error {
 
 				if err != nil {
 					shared.LogDebugf("Got error getting next reader %s", err)
-					break
+					er, ok := err.(*websocket.CloseError)
+					if !ok {
+						break
+					}
+
+					if er.Code != websocket.CloseAbnormalClosure {
+						break
+					}
+
+					// If an abnormal closure occured, kill the attached process.
+					err := syscall.Kill(attachedChildPid, syscall.SIGKILL)
+					if err != nil {
+						shared.LogDebugf("Failed to send SIGKILL to pid %d.", attachedChildPid)
+					} else {
+						shared.LogDebugf("Sent SIGKILL to pid %d.", attachedChildPid)
+					}
+					return
 				}
 
 				buf, err := ioutil.ReadAll(r)
@@ -383,10 +399,16 @@ func containerExecPost(d *Daemon, r *http.Request) Response {
 	if post.WaitForWS {
 		ws := &execWs{}
 		ws.fds = map[int]string{}
-		idmapset := c.IdmapSet()
+
+		idmapset, err := c.IdmapSet()
+		if err != nil {
+			return InternalError(err)
+		}
+
 		if idmapset != nil {
 			ws.rootUid, ws.rootGid = idmapset.ShiftIntoNs(0, 0)
 		}
+
 		ws.conns = map[int]*websocket.Conn{}
 		ws.conns[-1] = nil
 		ws.conns[0] = nil
