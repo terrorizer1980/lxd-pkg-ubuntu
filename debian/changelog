@@ -1,3 +1,60 @@
+lxd (2.10-0ubuntu1) zesty; urgency=medium
+
+  * New upstream release:
+    - doc: Escape markdown
+    - doc: Fix badly named example device
+    - global: Use int64 for uid and gid everywhere
+    - i18n: Refresh translations and templates
+    - i18n: Update translations from weblate
+    - lxc: Move common functions/types to utils.go
+    - lxc/action: Improve batch mode
+    - lxc/file: Detect and fail to transfer symlinks
+    - lxc/publish: Wait for the container to be running
+    - lxd/containers: Clarify uid/gid error
+    - lxd/containers: Don't parse id ranges as int32
+    - lxd/containers: Fix override of Devices during copy
+    - lxd/containers: Fix uint32 check
+    - lxd/containers: Initialize idmap on demand
+    - lxd/containers: Kill forkexec on abnormal websocket closure
+    - lxd/containers: Properly validate architectures
+    - lxd/containers: Remove debugging during idmap changes
+    - lxd/containers: Simplify container storage init
+    - lxd/containers: Validate container idmap as early as possible
+    - lxd/containers: Validate the expanded config at container create
+    - lxd/daemon: Check for the validity of the id maps at startup
+    - lxd/daemon: Detect downgrades with newer DB and fail
+    - lxd/daemon: Fix some race conditions
+    - lxd/events: Improve formatting in events API
+    - lxd/images: Properly handled non-optimized stores
+    - lxd/init: Only show userns message if lacking uid/gid
+    - lxd/patches: Activate volume group and logical volumes
+    - lxd/patches: Do not parse volume.size for lvm
+    - lxd/patches: Fix zfs upgrade from existing dataset
+    - lxd/storage: Add proper logging
+    - lxd/storage: Check if profiles use pool or volume
+    - lxd/storage: Detect if loop file is already in use
+    - lxd/storage: Improve storage volume attachment
+    - lxd/storage: Make flag argument configurable
+    - lxd/storage: Move storage drivers cache to storage.go
+    - lxd/storage: Remove unused function argument
+    - lxd/storage: Return correct error messages
+    - lxd/storage: Simplifiy StoragePoolInit()
+    - lxd/storage/btrfs: Quotas can't be enabled when unprivileged
+    - lxd/storage/lvm: Allow updating lvm.vg_name
+    - lxd/storage/lvm: Allow updating lvm.thinpool_name
+    - lxd/storage/lvm: Activate volume groups and logical volumes
+    - lxd/storage/lvm: Don't set volume size
+    - shared/idmap: Drop GetOwner
+    - shared/idmap: Implement Usable() functions
+    - shared/idmap: Make more of an effort to find a default
+    - tests: Add test for storage volume {attach,detach}
+    - tests: Don't leak zpools in "lxd init" test
+
+  * Drop all patches, now upstream.
+  * Update "upgrade-bridge" script to be a bit more quiet.
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 01 Mar 2017 00:34:43 -0500
+
 lxd (2.9.3-0ubuntu2) zesty; urgency=medium
 
   * Cherry-pick some upstream fixes:
