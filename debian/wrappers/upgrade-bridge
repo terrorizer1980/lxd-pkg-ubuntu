@@ -67,7 +67,7 @@ fi
 # Check for stock installation
 if [ "${EXISTING}" = "false" ] && [ "$(md5sum /etc/default/lxd-bridge | cut -d' ' -f1)" = "e8cfb4997d9443fe48302bb75326b09f" ]; then
     echo "Stock LXD installation detected, resetting to new defaults"
-    lxc profile device remove default eth0 --force-local || true
+    lxc profile device remove default eth0 --force-local >/dev/null 2>&1 || true
     mv /etc/default/lxd-bridge /etc/default/lxd-bridge.upgraded
 
     echo "Cleaning up lxd-bridge state files"
