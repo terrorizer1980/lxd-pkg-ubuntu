@@ -55,7 +55,7 @@ if [ -e "/run/lxd-bridge/network_up" ] && [ -e "/usr/lib/lxd/lxd-bridge" ]; then
 fi
 
 if [ -e "/run/lxd-bridge/dnsmasq.pid" ]; then
-    kill -9 "$(cat /run/lxd-bridge/dnsmasq.pid)" || true
+    kill -9 "$(cat /run/lxd-bridge/dnsmasq.pid)" >/dev/null 2>&1 || true
 fi
 
 # Check if the bridge exists
