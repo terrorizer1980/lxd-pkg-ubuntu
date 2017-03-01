@@ -304,15 +304,19 @@ func (s *migrationSourceWs) Do(migrateOp *operation) error {
 
 	idmaps := make([]*IDMapType, 0)
 
-	idmapset := s.container.IdmapSet()
+	idmapset, err := s.container.IdmapSet()
+	if err != nil {
+		return err
+	}
+
 	if idmapset != nil {
 		for _, ctnIdmap := range idmapset.Idmap {
 			idmap := IDMapType{
 				Isuid:    proto.Bool(ctnIdmap.Isuid),
 				Isgid:    proto.Bool(ctnIdmap.Isgid),
-				Hostid:   proto.Int(ctnIdmap.Hostid),
-				Nsid:     proto.Int(ctnIdmap.Nsid),
-				Maprange: proto.Int(ctnIdmap.Maprange),
+				Hostid:   proto.Int32(int32(ctnIdmap.Hostid)),
+				Nsid:     proto.Int32(int32(ctnIdmap.Nsid)),
+				Maprange: proto.Int32(int32(ctnIdmap.Maprange)),
 			}
 
 			idmaps = append(idmaps, &idmap)
@@ -760,9 +764,9 @@ func (c *migrationSink) Do(migrateOp *operation) error {
 			e := shared.IdmapEntry{
 				Isuid:    *idmap.Isuid,
 				Isgid:    *idmap.Isgid,
-				Nsid:     int(*idmap.Nsid),
-				Hostid:   int(*idmap.Hostid),
-				Maprange: int(*idmap.Maprange)}
+				Nsid:     int64(*idmap.Nsid),
+				Hostid:   int64(*idmap.Hostid),
+				Maprange: int64(*idmap.Maprange)}
 			srcIdmap.Idmap = shared.Extend(srcIdmap.Idmap, e)
 		}
 

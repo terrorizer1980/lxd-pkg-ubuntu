@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 
@@ -796,21 +795,7 @@ func upgradeFromStorageTypeLvm(name string, d *Daemon, defaultPoolName string, d
 	poolConfig["lvm.vg_name"] = daemonConfig["storage.lvm_vg_name"].Get()
 
 	poolConfig["volume.size"] = daemonConfig["storage.lvm_volume_size"].Get()
-	if poolConfig["volume.size"] == "" {
-		// Get size of the volume group.
-		output, err := tryExec("vgs", "--nosuffix", "--units", "g", "--noheadings", "-o", "size", defaultPoolName)
-		if err != nil {
-			return err
-		}
-		tmp := string(output)
-		tmp = strings.TrimSpace(tmp)
-		szFloat, err := strconv.ParseFloat(tmp, 32)
-		if err != nil {
-			return err
-		}
-		szInt64 := shared.Round(szFloat)
-		poolConfig["volume.size"] = fmt.Sprintf("%dGB", szInt64)
-	} else {
+	if poolConfig["volume.size"] != "" {
 		// In case stuff like GiB is used which
 		// share.dParseByteSizeString() doesn't handle.
 		if strings.Contains(poolConfig["volume.size"], "i") {
@@ -828,6 +813,13 @@ func upgradeFromStorageTypeLvm(name string, d *Daemon, defaultPoolName string, d
 
 	err = storagePoolFillDefault(defaultPoolName, defaultStorageTypeName, poolConfig)
 	if err != nil {
+		return err
+	}
+
+	// Activate volume group
+	err = storageVGActivate(defaultPoolName)
+	if err != nil {
+		shared.LogErrorf("Could not activate volume group \"%s\". Manual intervention needed.")
 		return err
 	}
 
@@ -1820,7 +1812,7 @@ func patchStorageApiUpdateStorageConfigs(name string, d *Daemon) error {
 		}
 
 		// Get all storage volumes on the storage pool.
-		volumes, err := dbStoragePoolVolumesGet(d.db, poolID)
+		volumes, err := dbStoragePoolVolumesGet(d.db, poolID, supportedVolumeTypes)
 		if err != nil {
 			if err == NoSuchObjectError {
 				continue

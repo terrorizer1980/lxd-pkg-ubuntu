@@ -23,6 +23,100 @@ package main
 #define LO_FLAGS_AUTOCLEAR 4
 #endif
 
+#define LXD_MAXPATH 4096
+#define LXD_NUMSTRLEN64 21
+#define LXD_MAX_LOOP_PATHLEN (2 * sizeof("loop/")) + LXD_NUMSTRLEN64 + sizeof("backing_file") + 1
+
+// If a loop file is already associated with a loop device, find it.
+static int find_associated_loop_device(const char *loop_file,
+				       char *loop_dev_name)
+{
+	char looppath[LXD_MAX_LOOP_PATHLEN];
+	char buf[LXD_MAXPATH];
+	struct dirent *dp;
+	DIR *dir;
+	int dfd = -1, fd = -1;
+
+	dir = opendir("/sys/block");
+	if (!dir)
+		return -1;
+
+	while ((dp = readdir(dir))) {
+		int ret = -1;
+		size_t totlen;
+		struct stat fstatbuf;
+		char *delsuffix = " (deleted)";
+		size_t dellen = sizeof(delsuffix);
+
+		if (!dp)
+			break;
+
+		if (strncmp(dp->d_name, "loop", 4) != 0)
+			continue;
+
+		dfd = dirfd(dir);
+		if (dfd < 0)
+			continue;
+
+		ret = snprintf(looppath, sizeof(looppath),
+			       "%s/loop/backing_file", dp->d_name);
+		if (ret < 0 || (size_t)ret >= sizeof(looppath))
+			continue;
+
+		ret = fstatat(dfd, looppath, &fstatbuf, 0);
+		if (ret < 0)
+			continue;
+
+		fd = openat(dfd, looppath, O_RDONLY | O_CLOEXEC, 0);
+		if (ret < 0)
+			continue;
+
+		// Clear buffer.
+		memset(buf, 0, sizeof(buf));
+		ret = read(fd, buf, sizeof(buf));
+		if (ret < 0)
+			continue;
+
+		totlen = strlen(buf);
+		// Trim newline.
+		if (buf[totlen - 1] == '\n') {
+			buf[totlen - 1] = '\0';
+			totlen--;
+		}
+
+		if (totlen > dellen) {
+			char *deleted = &buf[totlen - dellen];
+
+			// Skip deleted loop files.
+			if (!strcmp(deleted, delsuffix))
+				continue;
+		}
+
+		if (strcmp(buf, loop_file)) {
+			close(fd);
+			fd = -1;
+			continue;
+		}
+
+		ret = snprintf(loop_dev_name, LO_NAME_SIZE, "/dev/%s",
+			       dp->d_name);
+		if (ret < 0 || ret >= LO_NAME_SIZE) {
+			close(fd);
+			fd = -1;
+			continue;
+		}
+
+		break;
+	}
+
+	closedir(dir);
+
+	if (fd < 0)
+		return -1;
+
+	return fd;
+}
+
 static int get_unused_loop_dev_legacy(char *loop_name)
 {
 	struct dirent *dp;
@@ -50,14 +144,14 @@ static int get_unused_loop_dev_legacy(char *loop_name)
 			continue;
 
 		ret = ioctl(fd, LOOP_GET_STATUS64, &lo64);
-		if (ret < 0)
-
+		if (ret < 0) {
 			if (ioctl(fd, LOOP_GET_STATUS64, &lo64) == 0 ||
 			    errno != ENXIO) {
 				close(fd);
 				fd = -1;
 				continue;
 			}
+		}
 
 		ret = snprintf(loop_name, LO_NAME_SIZE, "/dev/%s", dp->d_name);
 		if (ret < 0 || ret >= LO_NAME_SIZE) {
@@ -103,7 +197,7 @@ on_error:
 	return fd_tmp;
 }
 
-int prepare_loop_dev(const char *source, char *loop_dev)
+int prepare_loop_dev(const char *source, char *loop_dev, int flags)
 {
 	int ret;
 	struct loop_info64 lo64;
@@ -126,7 +220,7 @@ int prepare_loop_dev(const char *source, char *loop_dev)
 		goto on_error;
 
 	memset(&lo64, 0, sizeof(lo64));
-	lo64.lo_flags = LO_FLAGS_AUTOCLEAR;
+	lo64.lo_flags = flags;
 
 	ret = ioctl(fd_loop, LOOP_SET_STATUS64, &lo64);
 	if (ret < 0)
@@ -154,10 +248,12 @@ import (
 	"unsafe"
 )
 
+const LO_FLAGS_AUTOCLEAR int = C.LO_FLAGS_AUTOCLEAR
+
 // prepareLoopDev() detects and sets up a loop device for source. It returns an
 // open file descriptor to the free loop device and the path of the free loop
 // device. It's the callers responsibility to close the open file descriptor.
-func prepareLoopDev(source string) (*os.File, error) {
+func prepareLoopDev(source string, flags int) (*os.File, error) {
 	cLoopDev := C.malloc(C.size_t(C.LO_NAME_SIZE))
 	if cLoopDev == nil {
 		return nil, fmt.Errorf("Failed to allocate memory in C.")
@@ -166,8 +262,16 @@ func prepareLoopDev(source string) (*os.File, error) {
 
 	cSource := C.CString(source)
 	defer C.free(unsafe.Pointer(cSource))
-	loopFd := int(C.prepare_loop_dev(cSource, (*C.char)(cLoopDev)))
+	loopFd, _ := C.find_associated_loop_device(cSource, (*C.char)(cLoopDev))
+	if loopFd >= 0 {
+		return os.NewFile(uintptr(loopFd), C.GoString((*C.char)(cLoopDev))), nil
+	}
+
+	loopFd, err := C.prepare_loop_dev(cSource, (*C.char)(cLoopDev), C.int(flags))
 	if loopFd < 0 {
+		if err != nil {
+			return nil, fmt.Errorf("Failed to prepare loop device: %s.", err)
+		}
 		return nil, fmt.Errorf("Failed to prepare loop device.")
 	}
 
