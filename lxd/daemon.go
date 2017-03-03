@@ -368,15 +368,15 @@ func (d *Daemon) SetupStorageDriver() error {
 
 	for _, pool := range pools {
 		shared.LogDebugf("Initializing and checking storage pool \"%s\".", pool)
-		ps, err := storagePoolInit(d, pool)
+		s, err := storagePoolInit(d, pool)
 		if err != nil {
 			shared.LogErrorf("Error initializing storage pool \"%s\": %s. Correct functionality of the storage pool cannot be guaranteed.", pool, err)
 			continue
 		}
 
-		err = ps.StoragePoolCheck()
+		err = s.StoragePoolCheck()
 		if err != nil {
-			shared.LogErrorf("Error checking storage pool \"%s\": %s. Correct functionality of the storage pool cannot be guaranteed.", pool, err)
+			return err
 		}
 	}
 

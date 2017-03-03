@@ -415,6 +415,11 @@ func storagePoolInit(d *Daemon, poolName string) (storage, error) {
 	return storageInit(d, poolName, "", -1)
 }
 
+func storagePoolVolumeInit(d *Daemon, poolName string, volumeName string, volumeType int) (storage, error) {
+	// No need to detect storage here, its a new container.
+	return storageInit(d, poolName, volumeName, volumeType)
+}
+
 func storagePoolVolumeImageInit(d *Daemon, poolName string, imageFingerprint string) (storage, error) {
 	return storagePoolVolumeInit(d, poolName, imageFingerprint, storagePoolVolumeTypeImage)
 }
@@ -431,26 +436,6 @@ func storagePoolVolumeContainerLoadInit(d *Daemon, containerName string) (storag
 	}
 
 	return storagePoolVolumeInit(d, poolName, containerName, storagePoolVolumeTypeContainer)
-}
-
-func storagePoolVolumeInit(d *Daemon, poolName string, volumeName string, volumeType int) (storage, error) {
-	// No need to detect storage here, its a new container.
-	s, err := storageInit(d, poolName, volumeName, volumeType)
-	if err != nil {
-		return nil, err
-	}
-
-	err = s.StoragePoolInit()
-	if err != nil {
-		return nil, err
-	}
-
-	err = s.StoragePoolCheck()
-	if err != nil {
-		return nil, err
-	}
-
-	return s, nil
 }
 
 // {LXD_DIR}/storage-pools/<pool>
