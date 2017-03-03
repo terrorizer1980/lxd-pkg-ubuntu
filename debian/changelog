@@ -1,3 +1,26 @@
+lxd (2.10.1-0ubuntu1) zesty; urgency=medium
+
+  * New upstream bugfix release (2.10.1):
+    - global: Fix error handling in all filepath.Walk calls
+    - lxd/images: Fix base image tracking (Issue #2999)
+    - lxd/init: Allow running as non-root
+    - lxd/storage: Add set_autoclear_loop_device()
+    - lxd/storage/lvm: Allow loop-backed lvm storage pools
+    - lxd/storage/lvm: Fix defer calls
+    - lxd/storage/lvm: Make sure loop devices stays around on volume delete
+    - lxd/storage/lvm: Set LO_FLAGS_AUTOCLEAR before file removal
+    - lxd/storage/lvm: Use lvmized container name for LV
+    - lxd/storage/zfs: Do not revert on success
+    - lxd/storage/zfs: Import loop-backed storage pools on startup
+    - shared/simplestreams: Improve error handling
+    - shared/util: Check for err in {UUID, BlockDev} lookup
+    - tests: Fix yet another LVM pool's volume size
+    - tests: Give more time to reboot
+     tests: Rely on "lxc storage" create only for lvm
+  * Silence some warnings from the network upgrade script
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Fri, 03 Mar 2017 00:10:44 -0500
+
 lxd (2.10-0ubuntu1) zesty; urgency=medium
 
   * New upstream release:
