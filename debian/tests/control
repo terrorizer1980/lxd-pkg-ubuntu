@@ -1,16 +1,20 @@
 Tests: exercise
 Depends: acl,
          busybox-static,
+         btrfs-tools,
          curl,
          golang-go,
          jq,
          git,
          gettext,
+         lvm2,
          make,
          pep8,
          pyflakes3,
          shellcheck,
          sqlite3,
+         thin-provisioning-tools,
          uuid-runtime,
+         zfsutils-linux [amd64 arm64 ppc64el s390x],
          @
 Restrictions: needs-root allow-stderr isolation-machine
