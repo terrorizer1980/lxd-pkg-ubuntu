@@ -1,3 +1,55 @@
+lxd (2.11-0ubuntu1) zesty; urgency=medium
+
+  * New upstream release (2.11):
+    - New "aliases" field in POST /1.0/images
+    - Reworked help messages and "lxc manpage" command (LP: #1544984)
+    - New "vlan" nic property for "macvlan" devices
+    - doc: Add instructions to grow ZFS loop (LP: #1648995)
+    - doc: Improve storage doc
+    - global: Use RunCommand everywhere
+    - i18n: Refresh templates
+    - i18n: Update translations from weblate
+    - i18n: Update translation templates
+    - lxc: Allow --version to be passed with any command
+    - lxc: Make help/usage a bit more consistent
+    - lxc: Rework for better manpages
+    - lxc/image: Show the alias description
+    - lxc/profile: Properly implement "profile unset" (LP: #1669772)
+    - lxd/containers: Don't use FindProcess, just pass exec.Cmd
+    - lxd/containers: Properly revert memory limits on failure
+    - lxd/images: Properly return the alias description
+    - lxd/images: Refactor code a bit
+    - lxd/migration: Actually unset the storage pool if unavailable
+    - lxd/migration: Better handle rsync errors (subprocesses)
+    - lxd/migration: Set correct pool property for btrfs
+    - lxd/migration: Set correct pool property for zfs
+    - lxd/migration: Tweak rsync logging a bit
+    - lxd/patches: Call tryMount() if not already mounted
+    - lxd/patches: Conditionalize lvrename
+    - lxd/patches: Delete image db entry if LV is missing
+    - lxd/patches: Detect the logical volume size
+    - lxd/patches: Fix incorrect btrfs source properties
+    - lxd/patches: Handle mixed-storage upgrade
+    - lxd/patches: Use MNT_DETACH for lvm
+    - lxd/patches: Use RemoveAll() for lvm snapshots dir
+    - lxd/storage/btrfs: Correctly handle loop-backed pools
+    - lxd/storage/btrfs: Handle custom subvolume paths
+    - lxd/storage/dir: Limit valid pool source paths
+    - lxd/storage/lvm: Call {pv,vg}scan
+    - lxd/storage/lvm: Dumb down functions from methods to functions
+    - lxd/storage: Deal with source not being btrfs
+    - lxd/storage: Ensure correct pool for snapshots
+    - lxd/storage: Harden the btrfs migration code
+    - lxd/storage: Report prepareLoopDev() error directly
+    - shared/idmap: Fix various issues
+    - tests: Add more dir and btrfs tests
+    - tests: Improve lvm part of storage tests
+  * Use "lxc manpage" to generate the manpages.
+  * Update debian/tests/control to pull in lvm2 and thin-provisioning-tools.
+  * Include lxd-benchmark in lxd-tools.
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 08 Mar 2017 16:24:35 -0500
+
 lxd (2.10.1-0ubuntu1) zesty; urgency=medium
 
   * New upstream bugfix release (2.10.1):
