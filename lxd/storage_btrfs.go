@@ -59,12 +59,12 @@ func (s *storageBtrfs) StorageCoreInit() error {
 		return fmt.Errorf("The 'btrfs' tool isn't available")
 	}
 
-	output, err := exec.Command("btrfs", "version").CombinedOutput()
+	output, err := shared.RunCommand("btrfs", "version")
 	if err != nil {
 		return fmt.Errorf("The 'btrfs' tool isn't working properly")
 	}
 
-	count, err := fmt.Sscanf(strings.SplitN(string(output), " ", 2)[1], "v%s\n", &s.sTypeVersion)
+	count, err := fmt.Sscanf(strings.SplitN(output, " ", 2)[1], "v%s\n", &s.sTypeVersion)
 	if err != nil || count != 1 {
 		return fmt.Errorf("The 'btrfs' tool isn't working properly")
 	}
@@ -118,9 +118,9 @@ func (s *storageBtrfs) StoragePoolCreate() error {
 			return fmt.Errorf("Failed to create sparse file %s: %s", source, err)
 		}
 
-		output, err := exec.Command(
+		output, err := shared.RunCommand(
 			"mkfs.btrfs",
-			"-L", s.pool.Name, source).CombinedOutput()
+			"-L", s.pool.Name, source)
 		if err != nil {
 			return fmt.Errorf("Failed to create the BTRFS pool: %s", output)
 		}
@@ -131,20 +131,39 @@ func (s *storageBtrfs) StoragePoolCreate() error {
 		if filepath.IsAbs(source) {
 			isBlockDev = shared.IsBlockdevPath(source)
 			if isBlockDev {
-				output, err := exec.Command(
+				output, err := shared.RunCommand(
 					"mkfs.btrfs",
-					"-L", s.pool.Name, source).CombinedOutput()
+					"-L", s.pool.Name, source)
 				if err != nil {
 					return fmt.Errorf("Failed to create the BTRFS pool: %s", output)
 				}
 			} else {
-				if isBtrfsSubVolume(source) || s.d.BackingFs == "btrfs" {
+				if isBtrfsSubVolume(source) {
+					subvols, err := btrfsSubVolumesGet(source)
+					if err != nil {
+						return fmt.Errorf("Could not determine if existing BTRFS subvolume ist empty: %s.", err)
+					}
+					if len(subvols) > 0 {
+						return fmt.Errorf("Requested BTRFS subvolume exists but is not empty.")
+					}
+				} else {
+					cleanSource := filepath.Clean(source)
+					lxdDir := shared.VarPath()
+					poolMntPoint := getStoragePoolMountPoint(s.pool.Name)
+					if shared.PathExists(source) && !isOnBtrfs(source) {
+						return fmt.Errorf("Existing path is neither a BTRFS subvolume nor does it reside on a BTRFS filesystem.")
+					} else if strings.HasPrefix(cleanSource, lxdDir) {
+						if cleanSource != poolMntPoint {
+							return fmt.Errorf("BTRFS subvolumes requests in LXD directory \"%s\" are only valid under \"%s\"\n(e.g. source=%s)", shared.VarPath(), shared.VarPath("storage-pools"), poolMntPoint)
+						} else if s.d.BackingFs != "btrfs" {
+							return fmt.Errorf("Creation of BTRFS subvolume requested but \"%s\" does not reside on BTRFS filesystem.", source)
+						}
+					}
+
 					err := btrfsSubVolumeCreate(source)
 					if err != nil {
 						return err
 					}
-				} else {
-					return fmt.Errorf("Custom loop file locations are not supported.")
 				}
 			}
 		} else {
@@ -191,8 +210,8 @@ func (s *storageBtrfs) StoragePoolCreate() error {
 	}
 
 	// Enable quotas
-	output, err := exec.Command(
-		"btrfs", "quota", "enable", poolMntPoint).CombinedOutput()
+	output, err := shared.RunCommand(
+		"btrfs", "quota", "enable", poolMntPoint)
 	if err != nil && !runningInUserns {
 		return fmt.Errorf("Failed to enable quotas on BTRFS pool: %s", output)
 	}
@@ -274,11 +293,14 @@ func (s *storageBtrfs) StoragePoolDelete() error {
 		shared.LogDebugf(msg)
 	} else {
 		var err error
-		if s.d.BackingFs == "btrfs" {
-			err = btrfsSubVolumesDelete(source)
-		} else {
+		cleanSource := filepath.Clean(source)
+		sourcePath := shared.VarPath("disks", s.pool.Name)
+		loopFilePath := sourcePath + ".img"
+		if cleanSource == loopFilePath {
 			// This is a loop file --> simply remove it.
 			err = os.Remove(source)
+		} else {
+			err = btrfsSubVolumesDelete(source)
 		}
 		if err != nil {
 			return err
@@ -340,21 +362,33 @@ func (s *storageBtrfs) StoragePoolMount() (bool, error) {
 		return false, nil
 	}
 
+	mountFlags := uintptr(0)
 	mountSource := source
+	isBlockDev := shared.IsBlockdevPath(source)
 	if filepath.IsAbs(source) {
-		if !shared.IsBlockdevPath(source) && s.d.BackingFs != "btrfs" {
+		cleanSource := filepath.Clean(source)
+		poolMntPoint := getStoragePoolMountPoint(s.pool.Name)
+		loopFilePath := shared.VarPath("disks", s.pool.Name+".img")
+		if !isBlockDev && cleanSource == loopFilePath {
+			// If source == "${LXD_DIR}"/disks/{pool_name} it is a
+			// loop file we're dealing with.
+			//
 			// Since we mount the loop device LO_FLAGS_AUTOCLEAR is
 			// fine since the loop device will be kept around for as
 			// long as the mount exists.
-			loopF, err := prepareLoopDev(source, LO_FLAGS_AUTOCLEAR)
-			if err != nil {
-				return false, fmt.Errorf("Could not prepare loop device.")
+			loopF, loopErr := prepareLoopDev(source, LO_FLAGS_AUTOCLEAR)
+			if loopErr != nil {
+				return false, loopErr
 			}
 			mountSource = loopF.Name()
 			defer loopF.Close()
-		} else {
+		} else if !isBlockDev && cleanSource != poolMntPoint {
+			mountSource = source
+			mountFlags = syscall.MS_BIND
+		} else if !isBlockDev && cleanSource == poolMntPoint && s.d.BackingFs == "btrfs" {
 			return false, nil
 		}
+		// User is using block device path.
 	} else {
 		// Try to lookup the disk device by UUID but don't fail. If we
 		// don't find one this might just mean we have been given the
@@ -375,7 +409,7 @@ func (s *storageBtrfs) StoragePoolMount() (bool, error) {
 	}
 
 	// This is a block device.
-	err := syscall.Mount(mountSource, poolMntPoint, "btrfs", 0, btrfsMntOptions)
+	err := syscall.Mount(mountSource, poolMntPoint, "btrfs", mountFlags, btrfsMntOptions)
 	if err != nil {
 		return false, err
 	}
@@ -958,12 +992,12 @@ func (s *storageBtrfs) ContainerSetQuota(container container, size int64) error 
 		return err
 	}
 
-	output, err := exec.Command(
+	output, err := shared.RunCommand(
 		"btrfs",
 		"qgroup",
 		"limit",
 		"-e", fmt.Sprintf("%d", size),
-		subvol).CombinedOutput()
+		subvol)
 
 	if err != nil {
 		return fmt.Errorf("Failed to set btrfs quota: %s", output)
@@ -1306,42 +1340,40 @@ func (s *storageBtrfs) ImageUmount(fingerprint string) (bool, error) {
 func btrfsSubVolumeCreate(subvol string) error {
 	parentDestPath := filepath.Dir(subvol)
 	if !shared.PathExists(parentDestPath) {
-		if err := os.MkdirAll(parentDestPath, 0711); err != nil {
+		err := os.MkdirAll(parentDestPath, 0711)
+		if err != nil {
 			return err
 		}
 	}
 
-	output, err := exec.Command(
+	output, err := shared.RunCommand(
 		"btrfs",
 		"subvolume",
 		"create",
-		subvol).CombinedOutput()
+		subvol)
 	if err != nil {
-		return fmt.Errorf(
-			"btrfs subvolume create failed, subvol=%s, output%s",
-			subvol,
-			string(output),
-		)
+		shared.LogErrorf("Failed to create BTRFS subvolume \"%s\": %s.", subvol, output)
+		return err
 	}
 
 	return nil
 }
 
 func btrfsSubVolumeQGroup(subvol string) (string, error) {
-	output, err := exec.Command(
+	output, err := shared.RunCommand(
 		"btrfs",
 		"qgroup",
 		"show",
 		subvol,
 		"-e",
-		"-f").CombinedOutput()
+		"-f")
 
 	if err != nil {
 		return "", fmt.Errorf("btrfs quotas not supported. Try enabling them with 'btrfs quota enable'.")
 	}
 
 	var qgroup string
-	for _, line := range strings.Split(string(output), "\n") {
+	for _, line := range strings.Split(output, "\n") {
 		if line == "" || strings.HasPrefix(line, "qgroupid") || strings.HasPrefix(line, "---") {
 			continue
 		}
@@ -1362,19 +1394,19 @@ func btrfsSubVolumeQGroup(subvol string) (string, error) {
 }
 
 func (s *storageBtrfs) btrfsPoolVolumeQGroupUsage(subvol string) (int64, error) {
-	output, err := exec.Command(
+	output, err := shared.RunCommand(
 		"btrfs",
 		"qgroup",
 		"show",
 		subvol,
 		"-e",
-		"-f").CombinedOutput()
+		"-f")
 
 	if err != nil {
 		return -1, fmt.Errorf("btrfs quotas not supported. Try enabling them with 'btrfs quota enable'.")
 	}
 
-	for _, line := range strings.Split(string(output), "\n") {
+	for _, line := range strings.Split(output, "\n") {
 		if line == "" || strings.HasPrefix(line, "qgroupid") || strings.HasPrefix(line, "---") {
 			continue
 		}
@@ -1399,26 +1431,25 @@ func btrfsSubVolumeDelete(subvol string) error {
 	// Attempt (but don't fail on) to delete any qgroup on the subvolume
 	qgroup, err := btrfsSubVolumeQGroup(subvol)
 	if err == nil {
-		exec.Command(
+		shared.RunCommand(
 			"btrfs",
 			"qgroup",
 			"destroy",
 			qgroup,
-			subvol).Run()
+			subvol)
 	}
 
 	// Attempt to make the subvolume writable
-	exec.Command("btrfs", "property", "set", subvol, "ro", "false").CombinedOutput()
+	shared.RunCommand("btrfs", "property", "set", subvol, "ro", "false")
 
 	// Delete the subvolume itself
-	err = exec.Command(
+	_, err = shared.RunCommand(
 		"btrfs",
 		"subvolume",
 		"delete",
-		subvol,
-	).Run()
+		subvol)
 
-	return nil
+	return err
 }
 
 // btrfsPoolVolumesDelete is the recursive variant on btrfsPoolVolumeDelete,
@@ -1451,30 +1482,30 @@ func btrfsSubVolumesDelete(subvol string) error {
  * the result will be readonly if "readonly" is True.
  */
 func btrfsSnapshot(source string, dest string, readonly bool) error {
-	var output []byte
+	var output string
 	var err error
 	if readonly {
-		output, err = exec.Command(
+		output, err = shared.RunCommand(
 			"btrfs",
 			"subvolume",
 			"snapshot",
 			"-r",
 			source,
-			dest).CombinedOutput()
+			dest)
 	} else {
-		output, err = exec.Command(
+		output, err = shared.RunCommand(
 			"btrfs",
 			"subvolume",
 			"snapshot",
 			source,
-			dest).CombinedOutput()
+			dest)
 	}
 	if err != nil {
 		return fmt.Errorf(
 			"subvolume snapshot failed, source=%s, dest=%s, output=%s",
 			source,
 			dest,
-			string(output),
+			output,
 		)
 	}
 
@@ -1519,10 +1550,8 @@ func (s *storageBtrfs) btrfsPoolVolumesSnapshot(source string, dest string, read
 	return nil
 }
 
-/*
- * isBtrfsSubVolume returns true if the given Path is a btrfs subvolume
- * else false.
- */
+// isBtrfsSubVolume returns true if the given Path is a btrfs subvolume else
+// false.
 func isBtrfsSubVolume(subvolPath string) bool {
 	fs := syscall.Stat_t{}
 	err := syscall.Lstat(subvolPath, &fs)
@@ -1532,6 +1561,21 @@ func isBtrfsSubVolume(subvolPath string) bool {
 
 	// Check if BTRFS_FIRST_FREE_OBJECTID
 	if fs.Ino != 256 {
+		return false
+	}
+
+	return true
+}
+
+func isOnBtrfs(path string) bool {
+	fs := syscall.Statfs_t{}
+
+	err := syscall.Statfs(path, &fs)
+	if err != nil {
+		return false
+	}
+
+	if fs.Type != filesystemSuperMagicBtrfs {
 		return false
 	}
 
@@ -1860,16 +1904,36 @@ func (s *storageBtrfs) MigrationSink(live bool, container container, snapshots [
 		}
 	}
 
+	// At this point we have already figured out the parent
+	// container's root disk device so we can simply
+	// retrieve it from the expanded devices.
+	parentStoragePool := ""
+	parentExpandedDevices := container.ExpandedDevices()
+	parentLocalRootDiskDeviceKey, parentLocalRootDiskDevice, _ := containerGetRootDiskDevice(parentExpandedDevices)
+	if parentLocalRootDiskDeviceKey != "" {
+		parentStoragePool = parentLocalRootDiskDevice["pool"]
+	}
+
+	// A little neuroticism.
+	if parentStoragePool == "" {
+		return fmt.Errorf("Detected that the container's root device is missing the pool property during BTRFS migration.")
+	}
+
 	for _, snap := range snapshots {
 		args := snapshotProtobufToContainerArgs(container.Name(), snap)
-		// Unset the pool of the orginal container and let
-		// containerLXCCreate figure out on which pool to  send it.
-		// Later we might make this more flexible.
-		for k, v := range args.Devices {
-			if v["type"] == "disk" && v["path"] == "/" {
-				args.Devices[k]["pool"] = ""
+
+		// Ensure that snapshot and parent container have the
+		// same storage pool in their local root disk device.
+		// If the root disk device for the snapshot comes from a
+		// profile on the new instance as well we don't need to
+		// do anything.
+		if args.Devices != nil {
+			snapLocalRootDiskDeviceKey, _, _ := containerGetRootDiskDevice(args.Devices)
+			if snapLocalRootDiskDeviceKey != "" {
+				args.Devices[snapLocalRootDiskDeviceKey]["pool"] = parentStoragePool
 			}
 		}
+
 		containerMntPoint := getSnapshotMountPoint(containerPool, args.Name)
 		_, err := containerCreateEmptySnapshot(container.Daemon(), args)
 		if err != nil {
@@ -1922,17 +1986,17 @@ func (s *storageBtrfs) MigrationSink(live bool, container container, snapshots [
 }
 
 func (s *storageBtrfs) btrfsLookupFsUUID(fs string) (string, error) {
-	output, err := exec.Command(
+	output, err := shared.RunCommand(
 		"btrfs",
 		"filesystem",
 		"show",
 		"--raw",
-		fs).CombinedOutput()
+		fs)
 	if err != nil {
 		return "", fmt.Errorf("Failed to detect UUID.")
 	}
 
-	outputString := string(output)
+	outputString := output
 	idx := strings.Index(outputString, "uuid: ")
 	outputString = outputString[idx+6:]
 	outputString = strings.TrimSpace(outputString)
