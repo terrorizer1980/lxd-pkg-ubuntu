@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -54,19 +53,28 @@ func (s *storageDir) StoragePoolCreate() error {
 	if source == "" {
 		source = filepath.Join(shared.VarPath("storage-pools"), s.pool.Name)
 		s.pool.Config["source"] = source
+	} else {
+		cleanSource := filepath.Clean(source)
+		lxdDir := shared.VarPath()
+		poolMntPoint := getStoragePoolMountPoint(s.pool.Name)
+		if strings.HasPrefix(cleanSource, lxdDir) && cleanSource != poolMntPoint {
+			return fmt.Errorf("DIR storage pool requests in LXD directory \"%s\" are only valid under \"%s\"\n(e.g. source=%s)", shared.VarPath(), shared.VarPath("storage-pools"), poolMntPoint)
+		}
 	}
 
-	err := os.MkdirAll(source, 0711)
-	if err != nil {
-		return err
-	}
 	revert := true
-	defer func() {
-		if !revert {
-			return
+	if !shared.PathExists(source) {
+		err := os.MkdirAll(source, 0711)
+		if err != nil {
+			return err
 		}
-		os.RemoveAll(source)
-	}()
+		defer func() {
+			if !revert {
+				return
+			}
+			os.Remove(source)
+		}()
+	}
 
 	prefix := shared.VarPath("storage-pools")
 	if !strings.HasPrefix(source, prefix) {
@@ -78,7 +86,7 @@ func (s *storageDir) StoragePoolCreate() error {
 		}
 	}
 
-	err = s.StoragePoolCheck()
+	err := s.StoragePoolCheck()
 	if err != nil {
 		return err
 	}
@@ -311,9 +319,9 @@ func (s *storageDir) ContainerDelete(container container) error {
 		err := os.RemoveAll(containerMntPoint)
 		if err != nil {
 			// RemovaAll fails on very long paths, so attempt an rm -Rf
-			output, err := exec.Command("rm", "-Rf", containerMntPoint).CombinedOutput()
+			output, err := shared.RunCommand("rm", "-Rf", containerMntPoint)
 			if err != nil {
-				return fmt.Errorf("Error removing %s: %s.", containerMntPoint, string(output))
+				return fmt.Errorf("Error removing %s: %s.", containerMntPoint, output)
 			}
 		}
 	}
