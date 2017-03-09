@@ -1,3 +1,10 @@
+lxd (2.11-0ubuntu2) zesty; urgency=medium
+
+  * Cherry-pick upstream candidate fix for autopkgtest i386 failure:
+    - 0001-lvm-use-ff-with-vgremove.patch
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 08 Mar 2017 22:05:17 -0500
+
 lxd (2.11-0ubuntu1) zesty; urgency=medium
 
   * New upstream release (2.11):
