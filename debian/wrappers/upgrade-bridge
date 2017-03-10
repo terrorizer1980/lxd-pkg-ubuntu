@@ -95,7 +95,7 @@ fi
 # Move the old bridge into place
 if [ "${EXISTING}" = "true" ]; then
     echo "Moving the old bridge into place"
-    ip link del "${LXD_BRIDGE}"
+    [ -e "/sys/class/net/${LXD_BRIDGE}" ] && ip link del "${LXD_BRIDGE}"
     ip link set lxd-upgrade name "${LXD_BRIDGE}" up
 fi
 
