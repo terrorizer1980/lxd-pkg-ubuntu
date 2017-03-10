@@ -1,3 +1,10 @@
+lxd (2.11-0ubuntu3) zesty; urgency=medium
+
+  * Better handle broken network upgrades. (LP: #1671692)
+  * Remove LVM patch as it turned out to be an lvm2 bug.
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Fri, 10 Mar 2017 17:27:35 -0500
+
 lxd (2.11-0ubuntu2) zesty; urgency=medium
 
   * Cherry-pick upstream candidate fix for autopkgtest i386 failure:
