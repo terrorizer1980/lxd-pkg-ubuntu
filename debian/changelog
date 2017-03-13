@@ -1,3 +1,9 @@
+lxd (2.11-0ubuntu4) zesty; urgency=medium
+
+  * Add versioned dependency on passwd/uidmap. (LP: #1672100)
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Mon, 13 Mar 2017 14:44:21 +0000
+
 lxd (2.11-0ubuntu3) zesty; urgency=medium
 
   * Better handle broken network upgrades. (LP: #1671692)
