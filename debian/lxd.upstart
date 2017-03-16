@@ -11,7 +11,9 @@ respawn
 pre-start exec @LIBEXECDIR@/lxc/lxc-apparmor-load
 
 script
+    # To get the proxy variables
     [ -e /etc/environment ] && . /etc/environment
+
     exec /usr/bin/lxd --group lxd --logfile=/var/log/lxd/lxd.log
 end script
 
