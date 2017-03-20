@@ -355,7 +355,7 @@ func (d *Daemon) createCmd(version string, c Command) {
 	})
 }
 
-func (d *Daemon) SetupStorageDriver() error {
+func (d *Daemon) SetupStorageDriver(forceCheck bool) error {
 	pools, err := dbStoragePools(d.db)
 	if err != nil {
 		if err == NoSuchObjectError {
@@ -364,6 +364,25 @@ func (d *Daemon) SetupStorageDriver() error {
 		}
 		shared.LogDebugf("Failed to retrieve existing storage pools.")
 		return err
+	}
+
+	// In case the daemon got killed during upgrade we will already have a
+	// valid storage pool entry but it might have gotten messed up and so we
+	// cannot perform StoragePoolCheck(). This case can be detected by
+	// looking at the patches db: If we already have a storage pool defined
+	// but the upgrade somehow got messed up then there will be no
+	// "storage_api" entry in the db.
+	if len(pools) > 0 && !forceCheck {
+		appliedPatches, err := dbPatches(d.db)
+		if err != nil {
+			return err
+		}
+
+		if !shared.StringInSlice("storage_api", appliedPatches) {
+			shared.LogWarnf("Incorrectly applied \"storage_api\" patch. Skipping storage pool initialization as it might be corrupt.")
+			return nil
+		}
+
 	}
 
 	for _, pool := range pools {
@@ -851,7 +870,7 @@ func (d *Daemon) Init() error {
 
 	if !d.MockMode {
 		/* Read the storage pools */
-		err = d.SetupStorageDriver()
+		err = d.SetupStorageDriver(false)
 		if err != nil {
 			return err
 		}
