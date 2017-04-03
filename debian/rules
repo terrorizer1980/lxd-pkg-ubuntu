@@ -97,6 +97,10 @@ override_dh_install:
 	mkdir -p $(PKGDIR)/etc/logrotate.d
 	cp debian/lxd.logrotate $(PKGDIR)/etc/logrotate.d/lxd
 
+	# Setup sysctl
+	mkdir -p $(PKGDIR)/etc/sysctl.d
+	cp debian/lxd.sysctl $(PKGDIR)/etc/sysctl.d/10-lxd-inotify.conf
+
 	# Trigger normal dh_install
 	dh_install
 
