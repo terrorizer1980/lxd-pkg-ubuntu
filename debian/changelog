@@ -1,3 +1,10 @@
+lxd (2.12-0ubuntu2) zesty; urgency=medium
+
+  * Increate default inotify limits to 1024 instances per uid.
+    (LP: #1602192)
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Mon, 03 Apr 2017 18:51:34 -0400
+
 lxd (2.12-0ubuntu1) zesty; urgency=medium
 
   * New upstream release (2.12):
