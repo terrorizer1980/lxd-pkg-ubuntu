@@ -1,4 +1,4 @@
-From 40354436123a80420ce601389a604dcb9c732409 Mon Sep 17 00:00:00 2001
+From da62e8545cc6571bf1b2f595cc26e8c990a10e60 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
 Date: Wed, 5 Apr 2017 12:24:33 -0400
 Subject: Enable stacking for privileged containers
@@ -41,7 +41,7 @@ index 89881a89..b11be5b0 100644
  		profile += "\n  ### Feature: apparmor stacking (not present)\n"
  		profile += "  deny /sys/k*{,/**} rwklx,\n"
 diff --git a/lxd/container_lxc.go b/lxd/container_lxc.go
-index df1c89c3..624dc2e6 100644
+index 2247ee90..bbf2792a 100644
 --- a/lxd/container_lxc.go
 +++ b/lxd/container_lxc.go
 @@ -718,7 +718,7 @@ func (c *containerLXC) initLXC() error {

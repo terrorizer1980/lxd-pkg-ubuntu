@@ -1,0 +1,229 @@
+From 82baae4683455482e389b26b3e6fb5d9e63a0df5 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Mon, 20 Mar 2017 19:10:23 -0400
+Subject: i18n: Update translation templates
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ po/de.po   | 12 +++++++++++-
+ po/el.po   | 12 +++++++++++-
+ po/fr.po   | 12 +++++++++++-
+ po/ja.po   | 12 +++++++++++-
+ po/lxd.pot | 12 +++++++++++-
+ po/nl.po   | 12 +++++++++++-
+ po/ru.po   | 12 +++++++++++-
+ 7 files changed, 77 insertions(+), 7 deletions(-)
+
+diff --git a/po/de.po b/po/de.po
+index 2ee7c743..96bcfaa6 100644
+--- a/po/de.po
++++ b/po/de.po
+@@ -7,7 +7,7 @@ msgid ""
+ msgstr ""
+ "Project-Id-Version: LXD\n"
+ "Report-Msgid-Bugs-To: lxc-devel@lists.linuxcontainers.org\n"
+-"POT-Creation-Date: 2017-03-20 14:50-0400\n"
++"POT-Creation-Date: 2017-03-20 19:10-0400\n"
+ "PO-Revision-Date: 2017-02-14 17:11+0000\n"
+ "Last-Translator: Tim Rose <tim@netlope.de>\n"
+ "Language-Team: German <https://hosted.weblate.org/projects/linux-containers/"
+@@ -629,6 +629,16 @@ msgstr ""
+ msgid "Memory usage:"
+ msgstr ""
+ 
++#: lxc/copy.go:251
++#, c-format
++msgid "Migration failed on source host: %s"
++msgstr ""
++
++#: lxc/copy.go:255
++#, c-format
++msgid "Migration failed on target host: %s"
++msgstr ""
++
+ #: lxc/utils.go:173
+ msgid "Missing summary."
+ msgstr "Fehlende Zusammenfassung."
+diff --git a/po/el.po b/po/el.po
+index 8afd5d33..82e7d651 100644
+--- a/po/el.po
++++ b/po/el.po
+@@ -7,7 +7,7 @@ msgid ""
+ msgstr ""
+ "Project-Id-Version: lxd\n"
+ "Report-Msgid-Bugs-To: lxc-devel@lists.linuxcontainers.org\n"
+-"POT-Creation-Date: 2017-03-20 14:50-0400\n"
++"POT-Creation-Date: 2017-03-20 19:10-0400\n"
+ "PO-Revision-Date: 2017-02-14 08:00+0000\n"
+ "Last-Translator: Simos Xenitellis <simos.65@gmail.com>\n"
+ "Language-Team: Greek <https://hosted.weblate.org/projects/linux-containers/"
+@@ -533,6 +533,16 @@ msgstr ""
+ msgid "Memory usage:"
+ msgstr "  Χρήση μνήμης:"
+ 
++#: lxc/copy.go:251
++#, c-format
++msgid "Migration failed on source host: %s"
++msgstr ""
++
++#: lxc/copy.go:255
++#, c-format
++msgid "Migration failed on target host: %s"
++msgstr ""
++
+ #: lxc/utils.go:173
+ msgid "Missing summary."
+ msgstr ""
+diff --git a/po/fr.po b/po/fr.po
+index 1658caf9..476f9a44 100644
+--- a/po/fr.po
++++ b/po/fr.po
+@@ -7,7 +7,7 @@ msgid ""
+ msgstr ""
+ "Project-Id-Version: LXD\n"
+ "Report-Msgid-Bugs-To: lxc-devel@lists.linuxcontainers.org\n"
+-"POT-Creation-Date: 2017-03-20 14:50-0400\n"
++"POT-Creation-Date: 2017-03-20 19:10-0400\n"
+ "PO-Revision-Date: 2017-02-24 23:43+0000\n"
+ "Last-Translator: Christophe CHAUVET <christophe.chauvet@gmail.com>\n"
+ "Language-Team: French <https://hosted.weblate.org/projects/linux-containers/"
+@@ -618,6 +618,16 @@ msgstr "Mémoire (pointe)"
+ msgid "Memory usage:"
+ msgstr "  Mémoire utilisée :"
+ 
++#: lxc/copy.go:251
++#, c-format
++msgid "Migration failed on source host: %s"
++msgstr ""
++
++#: lxc/copy.go:255
++#, c-format
++msgid "Migration failed on target host: %s"
++msgstr ""
++
+ #: lxc/utils.go:173
+ msgid "Missing summary."
+ msgstr "Résumé manquant."
+diff --git a/po/ja.po b/po/ja.po
+index 97d701ff..27719d4e 100644
+--- a/po/ja.po
++++ b/po/ja.po
+@@ -7,7 +7,7 @@ msgid ""
+ msgstr ""
+ "Project-Id-Version: LXD\n"
+ "Report-Msgid-Bugs-To: lxc-devel@lists.linuxcontainers.org\n"
+-"POT-Creation-Date: 2017-03-20 14:50-0400\n"
++"POT-Creation-Date: 2017-03-20 19:10-0400\n"
+ "PO-Revision-Date: 2017-03-02 00:50+0000\n"
+ "Last-Translator: KATOH Yasufumi <karma@jazz.email.ne.jp>\n"
+ "Language-Team: Japanese <https://hosted.weblate.org/projects/linux-"
+@@ -532,6 +532,16 @@ msgstr "メモリ (ピーク)"
+ msgid "Memory usage:"
+ msgstr "メモリ消費量:"
+ 
++#: lxc/copy.go:251
++#, c-format
++msgid "Migration failed on source host: %s"
++msgstr ""
++
++#: lxc/copy.go:255
++#, c-format
++msgid "Migration failed on target host: %s"
++msgstr ""
++
+ #: lxc/utils.go:173
+ msgid "Missing summary."
+ msgstr "サマリーはありません。"
+diff --git a/po/lxd.pot b/po/lxd.pot
+index dd9f5187..9efcefd4 100644
+--- a/po/lxd.pot
++++ b/po/lxd.pot
+@@ -7,7 +7,7 @@
+ msgid   ""
+ msgstr  "Project-Id-Version: lxd\n"
+         "Report-Msgid-Bugs-To: lxc-devel@lists.linuxcontainers.org\n"
+-        "POT-Creation-Date: 2017-03-20 14:50-0400\n"
++        "POT-Creation-Date: 2017-03-20 19:10-0400\n"
+         "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+         "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+         "Language-Team: LANGUAGE <LL@li.org>\n"
+@@ -520,6 +520,16 @@ msgstr  ""
+ msgid   "Memory usage:"
+ msgstr  ""
+ 
++#: lxc/copy.go:251
++#, c-format
++msgid   "Migration failed on source host: %s"
++msgstr  ""
++
++#: lxc/copy.go:255
++#, c-format
++msgid   "Migration failed on target host: %s"
++msgstr  ""
++
+ #: lxc/utils.go:173
+ msgid   "Missing summary."
+ msgstr  ""
+diff --git a/po/nl.po b/po/nl.po
+index 3cfd1e3c..0ad280b5 100644
+--- a/po/nl.po
++++ b/po/nl.po
+@@ -7,7 +7,7 @@ msgid ""
+ msgstr ""
+ "Project-Id-Version: lxd\n"
+ "Report-Msgid-Bugs-To: lxc-devel@lists.linuxcontainers.org\n"
+-"POT-Creation-Date: 2017-03-20 14:50-0400\n"
++"POT-Creation-Date: 2017-03-20 19:10-0400\n"
+ "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+ "Last-Translator: Automatically generated\n"
+ "Language-Team: none\n"
+@@ -527,6 +527,16 @@ msgstr ""
+ msgid "Memory usage:"
+ msgstr ""
+ 
++#: lxc/copy.go:251
++#, c-format
++msgid "Migration failed on source host: %s"
++msgstr ""
++
++#: lxc/copy.go:255
++#, c-format
++msgid "Migration failed on target host: %s"
++msgstr ""
++
+ #: lxc/utils.go:173
+ msgid "Missing summary."
+ msgstr ""
+diff --git a/po/ru.po b/po/ru.po
+index 36642aa2..0da9d426 100644
+--- a/po/ru.po
++++ b/po/ru.po
+@@ -7,7 +7,7 @@ msgid ""
+ msgstr ""
+ "Project-Id-Version: lxd\n"
+ "Report-Msgid-Bugs-To: lxc-devel@lists.linuxcontainers.org\n"
+-"POT-Creation-Date: 2017-03-20 14:50-0400\n"
++"POT-Creation-Date: 2017-03-20 19:10-0400\n"
+ "PO-Revision-Date: 2017-02-14 09:54+0000\n"
+ "Last-Translator: Vyacheslav Razykov <v.razykov@gmail.com>\n"
+ "Language-Team: Russian <https://hosted.weblate.org/projects/linux-containers/"
+@@ -601,6 +601,16 @@ msgstr ""
+ msgid "Memory usage:"
+ msgstr " Использование памяти:"
+ 
++#: lxc/copy.go:251
++#, c-format
++msgid "Migration failed on source host: %s"
++msgstr ""
++
++#: lxc/copy.go:255
++#, c-format
++msgid "Migration failed on target host: %s"
++msgstr ""
++
+ #: lxc/utils.go:173
+ msgid "Missing summary."
+ msgstr ""

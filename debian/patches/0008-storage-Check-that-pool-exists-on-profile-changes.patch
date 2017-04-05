@@ -1,0 +1,115 @@
+From 84dd6cb7fa7cdb2aafa4b288be854f3a42c5f1ed Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Fri, 31 Mar 2017 15:58:12 -0400
+Subject: storage: Check that pool exists on profile changes
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Closes #3137
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ lxd/container.go      | 12 +++++++-----
+ lxd/container_lxc.go  |  6 +++---
+ lxd/profiles.go       |  2 +-
+ lxd/profiles_utils.go |  2 +-
+ 4 files changed, 12 insertions(+), 10 deletions(-)
+
+diff --git a/lxd/container.go b/lxd/container.go
+index 4dd72f8b..7a713881 100644
+--- a/lxd/container.go
++++ b/lxd/container.go
+@@ -257,7 +257,7 @@ func containerGetRootDiskDevice(devices types.Devices) (string, types.Device, er
+ 	return "", types.Device{}, fmt.Errorf("No root device could be found.")
+ }
+ 
+-func containerValidDevices(devices types.Devices, profile bool, expanded bool) error {
++func containerValidDevices(d *Daemon, devices types.Devices, profile bool, expanded bool) error {
+ 	// Empty device list
+ 	if devices == nil {
+ 		return nil
+@@ -320,12 +320,14 @@ func containerValidDevices(devices types.Devices, profile bool, expanded bool) e
+ 			}
+ 
+ 			if m["pool"] != "" {
+-				if storageValidName(m["pool"]) != nil {
+-					return fmt.Errorf("The specified storage pool name is not valid.")
+-				}
+ 				if filepath.IsAbs(m["source"]) {
+ 					return fmt.Errorf("Storage volumes cannot be specified as absolute paths.")
+ 				}
++
++				_, err := dbStoragePoolGetID(d.db, m["pool"])
++				if err != nil {
++					return fmt.Errorf("The \"%s\" storage pool doesn't exist.", m["pool"])
++				}
+ 			}
+ 
+ 		} else if shared.StringInSlice(m["type"], []string{"unix-char", "unix-block"}) {
+@@ -705,7 +707,7 @@ func containerCreateInternal(d *Daemon, args containerArgs) (container, error) {
+ 	}
+ 
+ 	// Validate container devices
+-	err = containerValidDevices(args.Devices, false, false)
++	err = containerValidDevices(d, args.Devices, false, false)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+diff --git a/lxd/container_lxc.go b/lxd/container_lxc.go
+index 565c0feb..2247ee90 100644
+--- a/lxd/container_lxc.go
++++ b/lxd/container_lxc.go
+@@ -218,7 +218,7 @@ func containerLXCCreate(d *Daemon, args containerArgs) (container, error) {
+ 		return nil, err
+ 	}
+ 
+-	err = containerValidDevices(c.expandedDevices, false, true)
++	err = containerValidDevices(d, c.expandedDevices, false, true)
+ 	if err != nil {
+ 		c.Delete()
+ 		shared.LogError("Failed creating container", ctxMap)
+@@ -3051,7 +3051,7 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
+ 	}
+ 
+ 	// Validate the new devices
+-	err = containerValidDevices(args.Devices, false, false)
++	err = containerValidDevices(c.daemon, args.Devices, false, false)
+ 	if err != nil {
+ 		return err
+ 	}
+@@ -3208,7 +3208,7 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
+ 	}
+ 
+ 	// Do some validation of the devices diff
+-	err = containerValidDevices(c.expandedDevices, false, true)
++	err = containerValidDevices(c.daemon, c.expandedDevices, false, true)
+ 	if err != nil {
+ 		return err
+ 	}
+diff --git a/lxd/profiles.go b/lxd/profiles.go
+index eb64ef29..ca2c660e 100644
+--- a/lxd/profiles.go
++++ b/lxd/profiles.go
+@@ -81,7 +81,7 @@ func profilesPost(d *Daemon, r *http.Request) Response {
+ 		return BadRequest(err)
+ 	}
+ 
+-	err = containerValidDevices(req.Devices, true, false)
++	err = containerValidDevices(d, req.Devices, true, false)
+ 	if err != nil {
+ 		return BadRequest(err)
+ 	}
+diff --git a/lxd/profiles_utils.go b/lxd/profiles_utils.go
+index c432b63e..3b3ae7ef 100644
+--- a/lxd/profiles_utils.go
++++ b/lxd/profiles_utils.go
+@@ -14,7 +14,7 @@ func doProfileUpdate(d *Daemon, name string, id int64, profile *api.Profile, req
+ 		return BadRequest(err)
+ 	}
+ 
+-	err = containerValidDevices(req.Devices, true, false)
++	err = containerValidDevices(d, req.Devices, true, false)
+ 	if err != nil {
+ 		return BadRequest(err)
+ 	}

@@ -218,7 +218,7 @@ func containerLXCCreate(d *Daemon, args containerArgs) (container, error) {
 		return nil, err
 	}
 
-	err = containerValidDevices(c.expandedDevices, false, true)
+	err = containerValidDevices(d, c.expandedDevices, false, true)
 	if err != nil {
 		c.Delete()
 		shared.LogError("Failed creating container", ctxMap)
@@ -2561,6 +2561,14 @@ func (c *containerLXC) Restore(sourceContainer container) error {
 		return err
 	}
 
+	ourStart, err := c.StorageStart()
+	if err != nil {
+		return err
+	}
+	if ourStart {
+		defer c.StorageStop()
+	}
+
 	// Check if we can restore the container
 	err = c.storage.ContainerCanRestore(c, sourceContainer)
 	if err != nil {
@@ -2581,8 +2589,20 @@ func (c *containerLXC) Restore(sourceContainer container) error {
 	wasRunning := false
 	if c.IsRunning() {
 		wasRunning = true
-		if err := c.Stop(false); err != nil {
+
+		// This will unmount the container storage.
+		err := c.Stop(false)
+		if err != nil {
 			return err
+		}
+
+		// Ensure that storage is mounted for state path checks.
+		ourStart, err := c.StorageStart()
+		if err != nil {
+			return err
+		}
+		if ourStart {
+			defer c.StorageStop()
 		}
 	}
 
@@ -2627,7 +2647,9 @@ func (c *containerLXC) Restore(sourceContainer container) error {
 	// If the container wasn't running but was stateful, should we restore
 	// it as running?
 	if shared.PathExists(c.StatePath()) {
-		if err := c.Migrate(lxc.MIGRATE_RESTORE, c.StatePath(), "snapshot", false, false); err != nil {
+		shared.LogDebug("Performing stateful restore", ctxMap)
+		err := c.Migrate(lxc.MIGRATE_RESTORE, c.StatePath(), "snapshot", false, false)
+		if err != nil {
 			return err
 		}
 
@@ -2643,6 +2665,7 @@ func (c *containerLXC) Restore(sourceContainer container) error {
 			return err
 		}
 
+		shared.LogDebug("Performed stateful restore", ctxMap)
 		shared.LogInfo("Restored container", ctxMap)
 		return nil
 	}
@@ -3028,7 +3051,7 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 	}
 
 	// Validate the new devices
-	err = containerValidDevices(args.Devices, false, false)
+	err = containerValidDevices(c.daemon, args.Devices, false, false)
 	if err != nil {
 		return err
 	}
@@ -3185,7 +3208,7 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 	}
 
 	// Do some validation of the devices diff
-	err = containerValidDevices(c.expandedDevices, false, true)
+	err = containerValidDevices(c.daemon, c.expandedDevices, false, true)
 	if err != nil {
 		return err
 	}
@@ -5441,8 +5464,10 @@ func (c *containerLXC) removeUnixDevice(m types.Device) error {
 	}
 
 	dType := ""
-	if m["type"] != "" {
-		dType = m["type"]
+	if m["type"] == "unix-char" {
+		dType = "c"
+	} else if m["type"] == "unix-block" {
+		dType = "b"
 	}
 
 	if dType == "" || dMajor < 0 || dMinor < 0 {

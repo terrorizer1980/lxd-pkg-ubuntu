@@ -1,1 +1,11 @@
-0001-Enable-stacking-for-privileged-containers.patch
+0001-lxc-copy-Return-the-source-error-too.patch
+0002-i18n-Update-translation-templates.patch
+0003-migration-fix-stateful-restore.patch
+0004-Fix-unix-device-removal-bad-cgroup.deny-entry.patch
+0005-containers_post-better-error-message.patch
+0006-lxd-container-Typo-in-securtiy.syscalls.blacklist.patch
+0007-operations-Remove-useless-for-loops.patch
+0008-storage-Check-that-pool-exists-on-profile-changes.patch
+0009-profiles-Fix-ETag-handling.patch
+0010-Enable-stacking-for-privileged-containers.patch
+0011-client-fix-file-push.patch

@@ -1,0 +1,66 @@
+From 79a1f8e9446d80b5fa51105ec9cb20c0cd2dd6fa Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Mon, 20 Mar 2017 18:45:29 -0400
+Subject: lxc/copy: Return the source error too
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This will get us rid off the annoying "bad handshake" error.
+
+Closes #3086
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ client.go   | 10 +++++++++-
+ lxc/copy.go |  9 ++++++++-
+ 2 files changed, 17 insertions(+), 2 deletions(-)
+
+diff --git a/client.go b/client.go
+index a0a1050a..520228e9 100644
+--- a/client.go
++++ b/client.go
+@@ -2225,7 +2225,6 @@ func (c *Client) WaitFor(waitURL string) (*api.Operation, error) {
+ 	 * "/<version>/operations/" in it; we chop off the leading / and pass
+ 	 * it to url directly.
+ 	 */
+-	shared.LogDebugf(path.Join(waitURL[1:], "wait"))
+ 	resp, err := c.baseGet(c.url(waitURL, "wait"))
+ 	if err != nil {
+ 		return nil, err
+@@ -2234,6 +2233,15 @@ func (c *Client) WaitFor(waitURL string) (*api.Operation, error) {
+ 	return resp.MetadataAsOperation()
+ }
+ 
++func (c *Client) GetOperation(url string) (*api.Operation, error) {
++	resp, err := c.baseGet(c.url(url))
++	if err != nil {
++		return nil, err
++	}
++
++	return resp.MetadataAsOperation()
++}
++
+ func (c *Client) WaitForSuccess(waitURL string) error {
+ 	op, err := c.WaitFor(waitURL)
+ 	if err != nil {
+diff --git a/lxc/copy.go b/lxc/copy.go
+index 0e6445d7..1ff5dd5f 100644
+--- a/lxc/copy.go
++++ b/lxc/copy.go
+@@ -245,7 +245,14 @@ func (c *copyCmd) copyContainer(config *lxd.Config, sourceResource string, destR
+ 		return nil
+ 	}
+ 
+-	return err
++	// Check for an error at the source
++	sourceOp, sourceErr := source.GetOperation(sourceWSResponse.Operation)
++	if sourceErr == nil && sourceOp.Err != "" {
++		return fmt.Errorf(i18n.G("Migration failed on source host: %s"), sourceOp.Err)
++	}
++
++	// Return the error from destination
++	return fmt.Errorf(i18n.G("Migration failed on target host: %s"), err)
+ }
+ 
+ func (c *copyCmd) run(config *lxd.Config, args []string) error {
