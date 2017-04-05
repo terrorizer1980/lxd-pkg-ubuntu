@@ -1,0 +1,64 @@
+From 40354436123a80420ce601389a604dcb9c732409 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Wed, 5 Apr 2017 12:24:33 -0400
+Subject: Enable stacking for privileged containers
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ lxd/apparmor.go      | 10 ++--------
+ lxd/container_lxc.go |  4 ++--
+ 2 files changed, 4 insertions(+), 10 deletions(-)
+
+diff --git a/lxd/apparmor.go b/lxd/apparmor.go
+index 89881a89..b11be5b0 100644
+--- a/lxd/apparmor.go
++++ b/lxd/apparmor.go
+@@ -320,12 +320,7 @@ func getAAProfileContent(c container) string {
+ 
+ 	if aaStacking {
+ 		profile += "\n  ### Feature: apparmor stacking\n"
+-
+-		if c.IsPrivileged() {
+-			profile += "\n  ### Configuration: apparmor loading disabled in privileged containers\n"
+-			profile += "  deny /sys/k*{,/**} rwklx,\n"
+-		} else {
+-			profile += `  ### Configuration: apparmor loading in unprivileged containers
++		profile += `  ### Configuration: apparmor profile loading (in namespace)
+   deny /sys/k[^e]*{,/**} wklx,
+   deny /sys/ke[^r]*{,/**} wklx,
+   deny /sys/ker[^n]*{,/**} wklx,
+@@ -351,8 +346,7 @@ func getAAProfileContent(c container) string {
+   deny /sys/kernel/security?*{,/**} wklx,
+   deny /sys/kernel?*{,/**} wklx,
+ `
+-			profile += fmt.Sprintf("  change_profile -> \":%s://*\",\n", AANamespace(c))
+-		}
++		profile += fmt.Sprintf("  change_profile -> \":%s://*\",\n", AANamespace(c))
+ 	} else {
+ 		profile += "\n  ### Feature: apparmor stacking (not present)\n"
+ 		profile += "  deny /sys/k*{,/**} rwklx,\n"
+diff --git a/lxd/container_lxc.go b/lxd/container_lxc.go
+index df1c89c3..624dc2e6 100644
+--- a/lxd/container_lxc.go
++++ b/lxd/container_lxc.go
+@@ -718,7 +718,7 @@ func (c *containerLXC) initLXC() error {
+ 
+ 	// Base config
+ 	toDrop := "sys_time sys_module sys_rawio"
+-	if !aaStacking || c.IsPrivileged() {
++	if !aaStacking {
+ 		toDrop = toDrop + " mac_admin mac_override"
+ 	}
+ 
+@@ -937,7 +937,7 @@ func (c *containerLXC) initLXC() error {
+ 			 * the old way of nesting, i.e. using the parent's
+ 			 * profile.
+ 			 */
+-			if aaStacking && (!c.IsNesting() || !c.IsPrivileged()) {
++			if aaStacking {
+ 				profile = fmt.Sprintf("%s//&:%s:", profile, AANamespace(c))
+ 			}
+ 
