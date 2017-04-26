@@ -18,6 +18,18 @@ import (
 )
 
 // Helper functions
+
+// Returns the parent container name, snapshot name, and whether it actually was
+// a snapshot name.
+func containerGetParentAndSnapshotName(name string) (string, string, bool) {
+	fields := strings.SplitN(name, shared.SnapshotDelimiter, 2)
+	if len(fields) == 1 {
+		return name, "", false
+	}
+
+	return fields[0], fields[1], true
+}
+
 func containerPath(name string, isSnapshot bool) string {
 	if isSnapshot {
 		return shared.VarPath("snapshots", name)
@@ -79,6 +91,8 @@ func containerValidDeviceConfigKey(t, k string) bool {
 		case "minor":
 			return true
 		case "mode":
+			return true
+		case "source":
 			return true
 		case "path":
 			return true
@@ -331,16 +345,20 @@ func containerValidDevices(d *Daemon, devices types.Devices, profile bool, expan
 			}
 
 		} else if shared.StringInSlice(m["type"], []string{"unix-char", "unix-block"}) {
-			if m["path"] == "" {
-				return fmt.Errorf("Unix device entry is missing the required \"path\" property.")
+			if m["source"] == "" && m["path"] == "" {
+				return fmt.Errorf("Unix device entry is missing the required \"source\" or \"path\" property.")
 			}
 
 			if m["major"] == "" || m["minor"] == "" {
-				if !shared.PathExists(m["path"]) {
+				srcPath, exist := m["source"]
+				if !exist {
+					srcPath = m["path"]
+				}
+				if !shared.PathExists(srcPath) {
 					return fmt.Errorf("The device path doesn't exist on the host and major/minor wasn't specified.")
 				}
 
-				dType, _, _, err := deviceGetAttributes(m["path"])
+				dType, _, _, err := deviceGetAttributes(srcPath)
 				if err != nil {
 					return err
 				}
@@ -578,27 +596,69 @@ func containerCreateFromImage(d *Daemon, args containerArgs, hash string) (conta
 	return c, nil
 }
 
-func containerCreateAsCopy(d *Daemon, args containerArgs, sourceContainer container) (container, error) {
-	// Create the container
-	c, err := containerCreateInternal(d, args)
+func containerCreateAsCopy(d *Daemon, args containerArgs, sourceContainer container, containerOnly bool) (container, error) {
+	// Create the container.
+	ct, err := containerCreateInternal(d, args)
 	if err != nil {
 		return nil, err
 	}
 
-	// Now clone the storage
-	if err := c.Storage().ContainerCopy(c, sourceContainer); err != nil {
-		c.Delete()
+	csList := []*container{}
+	if !containerOnly {
+		snapshots, err := sourceContainer.Snapshots()
+		if err != nil {
+			return nil, err
+		}
+
+		csList = make([]*container, len(snapshots))
+		for i, snap := range snapshots {
+			fields := strings.SplitN(snap.Name(), shared.SnapshotDelimiter, 2)
+			newSnapName := fmt.Sprintf("%s/%s", ct.Name(), fields[1])
+			csArgs := containerArgs{
+				Architecture: snap.Architecture(),
+				Config:       snap.LocalConfig(),
+				Ctype:        cTypeSnapshot,
+				Devices:      snap.LocalDevices(),
+				Ephemeral:    snap.IsEphemeral(),
+				Name:         newSnapName,
+				Profiles:     snap.Profiles(),
+			}
+
+			// Create the snapshots.
+			cs, err := containerCreateInternal(d, csArgs)
+			if err != nil {
+				return nil, err
+			}
+
+			csList[i] = &cs
+		}
+	}
+
+	// Now clone the storage.
+	if err := ct.Storage().ContainerCopy(ct, sourceContainer, containerOnly); err != nil {
+		ct.Delete()
 		return nil, err
 	}
 
-	// Apply any post-storage configuration
-	err = containerConfigureInternal(c)
+	// Apply any post-storage configuration.
+	err = containerConfigureInternal(ct)
 	if err != nil {
-		c.Delete()
+		ct.Delete()
 		return nil, err
 	}
 
-	return c, nil
+	if !containerOnly {
+		for _, cs := range csList {
+			// Apply any post-storage configuration.
+			err = containerConfigureInternal(*cs)
+			if err != nil {
+				(*cs).Delete()
+				return nil, err
+			}
+		}
+	}
+
+	return ct, nil
 }
 
 func containerCreateAsSnapshot(d *Daemon, args containerArgs, sourceContainer container) (container, error) {

@@ -22,6 +22,9 @@ type ContainerPost struct {
 
 	// API extension: container_stateless_copy
 	Live bool `json:"live" yaml:"live"`
+
+	// API extension: container_only_migration
+	ContainerOnly bool `json:"container_only" yaml:"container_only"`
 }
 
 // ContainerPut represents the modifiable fields of a LXD container
@@ -31,7 +34,10 @@ type ContainerPut struct {
 	Devices      map[string]map[string]string `json:"devices" yaml:"devices"`
 	Ephemeral    bool                         `json:"ephemeral" yaml:"ephemeral"`
 	Profiles     []string                     `json:"profiles" yaml:"profiles"`
-	Restore      string                       `json:"restore,omitempty" yaml:"restore,omitempty"`
+
+	// For snapshot restore
+	Restore  string `json:"restore,omitempty" yaml:"restore,omitempty"`
+	Stateful bool   `json:"stateful" yaml:"stateful"`
 }
 
 // Container represents a LXD container
@@ -42,7 +48,6 @@ type Container struct {
 	ExpandedConfig  map[string]string            `json:"expanded_config" yaml:"expanded_config"`
 	ExpandedDevices map[string]map[string]string `json:"expanded_devices" yaml:"expanded_devices"`
 	Name            string                       `json:"name" yaml:"name"`
-	Stateful        bool                         `json:"stateful" yaml:"stateful"`
 	Status          string                       `json:"status" yaml:"status"`
 	StatusCode      StatusCode                   `json:"status_code" yaml:"status_code"`
 
@@ -93,4 +98,7 @@ type ContainerSource struct {
 
 	// For "copy" type
 	Source string `json:"source,omitempty" yaml:"source,omitempty"`
+
+	// API extension: container_only_migration
+	ContainerOnly bool `json:"container_only,omitempty" yaml:"container_only,omitempty"`
 }

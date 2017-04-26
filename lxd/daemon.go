@@ -29,9 +29,9 @@ import (
 	"github.com/syndtr/gocapability/capability"
 	"gopkg.in/tomb.v2"
 
-	"github.com/lxc/lxd"
+	"github.com/lxc/lxd/client"
 	"github.com/lxc/lxd/shared"
-	"github.com/lxc/lxd/shared/api"
+	"github.com/lxc/lxd/shared/logger"
 	"github.com/lxc/lxd/shared/logging"
 	"github.com/lxc/lxd/shared/osarch"
 	"github.com/lxc/lxd/shared/version"
@@ -40,10 +40,11 @@ import (
 )
 
 // AppArmor
-var aaAdmin = true
-var aaAvailable = true
+var aaAvailable = false
+var aaAdmin = false
 var aaConfined = false
 var aaStacking = false
+var aaStacked = false
 
 // CGroup
 var cgBlkioController = false
@@ -148,74 +149,10 @@ func (d *Daemon) httpClient(certificate string) (*http.Client, error) {
 	return &myhttp, nil
 }
 
-func (d *Daemon) httpGetSync(url string, certificate string) (*api.Response, error) {
-	var err error
-
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("User-Agent", version.UserAgent)
-
-	myhttp, err := d.httpClient(certificate)
-	if err != nil {
-		return nil, err
-	}
-
-	r, err := myhttp.Do(req)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := lxd.ParseResponse(r)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp.Type != api.SyncResponse {
-		return nil, fmt.Errorf("unexpected non-sync response")
-	}
-
-	return resp, nil
-}
-
-func (d *Daemon) httpGetFile(url string, certificate string) (*http.Response, error) {
-	var err error
-
-	myhttp, err := d.httpClient(certificate)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("User-Agent", version.UserAgent)
-
-	raw, err := myhttp.Do(req)
-	if err != nil {
-		return nil, err
-	}
-
-	if raw.StatusCode != 200 {
-		_, err := lxd.HoistResponse(raw, api.ErrorResponse)
-		if err != nil {
-			return nil, err
-		}
-
-		return nil, fmt.Errorf("non-200 status with no error response?")
-	}
-
-	return raw, nil
-}
-
 func readMyCert() (string, string, error) {
 	certf := shared.VarPath("server.crt")
 	keyf := shared.VarPath("server.key")
-	shared.LogDebug("Looking for existing certificates", log.Ctx{"cert": certf, "key": keyf})
+	logger.Debug("Looking for existing certificates", log.Ctx{"cert": certf, "key": keyf})
 	err := shared.FindOrGenCert(certf, keyf, false)
 
 	return certf, keyf, err
@@ -274,19 +211,19 @@ func (d *Daemon) createCmd(version string, c Command) {
 		w.Header().Set("Content-Type", "application/json")
 
 		if d.isTrustedClient(r) {
-			shared.LogDebug(
+			logger.Debug(
 				"handling",
 				log.Ctx{"method": r.Method, "url": r.URL.RequestURI(), "ip": r.RemoteAddr})
 		} else if r.Method == "GET" && c.untrustedGet {
-			shared.LogDebug(
+			logger.Debug(
 				"allowing untrusted GET",
 				log.Ctx{"url": r.URL.RequestURI(), "ip": r.RemoteAddr})
 		} else if r.Method == "POST" && c.untrustedPost {
-			shared.LogDebug(
+			logger.Debug(
 				"allowing untrusted POST",
 				log.Ctx{"url": r.URL.RequestURI(), "ip": r.RemoteAddr})
 		} else {
-			shared.LogWarn(
+			logger.Warn(
 				"rejecting request from untrusted client",
 				log.Ctx{"ip": r.RemoteAddr})
 			Forbidden.Render(w)
@@ -337,7 +274,7 @@ func (d *Daemon) createCmd(version string, c Command) {
 		if err := resp.Render(w); err != nil {
 			err := InternalError(err).Render(w)
 			if err != nil {
-				shared.LogErrorf("Failed writing error for error, giving up")
+				logger.Errorf("Failed writing error for error, giving up")
 			}
 		}
 
@@ -359,10 +296,10 @@ func (d *Daemon) SetupStorageDriver(forceCheck bool) error {
 	pools, err := dbStoragePools(d.db)
 	if err != nil {
 		if err == NoSuchObjectError {
-			shared.LogDebugf("No existing storage pools detected.")
+			logger.Debugf("No existing storage pools detected.")
 			return nil
 		}
-		shared.LogDebugf("Failed to retrieve existing storage pools.")
+		logger.Debugf("Failed to retrieve existing storage pools.")
 		return err
 	}
 
@@ -379,17 +316,17 @@ func (d *Daemon) SetupStorageDriver(forceCheck bool) error {
 		}
 
 		if !shared.StringInSlice("storage_api", appliedPatches) {
-			shared.LogWarnf("Incorrectly applied \"storage_api\" patch. Skipping storage pool initialization as it might be corrupt.")
+			logger.Warnf("Incorrectly applied \"storage_api\" patch. Skipping storage pool initialization as it might be corrupt.")
 			return nil
 		}
 
 	}
 
 	for _, pool := range pools {
-		shared.LogDebugf("Initializing and checking storage pool \"%s\".", pool)
+		logger.Debugf("Initializing and checking storage pool \"%s\".", pool)
 		s, err := storagePoolInit(d, pool)
 		if err != nil {
-			shared.LogErrorf("Error initializing storage pool \"%s\": %s. Correct functionality of the storage pool cannot be guaranteed.", pool, err)
+			logger.Errorf("Error initializing storage pool \"%s\": %s. Correct functionality of the storage pool cannot be guaranteed.", pool, err)
 			continue
 		}
 
@@ -587,8 +524,8 @@ func (d *Daemon) Init() error {
 	}
 
 	/* Setup logging if that wasn't done before */
-	if shared.Log == nil {
-		shared.Log, err = logging.GetLogger("", "", true, true, nil)
+	if logger.Log == nil {
+		logger.Log, err = logging.GetLogger("", "", true, true, nil)
 		if err != nil {
 			return err
 		}
@@ -596,149 +533,150 @@ func (d *Daemon) Init() error {
 
 	/* Print welcome message */
 	if d.MockMode {
-		shared.LogInfo(fmt.Sprintf("LXD %s is starting in mock mode", version.Version),
+		logger.Info(fmt.Sprintf("LXD %s is starting in mock mode", version.Version),
 			log.Ctx{"path": shared.VarPath("")})
 	} else if d.SetupMode {
-		shared.LogInfo(fmt.Sprintf("LXD %s is starting in setup mode", version.Version),
+		logger.Info(fmt.Sprintf("LXD %s is starting in setup mode", version.Version),
 			log.Ctx{"path": shared.VarPath("")})
 	} else {
-		shared.LogInfo(fmt.Sprintf("LXD %s is starting in normal mode", version.Version),
+		logger.Info(fmt.Sprintf("LXD %s is starting in normal mode", version.Version),
 			log.Ctx{"path": shared.VarPath("")})
 	}
 
 	/* Detect user namespaces */
 	runningInUserns = shared.RunningInUserNS()
 
-	/* Detect AppArmor support */
-	if aaAvailable && os.Getenv("LXD_SECURITY_APPARMOR") == "false" {
-		aaAvailable = false
-		aaAdmin = false
-		shared.LogWarnf("AppArmor support has been manually disabled")
-	}
-
-	if aaAvailable && !shared.IsDir("/sys/kernel/security/apparmor") {
-		aaAvailable = false
-		aaAdmin = false
-		shared.LogWarnf("AppArmor support has been disabled because of lack of kernel support")
-	}
-
+	/* Detect AppArmor availability */
 	_, err = exec.LookPath("apparmor_parser")
-	if aaAvailable && err != nil {
-		aaAvailable = false
-		aaAdmin = false
-		shared.LogWarnf("AppArmor support has been disabled because 'apparmor_parser' couldn't be found")
+	if os.Getenv("LXD_SECURITY_APPARMOR") == "false" {
+		logger.Warnf("AppArmor support has been manually disabled")
+	} else if !shared.IsDir("/sys/kernel/security/apparmor") {
+		logger.Warnf("AppArmor support has been disabled because of lack of kernel support")
+	} else if err != nil {
+		logger.Warnf("AppArmor support has been disabled because 'apparmor_parser' couldn't be found")
+	} else {
+		aaAvailable = true
+	}
+
+	/* Detect AppArmor stacking support */
+	aaCanStack := func() bool {
+		contentBytes, err := ioutil.ReadFile("/sys/kernel/security/apparmor/features/domain/stack")
+		if err != nil {
+			return false
+		}
+
+		if string(contentBytes) != "yes\n" {
+			return false
+		}
+
+		contentBytes, err = ioutil.ReadFile("/sys/kernel/security/apparmor/features/domain/version")
+		if err != nil {
+			return false
+		}
+
+		content := string(contentBytes)
+
+		parts := strings.Split(strings.TrimSpace(content), ".")
+
+		if len(parts) == 0 {
+			logger.Warn("unknown apparmor domain version", log.Ctx{"version": content})
+			return false
+		}
+
+		major, err := strconv.Atoi(parts[0])
+		if err != nil {
+			logger.Warn("unknown apparmor domain version", log.Ctx{"version": content})
+			return false
+		}
+
+		minor := 0
+		if len(parts) == 2 {
+			minor, err = strconv.Atoi(parts[1])
+			if err != nil {
+				logger.Warn("unknown apparmor domain version", log.Ctx{"version": content})
+				return false
+			}
+		}
+
+		return major >= 1 && minor >= 2
+	}
+
+	aaStacking = aaCanStack()
+
+	/* Detect existing AppArmor stack */
+	if shared.PathExists("/sys/kernel/security/apparmor/.ns_stacked") {
+		contentBytes, err := ioutil.ReadFile("/sys/kernel/security/apparmor/.ns_stacked")
+		if err == nil && string(contentBytes) == "yes\n" {
+			aaStacked = true
+		}
 	}
 
 	/* Detect AppArmor admin support */
-	if aaAdmin && !haveMacAdmin() {
-		aaAdmin = false
-		shared.LogWarnf("Per-container AppArmor profiles are disabled because the mac_admin capability is missing.")
-	}
-
-	if aaAdmin && runningInUserns {
-		aaAdmin = false
-		shared.LogWarnf("Per-container AppArmor profiles are disabled because LXD is running in an unprivileged container.")
+	if !haveMacAdmin() {
+		if aaAvailable {
+			logger.Warnf("Per-container AppArmor profiles are disabled because the mac_admin capability is missing.")
+		}
+	} else if runningInUserns && !aaStacked {
+		if aaAvailable {
+			logger.Warnf("Per-container AppArmor profiles are disabled because LXD is running in an unprivileged container without stacking.")
+		}
+	} else {
+		aaAdmin = true
 	}
 
 	/* Detect AppArmor confinment */
-	if !aaConfined {
-		profile := aaProfile()
-		if profile != "unconfined" && profile != "" {
-			aaConfined = true
-			shared.LogWarnf("Per-container AppArmor profiles are disabled because LXD is already protected by AppArmor.")
+	profile := aaProfile()
+	if profile != "unconfined" && profile != "" {
+		if aaAvailable {
+			logger.Warnf("Per-container AppArmor profiles are disabled because LXD is already protected by AppArmor.")
 		}
-	}
-
-	if aaAvailable {
-		canStack := func() bool {
-			contentBytes, err := ioutil.ReadFile("/sys/kernel/security/apparmor/features/domain/stack")
-			if err != nil {
-				return false
-			}
-
-			if string(contentBytes) != "yes\n" {
-				return false
-			}
-
-			contentBytes, err = ioutil.ReadFile("/sys/kernel/security/apparmor/features/domain/version")
-			if err != nil {
-				return false
-			}
-
-			content := string(contentBytes)
-
-			parts := strings.Split(strings.TrimSpace(content), ".")
-
-			if len(parts) == 0 {
-				shared.LogWarn("unknown apparmor domain version", log.Ctx{"version": content})
-				return false
-			}
-
-			major, err := strconv.Atoi(parts[0])
-			if err != nil {
-				shared.LogWarn("unknown apparmor domain version", log.Ctx{"version": content})
-				return false
-			}
-
-			minor := 0
-			if len(parts) == 2 {
-				minor, err = strconv.Atoi(parts[1])
-				if err != nil {
-					shared.LogWarn("unknown apparmor domain version", log.Ctx{"version": content})
-					return false
-				}
-			}
-
-			return major >= 1 && minor >= 2
-		}
-
-		aaStacking = canStack()
+		aaConfined = true
 	}
 
 	/* Detect CGroup support */
 	cgBlkioController = shared.PathExists("/sys/fs/cgroup/blkio/")
 	if !cgBlkioController {
-		shared.LogWarnf("Couldn't find the CGroup blkio controller, I/O limits will be ignored.")
+		logger.Warnf("Couldn't find the CGroup blkio controller, I/O limits will be ignored.")
 	}
 
 	cgCpuController = shared.PathExists("/sys/fs/cgroup/cpu/")
 	if !cgCpuController {
-		shared.LogWarnf("Couldn't find the CGroup CPU controller, CPU time limits will be ignored.")
+		logger.Warnf("Couldn't find the CGroup CPU controller, CPU time limits will be ignored.")
 	}
 
 	cgCpuacctController = shared.PathExists("/sys/fs/cgroup/cpuacct/")
 	if !cgCpuacctController {
-		shared.LogWarnf("Couldn't find the CGroup CPUacct controller, CPU accounting will not be available.")
+		logger.Warnf("Couldn't find the CGroup CPUacct controller, CPU accounting will not be available.")
 	}
 
 	cgCpusetController = shared.PathExists("/sys/fs/cgroup/cpuset/")
 	if !cgCpusetController {
-		shared.LogWarnf("Couldn't find the CGroup CPUset controller, CPU pinning will be ignored.")
+		logger.Warnf("Couldn't find the CGroup CPUset controller, CPU pinning will be ignored.")
 	}
 
 	cgDevicesController = shared.PathExists("/sys/fs/cgroup/devices/")
 	if !cgDevicesController {
-		shared.LogWarnf("Couldn't find the CGroup devices controller, device access control won't work.")
+		logger.Warnf("Couldn't find the CGroup devices controller, device access control won't work.")
 	}
 
 	cgMemoryController = shared.PathExists("/sys/fs/cgroup/memory/")
 	if !cgMemoryController {
-		shared.LogWarnf("Couldn't find the CGroup memory controller, memory limits will be ignored.")
+		logger.Warnf("Couldn't find the CGroup memory controller, memory limits will be ignored.")
 	}
 
 	cgNetPrioController = shared.PathExists("/sys/fs/cgroup/net_prio/")
 	if !cgNetPrioController {
-		shared.LogWarnf("Couldn't find the CGroup network class controller, network limits will be ignored.")
+		logger.Warnf("Couldn't find the CGroup network class controller, network limits will be ignored.")
 	}
 
 	cgPidsController = shared.PathExists("/sys/fs/cgroup/pids/")
 	if !cgPidsController {
-		shared.LogWarnf("Couldn't find the CGroup pids controller, process limits will be ignored.")
+		logger.Warnf("Couldn't find the CGroup pids controller, process limits will be ignored.")
 	}
 
 	cgSwapAccounting = shared.PathExists("/sys/fs/cgroup/memory/memory.memsw.limit_in_bytes")
 	if !cgSwapAccounting {
-		shared.LogWarnf("CGroup memory swap accounting is disabled, swap limits will be ignored.")
+		logger.Warnf("CGroup memory swap accounting is disabled, swap limits will be ignored.")
 	}
 
 	/* Get the list of supported architectures */
@@ -811,30 +749,30 @@ func (d *Daemon) Init() error {
 	/* Detect the filesystem */
 	d.BackingFs, err = filesystemDetect(d.lxcpath)
 	if err != nil {
-		shared.LogError("Error detecting backing fs", log.Ctx{"err": err})
+		logger.Error("Error detecting backing fs", log.Ctx{"err": err})
 	}
 
 	/* Read the uid/gid allocation */
 	d.IdmapSet, err = shared.DefaultIdmapSet()
 	if err != nil {
-		shared.LogWarn("Error reading default uid/gid map", log.Ctx{"err": err.Error()})
-		shared.LogWarnf("Only privileged containers will be able to run")
+		logger.Warn("Error reading default uid/gid map", log.Ctx{"err": err.Error()})
+		logger.Warnf("Only privileged containers will be able to run")
 		d.IdmapSet = nil
 	} else {
 		kernelIdmapSet, err := shared.CurrentIdmapSet()
 		if err == nil {
-			shared.LogInfof("Kernel uid/gid map:")
+			logger.Infof("Kernel uid/gid map:")
 			for _, lxcmap := range kernelIdmapSet.ToLxcString() {
-				shared.LogInfof(strings.TrimRight(" - "+lxcmap, "\n"))
+				logger.Infof(strings.TrimRight(" - "+lxcmap, "\n"))
 			}
 		}
 
 		if len(d.IdmapSet.Idmap) == 0 {
-			shared.LogWarnf("No available uid/gid map could be found")
-			shared.LogWarnf("Only privileged containers will be able to run")
+			logger.Warnf("No available uid/gid map could be found")
+			logger.Warnf("Only privileged containers will be able to run")
 			d.IdmapSet = nil
 		} else {
-			shared.LogInfof("Configured LXD uid/gid map:")
+			logger.Infof("Configured LXD uid/gid map:")
 			for _, lxcmap := range d.IdmapSet.Idmap {
 				suffix := ""
 
@@ -843,14 +781,14 @@ func (d *Daemon) Init() error {
 				}
 
 				for _, lxcEntry := range lxcmap.ToLxcString() {
-					shared.LogInfof(" - %s%s", strings.TrimRight(lxcEntry, "\n"), suffix)
+					logger.Infof(" - %s%s", strings.TrimRight(lxcEntry, "\n"), suffix)
 				}
 			}
 
 			err = d.IdmapSet.Usable()
 			if err != nil {
-				shared.LogWarnf("One or more uid/gid map entry isn't usable (typically due to nesting)")
-				shared.LogWarnf("Only privileged containers will be able to run")
+				logger.Warnf("One or more uid/gid map entry isn't usable (typically due to nesting)")
+				logger.Warnf("Only privileged containers will be able to run")
 				d.IdmapSet = nil
 			}
 		}
@@ -898,14 +836,14 @@ func (d *Daemon) Init() error {
 	go func() {
 		t := time.NewTicker(24 * time.Hour)
 		for {
-			shared.LogInfof("Expiring log files")
+			logger.Infof("Expiring log files")
 
 			err := d.ExpireLogs()
 			if err != nil {
-				shared.LogError("Failed to expire logs", log.Ctx{"err": err})
+				logger.Error("Failed to expire logs", log.Ctx{"err": err})
 			}
 
-			shared.LogInfof("Done expiring log files")
+			logger.Infof("Done expiring log files")
 			<-t.C
 		}
 	}()
@@ -929,7 +867,7 @@ func (d *Daemon) Init() error {
 	}
 
 	/* Setup /dev/lxd */
-	shared.LogInfof("Starting /dev/lxd handler")
+	logger.Infof("Starting /dev/lxd handler")
 	d.devlxd, err = createAndBindDevLxd()
 	if err != nil {
 		return err
@@ -977,7 +915,7 @@ func (d *Daemon) Init() error {
 			tlsConfig.RootCAs = caPool
 			tlsConfig.ClientCAs = caPool
 
-			shared.LogInfof("LXD is in CA mode, only CA-signed certificates will be allowed")
+			logger.Infof("LXD is in CA mode, only CA-signed certificates will be allowed")
 		}
 
 		tlsConfig.BuildNameToCertificate()
@@ -1005,7 +943,7 @@ func (d *Daemon) Init() error {
 	}
 
 	d.mux.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		shared.LogInfo("Sending top level 404", log.Ctx{"url": r.URL})
+		logger.Info("Sending top level 404", log.Ctx{"url": r.URL})
 		w.Header().Set("Content-Type", "application/json")
 		NotFound.Render(w)
 	})
@@ -1013,7 +951,7 @@ func (d *Daemon) Init() error {
 	// Prepare the list of listeners
 	listeners := d.GetListeners()
 	if len(listeners) > 0 {
-		shared.LogInfof("LXD is socket activated")
+		logger.Infof("LXD is socket activated")
 
 		for _, listener := range listeners {
 			if shared.PathExists(listener.Addr().String()) {
@@ -1024,16 +962,16 @@ func (d *Daemon) Init() error {
 			}
 		}
 	} else {
-		shared.LogInfof("LXD isn't socket activated")
+		logger.Infof("LXD isn't socket activated")
 
 		localSocketPath := shared.VarPath("unix.socket")
 
 		// If the socket exists, let's try to connect to it and see if there's
 		// a lxd running.
 		if shared.PathExists(localSocketPath) {
-			_, err := lxd.NewClient(&lxd.DefaultConfig, "local")
+			_, err := lxd.ConnectLXDUnix("", nil)
 			if err != nil {
-				shared.LogDebugf("Detected stale unix socket, deleting")
+				logger.Debugf("Detected stale unix socket, deleting")
 				// Connecting failed, so let's delete the socket and
 				// listen on it ourselves.
 				err = os.Remove(localSocketPath)
@@ -1085,10 +1023,10 @@ func (d *Daemon) Init() error {
 
 		tcpl, err := tls.Listen("tcp", listenAddr, d.tlsConfig)
 		if err != nil {
-			shared.LogError("cannot listen on https socket, skipping...", log.Ctx{"err": err})
+			logger.Error("cannot listen on https socket, skipping...", log.Ctx{"err": err})
 		} else {
 			if d.TCPSocket != nil {
-				shared.LogInfof("Replacing inherited TCP socket with configured one")
+				logger.Infof("Replacing inherited TCP socket with configured one")
 				d.TCPSocket.Socket.Close()
 			}
 			d.TCPSocket = &Socket{Socket: tcpl, CloseOnExit: true}
@@ -1096,14 +1034,14 @@ func (d *Daemon) Init() error {
 	}
 
 	// Bind the REST API
-	shared.LogInfof("REST API daemon:")
+	logger.Infof("REST API daemon:")
 	if d.UnixSocket != nil {
-		shared.LogInfo(" - binding Unix socket", log.Ctx{"socket": d.UnixSocket.Socket.Addr()})
+		logger.Info(" - binding Unix socket", log.Ctx{"socket": d.UnixSocket.Socket.Addr()})
 		d.tomb.Go(func() error { return http.Serve(d.UnixSocket.Socket, &lxdHttpServer{d.mux, d}) })
 	}
 
 	if d.TCPSocket != nil {
-		shared.LogInfo(" - binding TCP socket", log.Ctx{"socket": d.TCPSocket.Socket.Addr()})
+		logger.Info(" - binding TCP socket", log.Ctx{"socket": d.TCPSocket.Socket.Addr()})
 		d.tomb.Go(func() error { return http.Serve(d.TCPSocket.Socket, &lxdHttpServer{d.mux, d}) })
 	}
 
@@ -1182,9 +1120,14 @@ func (d *Daemon) Ready() error {
 
 // CheckTrustState returns True if the client is trusted else false.
 func (d *Daemon) CheckTrustState(cert x509.Certificate) bool {
+	// Extra validity check (should have been caught by TLS stack)
+	if time.Now().Before(cert.NotBefore) || time.Now().After(cert.NotAfter) {
+		return false
+	}
+
 	for k, v := range d.clientCerts {
 		if bytes.Compare(cert.Raw, v.Raw) == 0 {
-			shared.LogDebug("Found cert", log.Ctx{"k": k})
+			logger.Debug("Found cert", log.Ctx{"k": k})
 			return true
 		}
 	}
@@ -1220,42 +1163,42 @@ func (d *Daemon) Stop() error {
 	forceStop := false
 
 	d.tomb.Kill(errStop)
-	shared.LogInfof("Stopping REST API handler:")
+	logger.Infof("Stopping REST API handler:")
 	for _, socket := range []*Socket{d.TCPSocket, d.UnixSocket} {
 		if socket == nil {
 			continue
 		}
 
 		if socket.CloseOnExit {
-			shared.LogInfo(" - closing socket", log.Ctx{"socket": socket.Socket.Addr()})
+			logger.Info(" - closing socket", log.Ctx{"socket": socket.Socket.Addr()})
 			socket.Socket.Close()
 		} else {
-			shared.LogInfo(" - skipping socket-activated socket", log.Ctx{"socket": socket.Socket.Addr()})
+			logger.Info(" - skipping socket-activated socket", log.Ctx{"socket": socket.Socket.Addr()})
 			forceStop = true
 		}
 	}
 
-	shared.LogInfof("Stopping /dev/lxd handler")
+	logger.Infof("Stopping /dev/lxd handler")
 	d.devlxd.Close()
-	shared.LogInfof("Stopped /dev/lxd handler")
+	logger.Infof("Stopped /dev/lxd handler")
 
 	if n, err := d.numRunningContainers(); err != nil || n == 0 {
-		shared.LogInfof("Unmounting temporary filesystems")
+		logger.Infof("Unmounting temporary filesystems")
 
 		syscall.Unmount(shared.VarPath("devlxd"), syscall.MNT_DETACH)
 		syscall.Unmount(shared.VarPath("shmounts"), syscall.MNT_DETACH)
 
-		shared.LogInfof("Done unmounting temporary filesystems")
+		logger.Infof("Done unmounting temporary filesystems")
 	} else {
-		shared.LogDebugf("Not unmounting temporary filesystems (containers are still running)")
+		logger.Debugf("Not unmounting temporary filesystems (containers are still running)")
 	}
 
-	shared.LogInfof("Closing the database")
+	logger.Infof("Closing the database")
 	d.db.Close()
 
-	shared.LogInfof("Saving simplestreams cache")
+	logger.Infof("Saving simplestreams cache")
 	imageSaveStreamCache()
-	shared.LogInfof("Saved simplestreams cache")
+	logger.Infof("Saved simplestreams cache")
 
 	if d.MockMode || forceStop {
 		return nil

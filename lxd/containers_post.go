@@ -14,6 +14,7 @@ import (
 	"github.com/lxc/lxd/lxd/types"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
+	"github.com/lxc/lxd/shared/logger"
 	"github.com/lxc/lxd/shared/osarch"
 
 	log "gopkg.in/inconshreveable/log15.v2"
@@ -92,26 +93,27 @@ func createFromImage(d *Daemon, req *api.ContainersPost) Response {
 			Profiles:  req.Profiles,
 		}
 
+		var info *api.Image
 		if req.Source.Server != "" {
-			hash, err = d.ImageDownload(
+			info, err = d.ImageDownload(
 				op, req.Source.Server, req.Source.Protocol, req.Source.Certificate, req.Source.Secret,
 				hash, true, daemonConfig["images.auto_update_cached"].GetBool(), "")
 			if err != nil {
 				return err
 			}
+		} else {
+			_, info, err = dbImageGet(d.db, hash, false, false)
+			if err != nil {
+				return err
+			}
 		}
 
-		_, imgInfo, err := dbImageGet(d.db, hash, false, false)
+		args.Architecture, err = osarch.ArchitectureId(info.Architecture)
 		if err != nil {
 			return err
 		}
 
-		args.Architecture, err = osarch.ArchitectureId(imgInfo.Architecture)
-		if err != nil {
-			return err
-		}
-
-		_, err = containerCreateFromImage(d, args, imgInfo.Fingerprint)
+		_, err = containerCreateFromImage(d, args, info.Fingerprint)
 		return err
 	}
 
@@ -223,7 +225,7 @@ func createFromMigration(d *Daemon, req *api.ContainersPost) Response {
 		}
 	}
 
-	shared.LogDebugf("No valid storage pool in the container's local root disk device and profiles found.")
+	logger.Debugf("No valid storage pool in the container's local root disk device and profiles found.")
 	// If there is just a single pool in the database, use that
 	if storagePool == "" {
 		pools, err := dbStoragePools(d.db)
@@ -356,10 +358,11 @@ func createFromMigration(d *Daemon, req *api.ContainersPost) Response {
 		Dialer: websocket.Dialer{
 			TLSClientConfig: config,
 			NetDial:         shared.RFC3493Dialer},
-		Container: c,
-		Secrets:   req.Source.Websockets,
-		Push:      push,
-		Live:      req.Source.Live,
+		Container:     c,
+		Secrets:       req.Source.Websockets,
+		Push:          push,
+		Live:          req.Source.Live,
+		ContainerOnly: req.Source.ContainerOnly,
 	}
 
 	sink, err := NewMigrationSink(&migrationArgs)
@@ -372,7 +375,7 @@ func createFromMigration(d *Daemon, req *api.ContainersPost) Response {
 		// And finally run the migration.
 		err = sink.Do(op)
 		if err != nil {
-			shared.LogError("Error during migration sink", log.Ctx{"err": err})
+			logger.Error("Error during migration sink", log.Ctx{"err": err})
 			c.Delete()
 			return fmt.Errorf("Error transferring container data: %s", err)
 		}
@@ -424,7 +427,7 @@ func createFromCopy(d *Daemon, req *api.ContainersPost) Response {
 
 	for key, value := range sourceConfig {
 		if len(key) > 8 && key[0:8] == "volatile" && !shared.StringInSlice(key[9:], []string{"base_image", "last_state.idmap"}) {
-			shared.LogDebug("Skipping volatile key from copy source",
+			logger.Debug("Skipping volatile key from copy source",
 				log.Ctx{"key": key})
 			continue
 		}
@@ -470,11 +473,10 @@ func createFromCopy(d *Daemon, req *api.ContainersPost) Response {
 	}
 
 	run := func(op *operation) error {
-		_, err := containerCreateAsCopy(d, args, source)
+		_, err := containerCreateAsCopy(d, args, source, req.Source.ContainerOnly)
 		if err != nil {
 			return err
 		}
-
 		return nil
 	}
 
@@ -490,7 +492,7 @@ func createFromCopy(d *Daemon, req *api.ContainersPost) Response {
 }
 
 func containersPost(d *Daemon, r *http.Request) Response {
-	shared.LogDebugf("Responding to container create")
+	logger.Debugf("Responding to container create")
 
 	req := api.ContainersPost{}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -521,7 +523,7 @@ func containersPost(d *Daemon, r *http.Request) Response {
 				return InternalError(fmt.Errorf("couldn't generate a new unique name after 100 tries"))
 			}
 		}
-		shared.LogDebugf("No name provided, creating %s", req.Name)
+		logger.Debugf("No name provided, creating %s", req.Name)
 	}
 
 	if req.Devices == nil {

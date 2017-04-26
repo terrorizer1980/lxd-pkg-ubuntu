@@ -5,6 +5,7 @@ import (
 
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
+	"github.com/lxc/lxd/shared/logger"
 )
 
 type storageShared struct {
@@ -36,7 +37,7 @@ func (s *storageShared) shiftRootfs(c container) error {
 	dpath := c.Path()
 	rpath := c.RootfsPath()
 
-	shared.LogDebugf("Shifting root filesystem \"%s\" for \"%s\".", rpath, c.Name())
+	logger.Debugf("Shifting root filesystem \"%s\" for \"%s\".", rpath, c.Name())
 
 	idmapset, err := c.IdmapSet()
 	if err != nil {
@@ -49,17 +50,17 @@ func (s *storageShared) shiftRootfs(c container) error {
 
 	err = idmapset.ShiftRootfs(rpath)
 	if err != nil {
-		shared.LogDebugf("Shift of rootfs %s failed: %s", rpath, err)
+		logger.Debugf("Shift of rootfs %s failed: %s", rpath, err)
 		return err
 	}
 
 	/* Set an acl so the container root can descend the container dir */
 	// TODO: i changed this so it calls s.setUnprivUserAcl, which does
 	// the acl change only if the container is not privileged, think thats right.
-	return s.setUnprivUserAcl(c, dpath)
+	return s.setUnprivUserACL(c, dpath)
 }
 
-func (s *storageShared) setUnprivUserAcl(c container, destPath string) error {
+func (s *storageShared) setUnprivUserACL(c container, destPath string) error {
 	idmapset, err := c.IdmapSet()
 	if err != nil {
 		return err
@@ -89,7 +90,7 @@ func (s *storageShared) setUnprivUserAcl(c container, destPath string) error {
 	// Fallback to chmod if the fs doesn't support it.
 	_, err = shared.RunCommand("chmod", "+x", destPath)
 	if err != nil {
-		shared.LogDebugf("Failed to set executable bit on the container path: %s", err)
+		logger.Debugf("Failed to set executable bit on the container path: %s", err)
 		return err
 	}
 

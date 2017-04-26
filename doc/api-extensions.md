@@ -233,3 +233,34 @@ be set at image creation/import time.
 ## container\_stateless\_copy
 This introduces a new "live" attribute in POST /1.0/containers/NAME.
 Setting it to false tells LXD not to attempt running state transfer.
+
+## container\_only\_migration
+Introduces a new boolean "container\_only" attribute. When set to true only the
+container will be copied or moved.
+
+## storage\_zfs\_clone\_copy
+Introduces a new boolean "storage\_zfs\_clone\_copy" property for ZFS storage
+pools. When set to false copying a container will be done through zfs send and
+receive. This will make the target container independent of its source
+container thus avoiding the need to keep dependent snapshots in the ZFS pool
+around. However, this also entails less efficient storage usage for the
+affected pool.
+The default value for this property is true, i.e. space-efficient snapshots
+will be used unless explicitly set to "false".
+
+## unix\_device\_rename
+Introduces the ability to rename the unix-block/unix-char device inside container by setting "path",
+and the "source" attribute is added to specify the device on host.
+If "source" is set without a "path", we should assume that "path" will be the same as "source".
+If "path" is set without "source" and "major/minor" isn't set,
+we should assume that "source" will be the same as "path".
+So at least one of them must be set.
+
+## storage\_rsync\_bwlimit
+When rsync has to be invoked to transfer storage entities setting rsync.bwlimit
+places an upper limit on the amount of socket I/O allowed.
+
+## network\_vxlan\_interface
+This introduces a new tunnel.NAME.interface option for networks.
+
+This key control what host network interface is used for a VXLAN tunnel.

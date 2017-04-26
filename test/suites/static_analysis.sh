@@ -10,11 +10,18 @@ test_static_analysis() {
 
     cd ../
     # Python3 static analysis
-    pep8 test/deps/import-busybox
-    pyflakes3 test/deps/import-busybox
+    if which flake8 >/dev/null 2>&1; then
+      flake8 test/deps/import-busybox
+    else
+      echo "flake8 not found, python static analysis disabled"
+    fi
 
     # Shell static analysis
-    shellcheck test/main.sh test/suites/* test/backends/*
+    if which shellcheck >/dev/null 2>&1; then
+      shellcheck test/main.sh test/suites/* test/backends/*
+    else
+      echo "shellcheck not found, shell static analysis disabled"
+    fi
 
     # Go static analysis
     ## Functions starting by empty line
@@ -36,7 +43,13 @@ test_static_analysis() {
 
     ## golint
     if which golint >/dev/null 2>&1; then
+      golint -set_exit_status client/
+      golint -set_exit_status lxc/config/
       golint -set_exit_status shared/api/
+      golint -set_exit_status shared/gnuflag/
+      golint -set_exit_status shared/i18n/
+      golint -set_exit_status shared/ioprogress/
+      golint -set_exit_status shared/version/
     fi
 
     ## deadcode

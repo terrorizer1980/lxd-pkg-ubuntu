@@ -16,6 +16,7 @@ import (
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/ioprogress"
+	"github.com/lxc/lxd/shared/logger"
 )
 
 // lxdStorageLockMap is a hashmap that allows functions to check whether the
@@ -106,36 +107,9 @@ func filesystemDetect(path string) (string, error) {
 	case filesystemSuperMagicNfs:
 		return "nfs", nil
 	default:
-		shared.LogDebugf("Unknown backing filesystem type: 0x%x", fs.Type)
+		logger.Debugf("Unknown backing filesystem type: 0x%x", fs.Type)
 		return string(fs.Type), nil
 	}
-}
-
-// storageRsyncCopy copies a directory using rsync (with the --devices option).
-func storageRsyncCopy(source string, dest string) (string, error) {
-	err := os.MkdirAll(dest, 0755)
-	if err != nil {
-		return "", err
-	}
-
-	rsyncVerbosity := "-q"
-	if debug {
-		rsyncVerbosity = "-vi"
-	}
-
-	output, err := shared.RunCommand(
-		"rsync",
-		"-a",
-		"-HAX",
-		"--devices",
-		"--delete",
-		"--checksum",
-		"--numeric-ids",
-		rsyncVerbosity,
-		shared.AddSlash(source),
-		dest)
-
-	return output, err
 }
 
 // storageType defines the type of a storage
@@ -165,7 +139,7 @@ func storageTypeToString(sType storageType) (string, error) {
 		return "dir", nil
 	}
 
-	return "", fmt.Errorf("Invalid storage type.")
+	return "", fmt.Errorf("invalid storage type")
 }
 
 func storageStringToType(sName string) (storageType, error) {
@@ -182,7 +156,7 @@ func storageStringToType(sName string) (storageType, error) {
 		return storageTypeDir, nil
 	}
 
-	return -1, fmt.Errorf("Invalid storage type name.")
+	return -1, fmt.Errorf("invalid storage type name")
 }
 
 // The storage interface defines the functions needed to implement a storage
@@ -222,7 +196,7 @@ type storage interface {
 	ContainerCreateFromImage(container container, imageFingerprint string) error
 	ContainerCanRestore(container container, sourceContainer container) error
 	ContainerDelete(container container) error
-	ContainerCopy(container container, sourceContainer container) error
+	ContainerCopy(target container, source container, containerOnly bool) error
 	ContainerMount(name string, path string) (bool, error)
 	ContainerUmount(name string, path string) (bool, error)
 	ContainerRename(container container, newName string) error
@@ -270,8 +244,8 @@ type storage interface {
 	// We leave sending containers which are snapshots of other containers
 	// already present on the target instance as an exercise for the
 	// enterprising developer.
-	MigrationSource(container container) (MigrationStorageSourceDriver, error)
-	MigrationSink(live bool, container container, objects []*Snapshot, conn *websocket.Conn, srcIdmap *shared.IdmapSet, op *operation) error
+	MigrationSource(container container, containerOnly bool) (MigrationStorageSourceDriver, error)
+	MigrationSink(live bool, container container, objects []*Snapshot, conn *websocket.Conn, srcIdmap *shared.IdmapSet, op *operation, containerOnly bool) error
 }
 
 func storageCoreInit(driver string) (storage, error) {
@@ -318,7 +292,7 @@ func storageCoreInit(driver string) (storage, error) {
 		return &zfs, nil
 	}
 
-	return nil, fmt.Errorf("Invalid storage type.")
+	return nil, fmt.Errorf("invalid storage type")
 }
 
 func storageInit(d *Daemon, poolName string, volumeName string, volumeType int) (storage, error) {
@@ -332,7 +306,7 @@ func storageInit(d *Daemon, poolName string, volumeName string, volumeType int) 
 	if driver == "" {
 		// This shouldn't actually be possible but better safe than
 		// sorry.
-		return nil, fmt.Errorf("No storage driver was provided.")
+		return nil, fmt.Errorf("no storage driver was provided")
 	}
 
 	// Load the storage volume.
@@ -407,7 +381,7 @@ func storageInit(d *Daemon, poolName string, volumeName string, volumeType int) 
 		return &zfs, nil
 	}
 
-	return nil, fmt.Errorf("Invalid storage type.")
+	return nil, fmt.Errorf("invalid storage type")
 }
 
 func storagePoolInit(d *Daemon, poolName string) (storage, error) {
@@ -596,6 +570,8 @@ func deleteSnapshotMountpoint(snapshotMountpoint string, snapshotsSymlinkTarget 
 	return nil
 }
 
+// ShiftIfNecessary sets the volatile.last_state.idmap key to the idmap last
+// used by the container.
 func ShiftIfNecessary(container container, srcIdmap *shared.IdmapSet) error {
 	dstIdmap, err := container.IdmapSet()
 	if err != nil {
@@ -683,6 +659,7 @@ func progressWrapperRender(op *operation, key string, description string, progre
 	}
 }
 
+// StorageProgressReader reports the read progress.
 func StorageProgressReader(op *operation, key string, description string) func(io.ReadCloser) io.ReadCloser {
 	return func(reader io.ReadCloser) io.ReadCloser {
 		if op == nil {
@@ -704,6 +681,7 @@ func StorageProgressReader(op *operation, key string, description string) func(i
 	}
 }
 
+// StorageProgressWriter reports the write progress.
 func StorageProgressWriter(op *operation, key string, description string) func(io.WriteCloser) io.WriteCloser {
 	return func(writer io.WriteCloser) io.WriteCloser {
 		if op == nil {
