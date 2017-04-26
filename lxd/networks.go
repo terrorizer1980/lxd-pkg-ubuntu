@@ -16,6 +16,7 @@ import (
 
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
+	"github.com/lxc/lxd/shared/logger"
 	"github.com/lxc/lxd/shared/version"
 )
 
@@ -411,7 +412,7 @@ func networkStartup(d *Daemon) error {
 		err = n.Start()
 		if err != nil {
 			// Don't cause LXD to fail to start entirely on network bring up failure
-			shared.LogError("Failed to bring up network", log.Ctx{"err": err, "name": name})
+			logger.Error("Failed to bring up network", log.Ctx{"err": err, "name": name})
 		}
 	}
 
@@ -1067,6 +1068,7 @@ func (n *network) Start() error {
 			cmd = append(cmd, []string{"type", "gretap", "local", tunLocal, "remote", tunRemote}...)
 		} else if tunProtocol == "vxlan" {
 			tunGroup := getConfig("group")
+			tunInterface := getConfig("interface")
 
 			// Skip partial configs
 			if tunProtocol == "" {
@@ -1082,9 +1084,12 @@ func (n *network) Start() error {
 					tunGroup = "239.0.0.1"
 				}
 
-				_, devName, err := networkDefaultGatewaySubnetV4()
-				if err != nil {
-					return err
+				devName := tunInterface
+				if devName == "" {
+					_, devName, err = networkDefaultGatewaySubnetV4()
+					if err != nil {
+						return err
+					}
 				}
 
 				cmd = append(cmd, []string{"group", tunGroup, "dev", devName}...)

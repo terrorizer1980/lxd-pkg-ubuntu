@@ -12,9 +12,10 @@ import (
 )
 
 type copyCmd struct {
-	profArgs profileList
-	confArgs configList
-	ephem    bool
+	profArgs      profileList
+	confArgs      configList
+	ephem         bool
+	containerOnly bool
 }
 
 func (c *copyCmd) showByDefault() bool {
@@ -23,7 +24,7 @@ func (c *copyCmd) showByDefault() bool {
 
 func (c *copyCmd) usage() string {
 	return i18n.G(
-		`Usage: lxc copy [<remote>:]<source>[/<snapshot>] [[<remote>:]<destination>] [--ephemeral|e] [--profile|-p <profile>...] [--config|-c <key=value>...]
+		`Usage: lxc copy [<remote>:]<source>[/<snapshot>] [[<remote>:]<destination>] [--ephemeral|e] [--profile|-p <profile>...] [--config|-c <key=value>...] [--container-only]
 
 Copy containers within or in between LXD instances.`)
 }
@@ -35,9 +36,10 @@ func (c *copyCmd) flags() {
 	gnuflag.Var(&c.profArgs, "p", i18n.G("Profile to apply to the new container"))
 	gnuflag.BoolVar(&c.ephem, "ephemeral", false, i18n.G("Ephemeral container"))
 	gnuflag.BoolVar(&c.ephem, "e", false, i18n.G("Ephemeral container"))
+	gnuflag.BoolVar(&c.containerOnly, "container-only", false, i18n.G("Copy the container without its snapshots"))
 }
 
-func (c *copyCmd) copyContainer(config *lxd.Config, sourceResource string, destResource string, keepVolatile bool, ephemeral int, stateful bool) error {
+func (c *copyCmd) copyContainer(config *lxd.Config, sourceResource string, destResource string, keepVolatile bool, ephemeral int, stateful bool, containerOnly bool) error {
 	sourceRemote, sourceName := config.ParseRemoteAndContainer(sourceResource)
 	destRemote, destName := config.ParseRemoteAndContainer(destResource)
 
@@ -116,7 +118,7 @@ func (c *copyCmd) copyContainer(config *lxd.Config, sourceResource string, destR
 			return fmt.Errorf(i18n.G("can't copy to the same container name"))
 		}
 
-		cp, err := source.LocalCopy(sourceName, destName, status.Config, status.Profiles, ephemeral == 1)
+		cp, err := source.LocalCopy(sourceName, destName, status.Config, status.Profiles, ephemeral == 1, containerOnly)
 		if err != nil {
 			return err
 		}
@@ -178,7 +180,7 @@ func (c *copyCmd) copyContainer(config *lxd.Config, sourceResource string, destR
 		}
 	}
 
-	sourceWSResponse, err := source.GetMigrationSourceWS(sourceName, stateful)
+	sourceWSResponse, err := source.GetMigrationSourceWS(sourceName, stateful, containerOnly)
 	if err != nil {
 		return err
 	}
@@ -207,11 +209,23 @@ func (c *copyCmd) copyContainer(config *lxd.Config, sourceResource string, destR
 	 * course, if all the errors are websocket errors, let's just
 	 * report that.
 	 */
+	waitchan := make(chan map[int]error, 2)
+	wait := func(cli *lxd.Client, op string, ch chan map[int]error, senderid int) {
+		msg := make(map[int]error, 1)
+		err := cli.WaitForSuccess(op)
+		if err != nil {
+			msg[senderid] = err
+			ch <- msg
+		}
+
+		msg[senderid] = nil
+		ch <- msg
+	}
 	for _, addr := range addresses {
 		var migration *api.Response
 
 		sourceWSUrl := "https://" + addr + sourceWSResponse.Operation
-		migration, err = dest.MigrateFrom(destName, sourceWSUrl, source.Certificate, secrets, status.Architecture, status.Config, status.Devices, status.Profiles, baseImage, ephemeral == 1, false, source, sourceWSResponse.Operation)
+		migration, err = dest.MigrateFrom(destName, sourceWSUrl, source.Certificate, secrets, status.Architecture, status.Config, status.Devices, status.Profiles, baseImage, ephemeral == 1, false, source, sourceWSResponse.Operation, containerOnly)
 		if err != nil {
 			continue
 		}
@@ -219,11 +233,22 @@ func (c *copyCmd) copyContainer(config *lxd.Config, sourceResource string, destR
 		// If push mode is implemented then MigrateFrom will return a
 		// non-waitable operation. So this needs to be conditionalized
 		// on pull mode.
-		if err = dest.WaitForSuccess(migration.Operation); err != nil {
+		destOpId := 0
+		go wait(dest, migration.Operation, waitchan, destOpId)
+		sourceOpId := 1
+		go wait(source, sourceWSResponse.Operation, waitchan, sourceOpId)
+
+		opStatus := make([]map[int]error, 2)
+		for i := 0; i < cap(waitchan); i++ {
+			opStatus[i] = <-waitchan
+		}
+
+		if opStatus[0][destOpId] != nil {
 			continue
 		}
 
-		if err = source.WaitForSuccess(sourceWSResponse.Operation); err != nil {
+		err = opStatus[1][sourceOpId]
+		if err != nil {
 			return err
 		}
 
@@ -245,7 +270,14 @@ func (c *copyCmd) copyContainer(config *lxd.Config, sourceResource string, destR
 		return nil
 	}
 
-	return err
+	// Check for an error at the source
+	sourceOp, sourceErr := source.GetOperation(sourceWSResponse.Operation)
+	if sourceErr == nil && sourceOp.Err != "" {
+		return fmt.Errorf(i18n.G("Migration failed on source host: %s"), sourceOp.Err)
+	}
+
+	// Return the error from destination
+	return fmt.Errorf(i18n.G("Migration failed on target host: %s"), err)
 }
 
 func (c *copyCmd) run(config *lxd.Config, args []string) error {
@@ -259,8 +291,8 @@ func (c *copyCmd) run(config *lxd.Config, args []string) error {
 	}
 
 	if len(args) < 2 {
-		return c.copyContainer(config, args[0], "", false, ephem, false)
+		return c.copyContainer(config, args[0], "", false, ephem, false, c.containerOnly)
 	}
 
-	return c.copyContainer(config, args[0], args[1], false, ephem, false)
+	return c.copyContainer(config, args[0], args[1], false, ephem, false, c.containerOnly)
 }

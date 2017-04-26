@@ -26,6 +26,7 @@ import (
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/ioprogress"
+	"github.com/lxc/lxd/shared/logger"
 	"github.com/lxc/lxd/shared/simplestreams"
 	"github.com/lxc/lxd/shared/version"
 )
@@ -72,7 +73,7 @@ func ParseResponse(r *http.Response) (*api.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	shared.LogDebugf("Raw response: %s", string(s))
+	logger.Debugf("Raw response: %s", string(s))
 
 	if err := json.Unmarshal(s, &ret); err != nil {
 		return nil, err
@@ -381,7 +382,7 @@ func (c *Client) doUpdateMethod(method string, base string, args interface{}, rt
 		return nil, err
 	}
 
-	shared.LogDebugf("%s %s to %s", method, buf.String(), uri)
+	logger.Debugf("%s %s to %s", method, buf.String(), uri)
 
 	req, err := http.NewRequest(method, uri, &buf)
 	if err != nil {
@@ -530,7 +531,7 @@ func (c *Client) AmTrusted() bool {
 		return false
 	}
 
-	shared.LogDebugf("%s", resp)
+	logger.Debugf("%s", resp)
 
 	meta, err := resp.MetadataAsMap()
 	if err != nil {
@@ -551,7 +552,7 @@ func (c *Client) IsPublic() bool {
 		return false
 	}
 
-	shared.LogDebugf("%s", resp)
+	logger.Debugf("%s", resp)
 
 	meta, err := resp.MetadataAsMap()
 	if err != nil {
@@ -1431,15 +1432,16 @@ func (c *Client) Init(name string, imgremote string, image string, profiles *[]s
 	return resp, nil
 }
 
-func (c *Client) LocalCopy(source string, name string, config map[string]string, profiles []string, ephemeral bool) (*api.Response, error) {
+func (c *Client) LocalCopy(source string, name string, config map[string]string, profiles []string, ephemeral bool, containerOnly bool) (*api.Response, error) {
 	if c.Remote.Public {
 		return nil, fmt.Errorf("This function isn't supported by public remotes.")
 	}
 
 	body := shared.Jmap{
 		"source": shared.Jmap{
-			"type":   "copy",
-			"source": source,
+			"type":           "copy",
+			"source":         source,
+			"container_only": containerOnly,
 		},
 		"name":      name,
 		"config":    config,
@@ -1832,7 +1834,10 @@ func (c *Client) MkdirP(container string, p string, mode os.FileMode, uid int, g
 		return nil
 	}
 
-	parts := strings.Split(p, "/")
+	// Remove trailing "/" e.g. /A/B/C/. Otherwise we will end up with an
+	// empty array entry "" which will confuse the Mkdir() loop below.
+	pclean := filepath.Clean(p)
+	parts := strings.Split(pclean, "/")
 	i := len(parts)
 
 	for ; i >= 1; i-- {
@@ -1852,6 +1857,10 @@ func (c *Client) MkdirP(container string, p string, mode os.FileMode, uid int, g
 
 	for ; i <= len(parts); i++ {
 		cur := filepath.Join(parts[:i]...)
+		if cur == "" {
+			continue
+		}
+
 		if err := c.Mkdir(container, cur, mode, uid, gid); err != nil {
 			return err
 		}
@@ -1995,7 +2004,7 @@ func (c *Client) DeleteFile(container string, p string) error {
 	return nil
 }
 
-func (c *Client) GetMigrationSourceWS(container string, stateful bool) (*api.Response, error) {
+func (c *Client) GetMigrationSourceWS(container string, stateful bool, containerOnly bool) (*api.Response, error) {
 	if c.Remote.Public {
 		return nil, fmt.Errorf("This function isn't supported by public remotes.")
 	}
@@ -2011,6 +2020,8 @@ func (c *Client) GetMigrationSourceWS(container string, stateful bool) (*api.Res
 		}
 
 		url = fmt.Sprintf("containers/%s/snapshots/%s", pieces[0], pieces[1])
+	} else {
+		body["container_only"] = containerOnly
 	}
 
 	return c.post(url, body, api.AsyncResponse)
@@ -2020,14 +2031,15 @@ func (c *Client) MigrateFrom(name string, operation string, certificate string,
 	sourceSecrets map[string]string, architecture string, config map[string]string,
 	devices map[string]map[string]string, profiles []string,
 	baseImage string, ephemeral bool, push bool, sourceClient *Client,
-	sourceOperation string) (*api.Response, error) {
+	sourceOperation string, containerOnly bool) (*api.Response, error) {
 	if c.Remote.Public {
 		return nil, fmt.Errorf("This function isn't supported by public remotes.")
 	}
 
 	source := shared.Jmap{
-		"type":       "migration",
-		"base-image": baseImage,
+		"type":           "migration",
+		"base-image":     baseImage,
+		"container_only": containerOnly,
 	}
 
 	if push {
@@ -2225,8 +2237,16 @@ func (c *Client) WaitFor(waitURL string) (*api.Operation, error) {
 	 * "/<version>/operations/" in it; we chop off the leading / and pass
 	 * it to url directly.
 	 */
-	shared.LogDebugf(path.Join(waitURL[1:], "wait"))
 	resp, err := c.baseGet(c.url(waitURL, "wait"))
+	if err != nil {
+		return nil, err
+	}
+
+	return resp.MetadataAsOperation()
+}
+
+func (c *Client) GetOperation(url string) (*api.Operation, error) {
+	resp, err := c.baseGet(c.url(url))
 	if err != nil {
 		return nil, err
 	}
@@ -2478,7 +2498,7 @@ func (c *Client) SetProfileConfigItem(profile, key, value string) error {
 
 	st, err := c.ProfileConfig(profile)
 	if err != nil {
-		shared.LogDebugf("Error getting profile %s to update", profile)
+		logger.Debugf("Error getting profile %s to update", profile)
 		return err
 	}
 

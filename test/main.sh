@@ -20,7 +20,8 @@ if [ -n "${LXD_DEBUG:-}" ]; then
 fi
 
 echo "==> Checking for dependencies"
-for dep in lxd lxc curl jq git xgettext sqlite3 msgmerge msgfmt shuf setfacl uuidgen pyflakes3 pep8 shellcheck; do
+deps="lxd lxc curl jq git xgettext sqlite3 msgmerge msgfmt shuf setfacl uuidgen"
+for dep in $deps; do
   which "${dep}" >/dev/null 2>&1 || (echo "Missing dependency: ${dep}" >&2 && exit 1)
 done
 
@@ -116,6 +117,28 @@ spawn_lxd() {
     echo "==> Configuring storage backend"
     "$LXD_BACKEND"_configure "${lxddir}"
   fi
+}
+
+respawn_lxd() {
+  set +x
+  # LXD_DIR is local here because since $(lxc) is actually a function, it
+  # overwrites the environment and we would lose LXD_DIR's value otherwise.
+
+  # shellcheck disable=2039
+  local LXD_DIR
+
+  lxddir=${1}
+  shift
+
+  echo "==> Spawning lxd in ${lxddir}"
+  # shellcheck disable=SC2086
+  LXD_DIR="${lxddir}" lxd --logfile "${lxddir}/lxd.log" ${DEBUG-} "$@" 2>&1 &
+  LXD_PID=$!
+  echo "${LXD_PID}" > "${lxddir}/lxd.pid"
+  echo "==> Spawned LXD (PID is ${LXD_PID})"
+
+  echo "==> Confirming lxd is responsive"
+  LXD_DIR="${lxddir}" lxd waitready --timeout=300
 }
 
 lxc() {
@@ -326,6 +349,22 @@ kill_lxd() {
   sed "\|^${daemon_dir}|d" -i "${TEST_DIR}/daemons"
 }
 
+shutdown_lxd() {
+  # LXD_DIR is local here because since $(lxc) is actually a function, it
+  # overwrites the environment and we would lose LXD_DIR's value otherwise.
+
+  # shellcheck disable=2039
+  local LXD_DIR
+
+  daemon_dir=${1}
+  LXD_DIR=${daemon_dir}
+  daemon_pid=$(cat "${daemon_dir}/lxd.pid")
+  echo "==> Killing LXD at ${daemon_dir}"
+
+  # Kill the daemon
+  lxd shutdown || kill -9 "${daemon_pid}" 2>/dev/null || true
+}
+
 cleanup() {
   # Allow for failures and stop tracing everything
   set +ex
@@ -496,8 +535,11 @@ run_test() {
   TEST_CURRENT_DESCRIPTION=${2:-${1}}
 
   echo "==> TEST BEGIN: ${TEST_CURRENT_DESCRIPTION}"
+  START_TIME=$(date +%s)
   ${TEST_CURRENT}
-  echo "==> TEST DONE: ${TEST_CURRENT_DESCRIPTION}"
+  END_TIME=$(date +%s)
+
+  echo "==> TEST DONE: ${TEST_CURRENT_DESCRIPTION} ($((END_TIME-START_TIME))s)"
 }
 
 # allow for running a specific set of tests

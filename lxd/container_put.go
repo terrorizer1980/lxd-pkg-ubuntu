@@ -10,6 +10,7 @@ import (
 
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
+	"github.com/lxc/lxd/shared/logger"
 	"github.com/lxc/lxd/shared/osarch"
 
 	log "gopkg.in/inconshreveable/log15.v2"
@@ -88,7 +89,7 @@ func containerSnapRestore(d *Daemon, name string, snap string) error {
 		snap = name + shared.SnapshotDelimiter + snap
 	}
 
-	shared.LogInfo(
+	logger.Info(
 		"RESTORE => Restoring snapshot",
 		log.Ctx{
 			"snapshot":  snap,
@@ -96,7 +97,7 @@ func containerSnapRestore(d *Daemon, name string, snap string) error {
 
 	c, err := containerLoadByName(d, name)
 	if err != nil {
-		shared.LogError(
+		logger.Error(
 			"RESTORE => loadcontainerLXD() failed",
 			log.Ctx{
 				"container": name,
@@ -114,7 +115,8 @@ func containerSnapRestore(d *Daemon, name string, snap string) error {
 		}
 	}
 
-	if err := c.Restore(source); err != nil {
+	err = c.Restore(source)
+	if err != nil {
 		return err
 	}
 

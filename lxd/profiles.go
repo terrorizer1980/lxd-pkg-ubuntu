@@ -13,6 +13,7 @@ import (
 
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
+	"github.com/lxc/lxd/shared/logger"
 	"github.com/lxc/lxd/shared/version"
 
 	log "gopkg.in/inconshreveable/log15.v2"
@@ -37,7 +38,7 @@ func profilesGet(d *Daemon, r *http.Request) Response {
 		} else {
 			profile, err := doProfileGet(d, name)
 			if err != nil {
-				shared.LogError("Failed to get profile", log.Ctx{"profile": name})
+				logger.Error("Failed to get profile", log.Ctx{"profile": name})
 				continue
 			}
 			resultMap[i] = profile
@@ -81,7 +82,7 @@ func profilesPost(d *Daemon, r *http.Request) Response {
 		return BadRequest(err)
 	}
 
-	err = containerValidDevices(req.Devices, true, false)
+	err = containerValidDevices(d, req.Devices, true, false)
 	if err != nil {
 		return BadRequest(err)
 	}
@@ -129,7 +130,8 @@ func profileGet(d *Daemon, r *http.Request) Response {
 		return SmartError(err)
 	}
 
-	return SyncResponseETag(true, resp, resp)
+	etag := []interface{}{resp.Config, resp.Description, resp.Devices}
+	return SyncResponseETag(true, resp, etag)
 }
 
 func getContainersWithProfile(d *Daemon, profile string) []container {
@@ -143,7 +145,7 @@ func getContainersWithProfile(d *Daemon, profile string) []container {
 	for _, name := range output {
 		c, err := containerLoadByName(d, name)
 		if err != nil {
-			shared.LogError("Failed opening container", log.Ctx{"container": name})
+			logger.Error("Failed opening container", log.Ctx{"container": name})
 			continue
 		}
 		results = append(results, c)
@@ -161,7 +163,8 @@ func profilePut(d *Daemon, r *http.Request) Response {
 	}
 
 	// Validate the ETag
-	err = etagCheck(r, profile)
+	etag := []interface{}{profile.Config, profile.Description, profile.Devices}
+	err = etagCheck(r, etag)
 	if err != nil {
 		return PreconditionFailed(err)
 	}
@@ -183,7 +186,8 @@ func profilePatch(d *Daemon, r *http.Request) Response {
 	}
 
 	// Validate the ETag
-	err = etagCheck(r, profile)
+	etag := []interface{}{profile.Config, profile.Description, profile.Devices}
+	err = etagCheck(r, etag)
 	if err != nil {
 		return PreconditionFailed(err)
 	}

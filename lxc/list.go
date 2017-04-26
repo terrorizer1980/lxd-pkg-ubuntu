@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -31,6 +32,7 @@ type columnData func(api.Container, *api.ContainerState, []api.ContainerSnapshot
 const (
 	listFormatTable = "table"
 	listFormatJSON  = "json"
+	listFormatCSV   = "csv"
 )
 
 type listCmd struct {
@@ -45,7 +47,7 @@ func (c *listCmd) showByDefault() bool {
 
 func (c *listCmd) usage() string {
 	return i18n.G(
-		`Usage: lxc list [<remote>:] [filters] [--format table|json] [-c <columns>] [--fast]
+		`Usage: lxc list [<remote>:] [filters] [--format table|json|csv] [-c <columns>] [--fast]
 
 List the existing containers.
 
@@ -70,7 +72,8 @@ A regular expression matching a configuration item or its value. (e.g. volatile.
 
 *Columns*
 The -c option takes a comma separated list of arguments that control
-which container attributes to output when displaying in table format.
+which container attributes to output when displaying in table or csv
+format.
 
 Column arguments are either pre-defined shorthand chars (see below),
 or (extended) config keys.
@@ -127,7 +130,7 @@ lxc list -c ns,user.comment:comment
 func (c *listCmd) flags() {
 	gnuflag.StringVar(&c.columnsRaw, "c", "ns46tS", i18n.G("Columns"))
 	gnuflag.StringVar(&c.columnsRaw, "columns", "ns46tS", i18n.G("Columns"))
-	gnuflag.StringVar(&c.format, "format", "table", i18n.G("Format"))
+	gnuflag.StringVar(&c.format, "format", "table", i18n.G("Format (table|json|csv)"))
 	gnuflag.BoolVar(&c.fast, "fast", false, i18n.G("Fast mode (same as --columns=nsacPt)"))
 }
 
@@ -328,8 +331,7 @@ func (c *listCmd) listContainers(d *lxd.Client, cinfos []api.Container, filters 
 	cStatesWg.Wait()
 	cSnapshotsWg.Wait()
 
-	switch c.format {
-	case listFormatTable:
+	tableData := func() [][]string {
 		data := [][]string{}
 		for _, cInfo := range cinfos {
 			if !c.shouldShow(filters, &cInfo) {
@@ -343,13 +345,24 @@ func (c *listCmd) listContainers(d *lxd.Client, cinfos []api.Container, filters 
 			data = append(data, col)
 		}
 
+		sort.Sort(byName(data))
+		return data
+	}
+
+	switch c.format {
+	case listFormatCSV:
+		w := csv.NewWriter(os.Stdout)
+		w.WriteAll(tableData())
+		if err := w.Error(); err != nil {
+			return err
+		}
+	case listFormatTable:
 		table := tablewriter.NewWriter(os.Stdout)
 		table.SetAutoWrapText(false)
 		table.SetAlignment(tablewriter.ALIGN_LEFT)
 		table.SetRowLine(true)
 		table.SetHeader(headers)
-		sort.Sort(byName(data))
-		table.AppendBulk(data)
+		table.AppendBulk(tableData())
 		table.Render()
 	case listFormatJSON:
 		data := make([]listContainerItem, len(cinfos))

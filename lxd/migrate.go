@@ -20,12 +20,14 @@ import (
 	"github.com/gorilla/websocket"
 	"gopkg.in/lxc/go-lxc.v2"
 
-	"github.com/lxc/lxd"
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/logger"
 )
 
 type migrationFields struct {
 	live bool
+
+	containerOnly bool
 
 	controlSecret string
 	controlConn   *websocket.Conn
@@ -136,7 +138,7 @@ func (c *migrationFields) controlChannel() <-chan MigrationControl {
 		msg := MigrationControl{}
 		err := c.recv(&msg)
 		if err != nil {
-			shared.LogDebugf("Got error reading migration control socket %s", err)
+			logger.Debugf("Got error reading migration control socket %s", err)
 			close(ch)
 			return
 		}
@@ -152,8 +154,9 @@ type migrationSourceWs struct {
 	allConnected chan bool
 }
 
-func NewMigrationSource(c container, stateful bool) (*migrationSourceWs, error) {
+func NewMigrationSource(c container, stateful bool, containerOnly bool) (*migrationSourceWs, error) {
 	ret := migrationSourceWs{migrationFields{container: c}, make(chan bool, 1)}
+	ret.containerOnly = containerOnly
 
 	var err error
 	ret.controlSecret, err = shared.RandomCryptoString()
@@ -211,8 +214,9 @@ func (s *migrationSourceWs) Connect(op *operation, r *http.Request, w http.Respo
 	case s.fsSecret:
 		conn = &s.fsConn
 	default:
-		/* If we didn't find the right secret, the user provided a bad one,
-		 * which 403, not 404, since this operation actually exists */
+		// If we didn't find the right secret, the user provided a bad
+		// one, which 403, not 404, since this operation actually
+		// exists.
 		return os.ErrPermission
 	}
 
@@ -243,7 +247,8 @@ fi
 	}
 	defer f.Close()
 
-	if err := f.Chmod(0500); err != nil {
+	err = f.Chmod(0500)
+	if err != nil {
 		return err
 	}
 
@@ -275,6 +280,7 @@ func snapshotToProtobuf(c container) *Snapshot {
 	isEphemeral := c.IsEphemeral()
 	arch := int32(c.Architecture())
 	stateful := c.IsStateful()
+
 	return &Snapshot{
 		Name:         &parts[len(parts)-1],
 		LocalConfig:  config,
@@ -325,20 +331,23 @@ func (s *migrationSourceWs) Do(migrateOp *operation) error {
 		}
 	}
 
-	driver, fsErr := s.container.Storage().MigrationSource(s.container)
-	/* the protocol says we have to send a header no matter what, so let's
-	 * do that, but then immediately send an error.
-	 */
+	driver, fsErr := s.container.Storage().MigrationSource(s.container, s.containerOnly)
+
 	snapshots := []*Snapshot{}
 	snapshotNames := []string{}
-	if fsErr == nil {
-		fullSnaps := driver.Snapshots()
-		for _, snap := range fullSnaps {
-			snapshots = append(snapshots, snapshotToProtobuf(snap))
-			snapshotNames = append(snapshotNames, shared.ExtractSnapshotName(snap.Name()))
+	// Only send snapshots when requested.
+	if !s.containerOnly {
+		if fsErr == nil {
+			fullSnaps := driver.Snapshots()
+			for _, snap := range fullSnaps {
+				snapshots = append(snapshots, snapshotToProtobuf(snap))
+				snapshotNames = append(snapshotNames, shared.ExtractSnapshotName(snap.Name()))
+			}
 		}
 	}
 
+	// The protocol says we have to send a header no matter what, so let's
+	// do that, but then immediately send an error.
 	myType := s.container.Storage().MigrationType()
 	header := MigrationHeader{
 		Fs:            &myType,
@@ -348,7 +357,8 @@ func (s *migrationSourceWs) Do(migrateOp *operation) error {
 		Snapshots:     snapshots,
 	}
 
-	if err := s.send(&header); err != nil {
+	err = s.send(&header)
+	if err != nil {
 		s.sendControl(err)
 		return err
 	}
@@ -358,16 +368,24 @@ func (s *migrationSourceWs) Do(migrateOp *operation) error {
 		return fsErr
 	}
 
-	if err := s.recv(&header); err != nil {
+	err = s.recv(&header)
+	if err != nil {
 		s.sendControl(err)
 		return err
 	}
 
+	bwlimit := ""
 	if *header.Fs != myType {
 		myType = MigrationFSType_RSYNC
 		header.Fs = &myType
 
-		driver, _ = rsyncMigrationSource(s.container)
+		driver, _ = rsyncMigrationSource(s.container, s.containerOnly)
+
+		// Check if this storage pool has a rate limit set for rsync.
+		poolwritable := s.container.Storage().GetStoragePoolWritable()
+		if poolwritable.Config != nil {
+			bwlimit = poolwritable.Config["rsync.bwlimit"]
+		}
 	}
 
 	// All failure paths need to do a few things to correctly handle errors before returning.
@@ -383,7 +401,8 @@ func (s *migrationSourceWs) Do(migrateOp *operation) error {
 		return err
 	}
 
-	if err := driver.SendWhileRunning(s.fsConn, migrateOp); err != nil {
+	err = driver.SendWhileRunning(s.fsConn, migrateOp, bwlimit)
+	if err != nil {
 		return abort(err)
 	}
 
@@ -463,7 +482,8 @@ func (s *migrationSourceWs) Do(migrateOp *operation) error {
 				return abort(err)
 			}
 
-			if err := writeActionScript(checkpointDir, actionScriptOp.url, actionScriptOpSecret); err != nil {
+			err = writeActionScript(checkpointDir, actionScriptOp.url, actionScriptOpSecret)
+			if err != nil {
 				os.RemoveAll(checkpointDir)
 				return abort(err)
 			}
@@ -485,11 +505,12 @@ func (s *migrationSourceWs) Do(migrateOp *operation) error {
 				return abort(err)
 			/* the dump finished, let's continue on to the restore */
 			case <-dumpDone:
-				shared.LogDebugf("Dump finished, continuing with restore...")
+				logger.Debugf("Dump finished, continuing with restore...")
 			}
 		} else {
 			defer os.RemoveAll(checkpointDir)
-			if err := s.container.Migrate(lxc.MIGRATE_DUMP, checkpointDir, "migration", true, false); err != nil {
+			err = s.container.Migrate(lxc.MIGRATE_DUMP, checkpointDir, "migration", true, false)
+			if err != nil {
 				return abort(err)
 			}
 		}
@@ -501,11 +522,14 @@ func (s *migrationSourceWs) Do(migrateOp *operation) error {
 		 * no reason to do these in parallel. In the future when we're using
 		 * p.haul's protocol, it will make sense to do these in parallel.
 		 */
-		if err := RsyncSend(shared.AddSlash(checkpointDir), s.criuConn, nil); err != nil {
+		ctName, _, _ := containerGetParentAndSnapshotName(s.container.Name())
+		err = RsyncSend(ctName, shared.AddSlash(checkpointDir), s.criuConn, nil, bwlimit)
+		if err != nil {
 			return abort(err)
 		}
 
-		if err := driver.SendAfterCheckpoint(s.fsConn); err != nil {
+		err = driver.SendAfterCheckpoint(s.fsConn, bwlimit)
+		if err != nil {
 			return abort(err)
 		}
 	}
@@ -513,7 +537,8 @@ func (s *migrationSourceWs) Do(migrateOp *operation) error {
 	driver.Cleanup()
 
 	msg := MigrationControl{}
-	if err := s.recv(&msg); err != nil {
+	err = s.recv(&msg)
+	if err != nil {
 		s.disconnect()
 		return err
 	}
@@ -522,7 +547,7 @@ func (s *migrationSourceWs) Do(migrateOp *operation) error {
 		restoreSuccess <- *msg.Success
 		err := <-dumpSuccess
 		if err != nil {
-			shared.LogErrorf("dump failed after successful restore?: %q", err)
+			logger.Errorf("dump failed after successful restore?: %q", err)
 		}
 	}
 
@@ -548,17 +573,19 @@ type migrationSink struct {
 }
 
 type MigrationSinkArgs struct {
-	Url       string
-	Dialer    websocket.Dialer
-	Container container
-	Secrets   map[string]string
-	Push      bool
-	Live      bool
+	Url           string
+	Dialer        websocket.Dialer
+	Container     container
+	Secrets       map[string]string
+	Push          bool
+	Live          bool
+	ContainerOnly bool
 }
 
 func NewMigrationSink(args *MigrationSinkArgs) (*migrationSink, error) {
 	sink := migrationSink{
-		src:    migrationFields{container: args.Container},
+		src:    migrationFields{container: args.Container, containerOnly: args.ContainerOnly},
+		dest:   migrationFields{containerOnly: args.ContainerOnly},
 		url:    args.Url,
 		dialer: args.Dialer,
 		push:   args.Push,
@@ -619,7 +646,12 @@ func (c *migrationSink) connectWithSecret(secret string) (*websocket.Conn, error
 	// The URL is a https URL to the operation, mangle to be a wss URL to the secret
 	wsUrl := fmt.Sprintf("wss://%s/websocket?%s", strings.TrimPrefix(c.url, "https://"), query.Encode())
 
-	return lxd.WebsocketDial(c.dialer, wsUrl)
+	conn, _, err := c.dialer.Dial(wsUrl, http.Header{})
+	if err != nil {
+		return nil, err
+	}
+
+	return conn, err
 }
 
 func (s *migrationSink) Metadata() interface{} {
@@ -752,7 +784,8 @@ func (c *migrationSink) Do(migrateOp *operation) error {
 		resp.Fs = &myType
 	}
 
-	if err := sender(&resp); err != nil {
+	err = sender(&resp)
+	if err != nil {
 		controller(err)
 		return err
 	}
@@ -803,12 +836,14 @@ func (c *migrationSink) Do(migrateOp *operation) error {
 				fsConn = c.src.fsConn
 			}
 
-			if err := mySink(live, c.src.container, snapshots, fsConn, srcIdmap, migrateOp); err != nil {
+			err = mySink(live, c.src.container, snapshots, fsConn, srcIdmap, migrateOp, c.src.containerOnly)
+			if err != nil {
 				fsTransfer <- err
 				return
 			}
 
-			if err := ShiftIfNecessary(c.src.container, srcIdmap); err != nil {
+			err = ShiftIfNecessary(c.src.container, srcIdmap)
+			if err != nil {
 				fsTransfer <- err
 				return
 			}
@@ -832,7 +867,9 @@ func (c *migrationSink) Do(migrateOp *operation) error {
 			} else {
 				criuConn = c.src.criuConn
 			}
-			if err := RsyncRecv(shared.AddSlash(imagesDir), criuConn, nil); err != nil {
+
+			err = RsyncRecv(shared.AddSlash(imagesDir), criuConn, nil)
+			if err != nil {
 				restore <- err
 				return
 			}
@@ -880,7 +917,7 @@ func (c *migrationSink) Do(migrateOp *operation) error {
 				// The source can only tell us it failed (e.g. if
 				// checkpointing failed). We have to tell the source
 				// whether or not the restore was successful.
-				shared.LogDebugf("Unknown message %v from source", msg)
+				logger.Debugf("Unknown message %v from source", msg)
 			}
 		}
 	}
