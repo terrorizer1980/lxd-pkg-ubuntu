@@ -1,3 +1,10 @@
+lxd (2.13-0ubuntu3) artful; urgency=medium
+
+  * Add build-dependency on golang-github-gorilla-context-dev.
+    Only needed when building without shlibs.
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 26 Apr 2017 12:18:27 -0400
+
 lxd (2.13-0ubuntu2) artful; urgency=medium
 
   * Disable building with shared libraries.
