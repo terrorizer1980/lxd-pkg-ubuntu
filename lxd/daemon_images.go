@@ -433,6 +433,13 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 	// Override visiblity
 	info.Public = false
 
+	// We want to enable auto-update only if we were passed an
+	// alias name, so we can figure when the associated
+	// fingerprint changes in the remote.
+	if alias != fp {
+		info.AutoUpdate = autoUpdate
+	}
+
 	// Create storage entry
 	err = d.Storage.ImageCreate(info.Fingerprint)
 	if err != nil {
@@ -458,8 +465,6 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 		if err != nil {
 			return nil, err
 		}
-
-		info.AutoUpdate = autoUpdate
 	}
 
 	// Mark the image as "cached" if downloading for a container
