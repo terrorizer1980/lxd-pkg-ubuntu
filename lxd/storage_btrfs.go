@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -15,6 +16,7 @@ import (
 	"github.com/pborman/uuid"
 
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/logger"
 
 	log "gopkg.in/inconshreveable/log15.v2"
 )
@@ -37,7 +39,7 @@ func (s *storageBtrfs) Init(config map[string]interface{}) (storage, error) {
 		return s, fmt.Errorf("The 'btrfs' tool isn't available")
 	}
 
-	output, err := exec.Command("btrfs", "version").CombinedOutput()
+	output, err := shared.RunCommand("btrfs", "version")
 	if err != nil {
 		return s, fmt.Errorf("The 'btrfs' tool isn't working properly")
 	}
@@ -265,12 +267,12 @@ func (s *storageBtrfs) ContainerSetQuota(container container, size int64) error 
 		return err
 	}
 
-	output, err := exec.Command(
+	output, err := shared.RunCommand(
 		"btrfs",
 		"qgroup",
 		"limit",
 		"-e", fmt.Sprintf("%d", size),
-		subvol).CombinedOutput()
+		subvol)
 
 	if err != nil {
 		return fmt.Errorf("Failed to set btrfs quota: %s", output)
@@ -414,7 +416,7 @@ func (s *storageBtrfs) ImageCreate(fingerprint string) error {
 	}
 
 	if err := unpackImage(s.d, imagePath, subvol); err != nil {
-		s.subvolDelete(subvol)
+		s.subvolsDelete(subvol)
 		return err
 	}
 
@@ -442,11 +444,11 @@ func (s *storageBtrfs) subvolCreate(subvol string) error {
 		}
 	}
 
-	output, err := exec.Command(
+	output, err := shared.RunCommand(
 		"btrfs",
 		"subvolume",
 		"create",
-		subvol).CombinedOutput()
+		subvol)
 	if err != nil {
 		s.log.Debug(
 			"subvolume create failed",
@@ -463,13 +465,13 @@ func (s *storageBtrfs) subvolCreate(subvol string) error {
 }
 
 func (s *storageBtrfs) subvolQGroup(subvol string) (string, error) {
-	output, err := exec.Command(
+	output, err := shared.RunCommand(
 		"btrfs",
 		"qgroup",
 		"show",
 		subvol,
 		"-e",
-		"-f").CombinedOutput()
+		"-f")
 
 	if err != nil {
 		return "", fmt.Errorf("btrfs quotas not supported. Try enabling them with 'btrfs quota enable'.")
@@ -497,13 +499,13 @@ func (s *storageBtrfs) subvolQGroup(subvol string) (string, error) {
 }
 
 func (s *storageBtrfs) subvolQGroupUsage(subvol string) (int64, error) {
-	output, err := exec.Command(
+	output, err := shared.RunCommand(
 		"btrfs",
 		"qgroup",
 		"show",
 		subvol,
 		"-e",
-		"-f").CombinedOutput()
+		"-f")
 
 	if err != nil {
 		return -1, fmt.Errorf("btrfs quotas not supported. Try enabling them with 'btrfs quota enable'.")
@@ -534,12 +536,12 @@ func (s *storageBtrfs) subvolDelete(subvol string) error {
 	// Attempt (but don't fail on) to delete any qgroup on the subvolume
 	qgroup, err := s.subvolQGroup(subvol)
 	if err == nil {
-		output, err := exec.Command(
+		output, err := shared.RunCommand(
 			"btrfs",
 			"qgroup",
 			"destroy",
 			qgroup,
-			subvol).CombinedOutput()
+			subvol)
 
 		if err != nil {
 			s.log.Warn(
@@ -550,12 +552,12 @@ func (s *storageBtrfs) subvolDelete(subvol string) error {
 	}
 
 	// Delete the subvolume itself
-	output, err := exec.Command(
+	output, err := shared.RunCommand(
 		"btrfs",
 		"subvolume",
 		"delete",
 		subvol,
-	).CombinedOutput()
+	)
 
 	if err != nil {
 		s.log.Warn(
@@ -575,6 +577,7 @@ func (s *storageBtrfs) subvolsDelete(subvol string) error {
 	if err != nil {
 		return err
 	}
+	sort.Sort(sort.Reverse(sort.StringSlice(subsubvols)))
 
 	for _, subsubvol := range subsubvols {
 		s.log.Debug(
@@ -616,23 +619,23 @@ func (s *storageBtrfs) subvolSnapshot(
 		}
 	}
 
-	var output []byte
+	var output string
 	var err error
 	if readonly {
-		output, err = exec.Command(
+		output, err = shared.RunCommand(
 			"btrfs",
 			"subvolume",
 			"snapshot",
 			"-r",
 			source,
-			dest).CombinedOutput()
+			dest)
 	} else {
-		output, err = exec.Command(
+		output, err = shared.RunCommand(
 			"btrfs",
 			"subvolume",
 			"snapshot",
 			source,
-			dest).CombinedOutput()
+			dest)
 	}
 	if err != nil {
 		s.log.Error(
@@ -658,6 +661,7 @@ func (s *storageBtrfs) subvolsSnapshot(
 	if err != nil {
 		return err
 	}
+	sort.Sort(sort.StringSlice(subsubvols))
 
 	if len(subsubvols) > 0 && readonly {
 		// A root with subvolumes can never be readonly,
@@ -670,17 +674,18 @@ func (s *storageBtrfs) subvolsSnapshot(
 	}
 
 	// First snapshot the root
-	if err := s.subvolSnapshot(source, dest, readonly); err != nil {
+	err = s.subvolSnapshot(source, dest, readonly)
+	if err != nil {
 		return err
 	}
 
 	// Now snapshot all subvolumes of the root.
 	for _, subsubvol := range subsubvols {
-		if err := s.subvolSnapshot(
-			path.Join(source, subsubvol),
-			path.Join(dest, subsubvol),
-			readonly); err != nil {
+		// Clear the target for the subvol to use
+		os.Remove(path.Join(dest, subsubvol))
 
+		err := s.subvolSnapshot(path.Join(source, subsubvol), path.Join(dest, subsubvol), readonly)
+		if err != nil {
 			return err
 		}
 	}
@@ -693,38 +698,14 @@ func (s *storageBtrfs) subvolsSnapshot(
  * else false.
  */
 func (s *storageBtrfs) isSubvolume(subvolPath string) bool {
-	if runningInUserns {
-		// subvolume show is restricted to real root, use a workaround
-
-		fs := syscall.Statfs_t{}
-		err := syscall.Statfs(subvolPath, &fs)
-		if err != nil {
-			return false
-		}
-
-		if fs.Type != filesystemSuperMagicBtrfs {
-			return false
-		}
-
-		parentFs := syscall.Statfs_t{}
-		err = syscall.Statfs(path.Dir(subvolPath), &parentFs)
-		if err != nil {
-			return false
-		}
-
-		if fs.Fsid == parentFs.Fsid {
-			return false
-		}
-
-		return true
+	fs := syscall.Stat_t{}
+	err := syscall.Lstat(subvolPath, &fs)
+	if err != nil {
+		return false
 	}
 
-	output, err := exec.Command(
-		"btrfs",
-		"subvolume",
-		"show",
-		subvolPath).CombinedOutput()
-	if err != nil || strings.HasPrefix(string(output), "ERROR: ") {
+	// Check if BTRFS_FIRST_FREE_OBJECTID
+	if fs.Ino != 256 {
 		return false
 	}
 
@@ -735,82 +716,34 @@ func (s *storageBtrfs) isSubvolume(subvolPath string) bool {
 func (s *storageBtrfs) getSubVolumes(path string) ([]string, error) {
 	result := []string{}
 
-	if runningInUserns {
-		if !strings.HasSuffix(path, "/") {
-			path = path + "/"
-		}
+	if !strings.HasSuffix(path, "/") {
+		path = path + "/"
+	}
 
-		// Unprivileged users can't get to fs internals
-		filepath.Walk(path, func(fpath string, fi os.FileInfo, err error) error {
-			if strings.TrimRight(fpath, "/") == strings.TrimRight(path, "/") {
-				return nil
-			}
-
-			if err != nil {
-				return nil
-			}
-
-			if !fi.IsDir() {
-				return nil
-			}
-
-			if s.isSubvolume(fpath) {
-				result = append(result, strings.TrimPrefix(fpath, path))
-			}
+	// Unprivileged users can't get to fs internals
+	filepath.Walk(path, func(fpath string, fi os.FileInfo, err error) error {
+		// Skip walk errors
+		if err != nil {
 			return nil
-		})
-
-		return result, nil
-	}
-
-	out, err := exec.Command(
-		"btrfs",
-		"inspect-internal",
-		"rootid",
-		path).CombinedOutput()
-	if err != nil {
-		return result, fmt.Errorf(
-			"Unable to get btrfs rootid, path='%s', err='%s'",
-			path,
-			err)
-	}
-	rootid := strings.TrimRight(string(out), "\n")
-
-	out, err = exec.Command(
-		"btrfs",
-		"inspect-internal",
-		"subvolid-resolve",
-		rootid, path).CombinedOutput()
-	if err != nil {
-		return result, fmt.Errorf(
-			"Unable to resolve btrfs rootid, path='%s', err='%s'",
-			path,
-			err)
-	}
-	basePath := strings.TrimRight(string(out), "\n")
-
-	out, err = exec.Command(
-		"btrfs",
-		"subvolume",
-		"list",
-		"-o",
-		path).CombinedOutput()
-	if err != nil {
-		return result, fmt.Errorf(
-			"Unable to list subvolumes, path='%s', err='%s'",
-			path,
-			err)
-	}
-
-	lines := strings.Split(string(out), "\n")
-	for _, line := range lines {
-		if line == "" {
-			continue
 		}
 
-		cols := strings.Fields(line)
-		result = append(result, cols[8][len(basePath):])
-	}
+		// Ignore the base path
+		if strings.TrimRight(fpath, "/") == strings.TrimRight(path, "/") {
+			return nil
+		}
+
+		// Subvolumes can only be directories
+		if !fi.IsDir() {
+			return nil
+		}
+
+		// Check if a btrfs subvolume
+		if s.isSubvolume(fpath) {
+			result = append(result, strings.TrimPrefix(fpath, path))
+		}
+
+		return nil
+	})
 
 	return result, nil
 }
@@ -846,7 +779,8 @@ func (s *btrfsMigrationSourceDriver) send(conn *websocket.Conn, btrfsPath string
 		return err
 	}
 
-	if err := cmd.Start(); err != nil {
+	err = cmd.Start()
+	if err != nil {
 		return err
 	}
 
@@ -854,13 +788,14 @@ func (s *btrfsMigrationSourceDriver) send(conn *websocket.Conn, btrfsPath string
 
 	output, err := ioutil.ReadAll(stderr)
 	if err != nil {
-		shared.LogError("problem reading btrfs send stderr", log.Ctx{"err": err})
+		logger.Error("problem reading btrfs send stderr", log.Ctx{"err": err})
 	}
 
 	err = cmd.Wait()
 	if err != nil {
-		shared.LogError("problem with btrfs send", log.Ctx{"output": string(output)})
+		logger.Error("problem with btrfs send", log.Ctx{"output": string(output)})
 	}
+
 	return err
 }
 
@@ -871,13 +806,14 @@ func (s *btrfsMigrationSourceDriver) SendWhileRunning(conn *websocket.Conn) erro
 		if err != nil {
 			return err
 		}
+		defer os.RemoveAll(tmpPath)
 
 		btrfsPath := fmt.Sprintf("%s/.root", tmpPath)
-		if err := s.btrfs.subvolSnapshot(s.container.Path(), btrfsPath, true); err != nil {
+		if err := s.btrfs.subvolsSnapshot(s.container.Path(), btrfsPath, true); err != nil {
 			return err
 		}
 
-		defer s.btrfs.subvolDelete(btrfsPath)
+		defer s.btrfs.subvolsDelete(btrfsPath)
 
 		return s.send(conn, btrfsPath, "")
 	}
@@ -901,11 +837,13 @@ func (s *btrfsMigrationSourceDriver) SendWhileRunning(conn *websocket.Conn) erro
 	if err != nil {
 		return err
 	}
+	defer os.RemoveAll(tmpPath)
 
 	s.runningSnapName = fmt.Sprintf("%s/.root", tmpPath)
-	if err := s.btrfs.subvolSnapshot(s.container.Path(), s.runningSnapName, true); err != nil {
+	if err := s.btrfs.subvolsSnapshot(s.container.Path(), s.runningSnapName, true); err != nil {
 		return err
 	}
+	defer s.btrfs.subvolsDelete(s.runningSnapName)
 
 	btrfsParent := ""
 	if len(s.btrfsSnapshotNames) > 0 {
@@ -921,9 +859,11 @@ func (s *btrfsMigrationSourceDriver) SendAfterCheckpoint(conn *websocket.Conn) e
 	if err != nil {
 		return err
 	}
+	defer os.RemoveAll(tmpPath)
 
 	s.stoppedSnapName = fmt.Sprintf("%s/.root", tmpPath)
-	if err := s.btrfs.subvolSnapshot(s.container.Path(), s.stoppedSnapName, true); err != nil {
+	err = s.btrfs.subvolsSnapshot(s.container.Path(), s.stoppedSnapName, true)
+	if err != nil {
 		return err
 	}
 
@@ -932,20 +872,20 @@ func (s *btrfsMigrationSourceDriver) SendAfterCheckpoint(conn *websocket.Conn) e
 
 func (s *btrfsMigrationSourceDriver) Cleanup() {
 	if s.stoppedSnapName != "" {
-		s.btrfs.subvolDelete(s.stoppedSnapName)
+		s.btrfs.subvolsDelete(s.stoppedSnapName)
 	}
 
 	if s.runningSnapName != "" {
-		s.btrfs.subvolDelete(s.runningSnapName)
+		s.btrfs.subvolsDelete(s.runningSnapName)
 	}
 }
 
 func (s *storageBtrfs) MigrationType() MigrationFSType {
 	if runningInUserns {
 		return MigrationFSType_RSYNC
-	} else {
-		return MigrationFSType_BTRFS
 	}
+
+	return MigrationFSType_BTRFS
 }
 
 func (s *storageBtrfs) PreservesInodes() bool {
@@ -1007,6 +947,7 @@ func (s *storageBtrfs) MigrationSink(live bool, container container, snapshots [
 		// Remove the existing pre-created subvolume
 		err := s.subvolsDelete(targetPath)
 		if err != nil {
+			logger.Errorf("Failed to delete pre-created BTRFS subvolume: %s.", btrfsPath)
 			return err
 		}
 
@@ -1020,7 +961,8 @@ func (s *storageBtrfs) MigrationSink(live bool, container container, snapshots [
 			return err
 		}
 
-		if err := cmd.Start(); err != nil {
+		err = cmd.Start()
+		if err != nil {
 			return err
 		}
 
@@ -1028,27 +970,27 @@ func (s *storageBtrfs) MigrationSink(live bool, container container, snapshots [
 
 		output, err := ioutil.ReadAll(stderr)
 		if err != nil {
-			shared.LogDebugf("problem reading btrfs receive stderr %s", err)
+			logger.Debugf("problem reading btrfs receive stderr %s", err)
 		}
 
 		err = cmd.Wait()
 		if err != nil {
-			shared.LogError("problem with btrfs receive", log.Ctx{"output": string(output)})
+			logger.Error("problem with btrfs receive", log.Ctx{"output": string(output)})
 			return err
 		}
 
 		if !isSnapshot {
 			cPath := containerPath(fmt.Sprintf("%s/.root", cName), true)
 
-			err := s.subvolSnapshot(cPath, targetPath, false)
+			err := s.subvolsSnapshot(cPath, targetPath, false)
 			if err != nil {
-				shared.LogError("problem with btrfs snapshot", log.Ctx{"err": err})
+				logger.Error("problem with btrfs snapshot", log.Ctx{"err": err})
 				return err
 			}
 
 			err = s.subvolsDelete(cPath)
 			if err != nil {
-				shared.LogError("problem with btrfs delete", log.Ctx{"err": err})
+				logger.Error("problem with btrfs delete", log.Ctx{"err": err})
 				return err
 			}
 		}

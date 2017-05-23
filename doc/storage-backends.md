@@ -39,6 +39,12 @@ rsync is used to transfer the container content across.
  - The btrfs backend is automatically used if /var/lib/lxd is on a btrfs filesystem.
  - Uses a subvolume per container, image and snapshot, creating btrfs snapshots when creating a new object.
  - When using for nesting, the host btrfs filesystem must be mounted with the "user\_subvol\_rm\_allowed" mount option.
+ - btrfs supports storage quotas via qgroups. While btrfs qgroups are
+   hierarchical, new subvolumes will not automatically be added to the qgroups
+   of their parent subvolumes. This means that users can trivially escape any
+   quotas that are set. If adherence to strict quotas is a necessity users
+   should be mindful of this and maybe consider using a zfs storage pool with
+   refquotas.
 
 ### LVM
 
@@ -72,3 +78,16 @@ rsync is used to transfer the container content across.
    Copying the wanted snapshot into a new container and then deleting
    the old container does however work, at the cost of losing any other
    snapshot the container may have had.
+ - Note that LXD will assume it has full control over the zfs pool or dataset.
+   It is recommended to not maintain any non-LXD owned filesystem entities in
+   a LXD zfs pool or dataset since LXD might delete them.
+
+#### Growing a loop backed ZFS pool
+LXD doesn't let you directly grow a loop backed ZFS pool, but you can do so with:
+
+```
+sudo truncate -s +5G /var/lib/lxd/zfs.img
+sudo zpool set autoexpand=on lxd
+sudo zpool online -e lxd /var/lib/lxd/zfs.img
+sudo zpool set autoexpand=off lxd
+```

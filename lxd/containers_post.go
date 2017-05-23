@@ -14,6 +14,7 @@ import (
 	"github.com/lxc/lxd/lxd/types"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
+	"github.com/lxc/lxd/shared/logger"
 	"github.com/lxc/lxd/shared/osarch"
 
 	log "gopkg.in/inconshreveable/log15.v2"
@@ -36,8 +37,6 @@ func createFromImage(d *Daemon, req *api.ContainersPost) Response {
 
 			hash = alias.Target
 		}
-	} else if req.Source.Fingerprint != "" {
-		hash = req.Source.Fingerprint
 	} else if req.Source.Properties != nil {
 		if req.Source.Server != "" {
 			return BadRequest(fmt.Errorf("Property match is only supported for local images"))
@@ -50,8 +49,8 @@ func createFromImage(d *Daemon, req *api.ContainersPost) Response {
 
 		var image *api.Image
 
-		for _, hash := range hashes {
-			_, img, err := dbImageGet(d.db, hash, false, true)
+		for _, imageHash := range hashes {
+			_, img, err := dbImageGet(d.db, imageHash, false, true)
 			if err != nil {
 				continue
 			}
@@ -85,39 +84,36 @@ func createFromImage(d *Daemon, req *api.ContainersPost) Response {
 	}
 
 	run := func(op *operation) error {
+		args := containerArgs{
+			Config:    req.Config,
+			Ctype:     cTypeRegular,
+			Devices:   req.Devices,
+			Ephemeral: req.Ephemeral,
+			Name:      req.Name,
+			Profiles:  req.Profiles,
+		}
+
+		var info *api.Image
 		if req.Source.Server != "" {
-			hash, err = d.ImageDownload(
+			info, err = d.ImageDownload(
 				op, req.Source.Server, req.Source.Protocol, req.Source.Certificate, req.Source.Secret,
 				hash, true, daemonConfig["images.auto_update_cached"].GetBool())
 			if err != nil {
 				return err
 			}
+		} else {
+			_, info, err = dbImageGet(d.db, hash, false, false)
+			if err != nil {
+				return err
+			}
 		}
 
-		_, imgInfo, err := dbImageGet(d.db, hash, false, false)
+		args.Architecture, err = osarch.ArchitectureId(info.Architecture)
 		if err != nil {
 			return err
 		}
 
-		hash = imgInfo.Fingerprint
-
-		architecture, err := osarch.ArchitectureId(imgInfo.Architecture)
-		if err != nil {
-			architecture = 0
-		}
-
-		args := containerArgs{
-			Architecture: architecture,
-			BaseImage:    hash,
-			Config:       req.Config,
-			Ctype:        cTypeRegular,
-			Devices:      req.Devices,
-			Ephemeral:    req.Ephemeral,
-			Name:         req.Name,
-			Profiles:     req.Profiles,
-		}
-
-		_, err = containerCreateFromImage(d, args, hash)
+		_, err = containerCreateFromImage(d, args, info.Fingerprint)
 		return err
 	}
 
@@ -133,19 +129,21 @@ func createFromImage(d *Daemon, req *api.ContainersPost) Response {
 }
 
 func createFromNone(d *Daemon, req *api.ContainersPost) Response {
-	architecture, err := osarch.ArchitectureId(req.Architecture)
-	if err != nil {
-		architecture = 0
+	args := containerArgs{
+		Config:    req.Config,
+		Ctype:     cTypeRegular,
+		Devices:   req.Devices,
+		Ephemeral: req.Ephemeral,
+		Name:      req.Name,
+		Profiles:  req.Profiles,
 	}
 
-	args := containerArgs{
-		Architecture: architecture,
-		Config:       req.Config,
-		Ctype:        cTypeRegular,
-		Devices:      req.Devices,
-		Ephemeral:    req.Ephemeral,
-		Name:         req.Name,
-		Profiles:     req.Profiles,
+	if req.Architecture != "" {
+		architecture, err := osarch.ArchitectureId(req.Architecture)
+		if err != nil {
+			return InternalError(err)
+		}
+		args.Architecture = architecture
 	}
 
 	run := func(op *operation) error {
@@ -165,15 +163,20 @@ func createFromNone(d *Daemon, req *api.ContainersPost) Response {
 }
 
 func createFromMigration(d *Daemon, req *api.ContainersPost) Response {
+	// Validate migration mode
 	if req.Source.Mode != "pull" {
 		return NotImplemented
 	}
 
+	var c container
+
+	// Parse the architecture name
 	architecture, err := osarch.ArchitectureId(req.Architecture)
 	if err != nil {
-		architecture = 0
+		return BadRequest(err)
 	}
 
+	// Prepare the container creation request
 	args := containerArgs{
 		Architecture: architecture,
 		BaseImage:    req.Source.BaseImage,
@@ -184,9 +187,6 @@ func createFromMigration(d *Daemon, req *api.ContainersPost) Response {
 		Name:         req.Name,
 		Profiles:     req.Profiles,
 	}
-
-	var c container
-	_, _, err = dbImageGet(d.db, req.Source.BaseImage, false, true)
 
 	/* Only create a container from an image if we're going to
 	 * rsync over the top of it. In the case of a better file
@@ -201,6 +201,7 @@ func createFromMigration(d *Daemon, req *api.ContainersPost) Response {
 	 * point and just negotiate it over the migration control
 	 * socket. Anyway, it'll happen later :)
 	 */
+	_, _, err = dbImageGet(d.db, req.Source.BaseImage, false, true)
 	if err == nil && d.Storage.MigrationType() == MigrationFSType_RSYNC {
 		c, err = containerCreateFromImage(d, args, req.Source.BaseImage)
 		if err != nil {
@@ -279,7 +280,7 @@ func createFromCopy(d *Daemon, req *api.ContainersPost) Response {
 
 	for key, value := range sourceConfig {
 		if len(key) > 8 && key[0:8] == "volatile" && !shared.StringInSlice(key[9:], []string{"base_image", "last_state.idmap"}) {
-			shared.LogDebug("Skipping volatile key from copy source",
+			logger.Debug("Skipping volatile key from copy source",
 				log.Ctx{"key": key})
 			continue
 		}
@@ -292,6 +293,22 @@ func createFromCopy(d *Daemon, req *api.ContainersPost) Response {
 		req.Config[key] = value
 	}
 
+	// Devices override
+	sourceDevices := source.LocalDevices()
+
+	if req.Devices == nil {
+		req.Devices = make(map[string]map[string]string)
+	}
+
+	for key, value := range sourceDevices {
+		_, exists := req.Devices[key]
+		if exists {
+			continue
+		}
+
+		req.Devices[key] = value
+	}
+
 	// Profiles override
 	if req.Profiles == nil {
 		req.Profiles = source.Profiles()
@@ -302,7 +319,7 @@ func createFromCopy(d *Daemon, req *api.ContainersPost) Response {
 		BaseImage:    req.Source.BaseImage,
 		Config:       req.Config,
 		Ctype:        cTypeRegular,
-		Devices:      source.LocalDevices(),
+		Devices:      req.Devices,
 		Ephemeral:    req.Ephemeral,
 		Name:         req.Name,
 		Profiles:     req.Profiles,
@@ -329,7 +346,7 @@ func createFromCopy(d *Daemon, req *api.ContainersPost) Response {
 }
 
 func containersPost(d *Daemon, r *http.Request) Response {
-	shared.LogDebugf("Responding to container create")
+	logger.Debugf("Responding to container create")
 
 	req := api.ContainersPost{}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -354,7 +371,7 @@ func containersPost(d *Daemon, r *http.Request) Response {
 				return InternalError(fmt.Errorf("couldn't generate a new unique name after 100 tries"))
 			}
 		}
-		shared.LogDebugf("No name provided, creating %s", req.Name)
+		logger.Debugf("No name provided, creating %s", req.Name)
 	}
 
 	if req.Devices == nil {

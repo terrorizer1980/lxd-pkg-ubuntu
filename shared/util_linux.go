@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"unsafe"
+
+	"github.com/lxc/lxd/shared/logger"
 )
 
 // #cgo LDFLAGS: -lutil -lpthread
@@ -29,9 +31,10 @@ import (
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <unistd.h>
+#include <sys/un.h>
 
 #ifndef AT_SYMLINK_FOLLOW
 #define AT_SYMLINK_FOLLOW    0x400
@@ -40,6 +43,8 @@ import (
 #ifndef AT_EMPTY_PATH
 #define AT_EMPTY_PATH       0x1000
 #endif
+
+#define ABSTRACT_UNIX_SOCK_LEN sizeof(((struct sockaddr_un *)0)->sun_path)
 
 // This is an adaption from https://codereview.appspot.com/4589049, to be
 // included in the stdlib with the stdlib's license.
@@ -91,7 +96,7 @@ void configure_pty(int fd) {
 	return;
 }
 
-void create_pty(int *master, int *slave, int uid, int gid) {
+void create_pty(int *master, int *slave, uid_t uid, gid_t gid) {
 	if (openpty(master, slave, NULL, NULL, NULL) < 0) {
 		fprintf(stderr, "Failed to openpty: %s\n", strerror(errno));
 		return;
@@ -210,6 +215,8 @@ again:
 */
 import "C"
 
+const ABSTRACT_UNIX_SOCK_LEN int = C.ABSTRACT_UNIX_SOCK_LEN
+
 const POLLIN int = C.POLLIN
 const POLLPRI int = C.POLLPRI
 const POLLNVAL int = C.POLLNVAL
@@ -244,11 +251,11 @@ func ShiftOwner(basepath string, path string, uid int, gid int) error {
 	return nil
 }
 
-func OpenPty(uid, gid int) (master *os.File, slave *os.File, err error) {
+func OpenPty(uid, gid int64) (master *os.File, slave *os.File, err error) {
 	fd_master := C.int(-1)
 	fd_slave := C.int(-1)
-	rootUid := C.int(uid)
-	rootGid := C.int(gid)
+	rootUid := C.uid_t(uid)
+	rootGid := C.gid_t(gid)
 
 	C.create_pty(&fd_master, &fd_slave, rootUid, rootGid)
 
@@ -368,7 +375,7 @@ func GetFileStat(p string) (uid int, gid int, major int, minor int,
 func IsMountPoint(name string) bool {
 	_, err := exec.LookPath("mountpoint")
 	if err == nil {
-		err = exec.Command("mountpoint", "-q", name).Run()
+		_, err = RunCommand("mountpoint", "-q", name)
 		if err != nil {
 			return false
 		}
@@ -565,13 +572,13 @@ func ExecReaderToChannel(r io.Reader, bufferSize int, exited <-chan bool, fd int
 
 		ret, revents, err := GetPollRevents(fd, 0, (POLLIN | POLLPRI | POLLERR | POLLHUP | POLLRDHUP))
 		if ret < 0 {
-			LogErrorf("Failed to poll(POLLIN | POLLPRI | POLLHUP | POLLRDHUP) on file descriptor: %s.", err)
+			logger.Errorf("Failed to poll(POLLIN | POLLPRI | POLLHUP | POLLRDHUP) on file descriptor: %s.", err)
 		} else if ret > 0 {
 			if (revents & POLLERR) > 0 {
-				LogWarnf("Detected poll(POLLERR) event.")
+				logger.Warnf("Detected poll(POLLERR) event.")
 			}
 		} else if ret == 0 {
-			LogDebugf("No data in stdout: exiting.")
+			logger.Debugf("No data in stdout: exiting.")
 			once.Do(closeChannel)
 			return
 		}
@@ -593,7 +600,7 @@ func ExecReaderToChannel(r io.Reader, bufferSize int, exited <-chan bool, fd int
 				// COMMENT(brauner):
 				// This condition is only reached in cases where we are massively f*cked since we even handle
 				// EINTR in the underlying C wrapper around poll(). So let's exit here.
-				LogErrorf("Failed to poll(POLLIN | POLLPRI | POLLERR | POLLHUP | POLLRDHUP) on file descriptor: %s. Exiting.", err)
+				logger.Errorf("Failed to poll(POLLIN | POLLPRI | POLLERR | POLLHUP | POLLRDHUP) on file descriptor: %s. Exiting.", err)
 				return
 			}
 
@@ -603,13 +610,13 @@ func ExecReaderToChannel(r io.Reader, bufferSize int, exited <-chan bool, fd int
 			// keep on reading from the pty file descriptor until we get a simple POLLHUP back.
 			both := ((revents & (POLLIN | POLLPRI)) > 0) && ((revents & (POLLHUP | POLLRDHUP)) > 0)
 			if both {
-				LogDebugf("Detected poll(POLLIN | POLLPRI | POLLHUP | POLLRDHUP) event.")
+				logger.Debugf("Detected poll(POLLIN | POLLPRI | POLLHUP | POLLRDHUP) event.")
 				read := buf[offset : offset+readSize]
 				nr, err = r.Read(read)
 			}
 
 			if (revents & POLLERR) > 0 {
-				LogWarnf("Detected poll(POLLERR) event: exiting.")
+				logger.Warnf("Detected poll(POLLERR) event: exiting.")
 				return
 			}
 
@@ -670,10 +677,10 @@ func ExecReaderToChannel(r io.Reader, bufferSize int, exited <-chan bool, fd int
 					//   stdout is written out.
 					ret, revents, err := GetPollRevents(fd, 0, (POLLIN | POLLPRI | POLLERR | POLLHUP | POLLRDHUP))
 					if ret < 0 {
-						LogErrorf("Failed to poll(POLLIN | POLLPRI | POLLERR | POLLHUP | POLLRDHUP) on file descriptor: %s. Exiting.", err)
+						logger.Errorf("Failed to poll(POLLIN | POLLPRI | POLLERR | POLLHUP | POLLRDHUP) on file descriptor: %s. Exiting.", err)
 						return
 					} else if (revents & (POLLHUP | POLLRDHUP)) == 0 {
-						LogDebugf("Exiting but background processes are still running.")
+						logger.Debugf("Exiting but background processes are still running.")
 						return
 					}
 				}
@@ -685,7 +692,7 @@ func ExecReaderToChannel(r io.Reader, bufferSize int, exited <-chan bool, fd int
 			// The attached process has exited and we have read all data that may have
 			// been buffered.
 			if ((revents & (POLLHUP | POLLRDHUP)) > 0) && !both {
-				LogDebugf("Detected poll(POLLHUP) event: exiting.")
+				logger.Debugf("Detected poll(POLLHUP) event: exiting.")
 				return
 			}
 
@@ -699,4 +706,24 @@ func ExecReaderToChannel(r io.Reader, bufferSize int, exited <-chan bool, fd int
 	}()
 
 	return ch
+}
+
+// Detect whether err is an errno.
+func GetErrno(err error) (errno error, iserrno bool) {
+	sysErr, ok := err.(*os.SyscallError)
+	if ok {
+		return sysErr.Err, true
+	}
+
+	pathErr, ok := err.(*os.PathError)
+	if ok {
+		return pathErr.Err, true
+	}
+
+	tmpErrno, ok := err.(syscall.Errno)
+	if ok {
+		return tmpErrno, true
+	}
+
+	return nil, false
 }

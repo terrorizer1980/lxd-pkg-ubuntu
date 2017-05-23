@@ -1,22 +1,27 @@
 package main
 
 import (
-	"sync"
+	"fmt"
+	"os"
 
-	"github.com/lxc/lxd"
+	"github.com/lxc/lxd/client"
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/logger"
 )
 
 func cmdActivateIfNeeded() error {
+	// Only root should run this
+	if os.Geteuid() != 0 {
+		return fmt.Errorf("This must be run as root")
+	}
+
 	// Don't start a full daemon, we just need DB access
 	d := &Daemon{
-		imagesDownloading:     map[string]chan bool{},
-		imagesDownloadingLock: sync.Mutex{},
-		lxcpath:               shared.VarPath("containers"),
+		lxcpath: shared.VarPath("containers"),
 	}
 
 	if !shared.PathExists(shared.VarPath("lxd.db")) {
-		shared.LogDebugf("No DB, so no need to start the daemon now.")
+		logger.Debugf("No DB, so no need to start the daemon now.")
 		return nil
 	}
 
@@ -34,17 +39,18 @@ func cmdActivateIfNeeded() error {
 	// Look for network socket
 	value := daemonConfig["core.https_address"].Get()
 	if value != "" {
-		shared.LogDebugf("Daemon has core.https_address set, activating...")
-		_, err := lxd.NewClient(&lxd.DefaultConfig, "local")
+		logger.Debugf("Daemon has core.https_address set, activating...")
+		_, err := lxd.ConnectLXDUnix("", nil)
 		return err
 	}
 
-	// Look for auto-started or previously started containers
+	// Load the idmap for unprivileged containers
 	d.IdmapSet, err = shared.DefaultIdmapSet()
 	if err != nil {
 		return err
 	}
 
+	// Look for auto-started or previously started containers
 	result, err := dbContainersList(d.db, cTypeRegular)
 	if err != nil {
 		return err
@@ -61,18 +67,18 @@ func cmdActivateIfNeeded() error {
 		autoStart := config["boot.autostart"]
 
 		if c.IsRunning() {
-			shared.LogDebugf("Daemon has running containers, activating...")
-			_, err := lxd.NewClient(&lxd.DefaultConfig, "local")
+			logger.Debugf("Daemon has running containers, activating...")
+			_, err := lxd.ConnectLXDUnix("", nil)
 			return err
 		}
 
 		if lastState == "RUNNING" || lastState == "Running" || shared.IsTrue(autoStart) {
-			shared.LogDebugf("Daemon has auto-started containers, activating...")
-			_, err := lxd.NewClient(&lxd.DefaultConfig, "local")
+			logger.Debugf("Daemon has auto-started containers, activating...")
+			_, err := lxd.ConnectLXDUnix("", nil)
 			return err
 		}
 	}
 
-	shared.LogDebugf("No need to start the daemon now.")
+	logger.Debugf("No need to start the daemon now.")
 	return nil
 }

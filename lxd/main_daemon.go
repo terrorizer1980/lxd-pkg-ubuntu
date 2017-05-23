@@ -11,9 +11,15 @@ import (
 	"time"
 
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/logger"
 )
 
 func cmdDaemon() error {
+	// Only root should run this
+	if os.Geteuid() != 0 {
+		return fmt.Errorf("This must be run as root")
+	}
+
 	if *argCPUProfile != "" {
 		f, err := os.Create(*argCPUProfile)
 		if err != nil {
@@ -40,7 +46,7 @@ func cmdDaemon() error {
 		go func() {
 			for {
 				time.Sleep(time.Duration(*argPrintGoroutinesEvery) * time.Second)
-				shared.PrintStack()
+				logger.Debugf(logger.GetStack())
 			}
 		}()
 	}
@@ -65,7 +71,7 @@ func cmdDaemon() error {
 		signal.Notify(ch, syscall.SIGPWR)
 		sig := <-ch
 
-		shared.LogInfof("Received '%s signal', shutting down containers.", sig)
+		logger.Infof("Received '%s signal', shutting down containers.", sig)
 
 		containersShutdown(d)
 
@@ -76,7 +82,7 @@ func cmdDaemon() error {
 	go func() {
 		<-d.shutdownChan
 
-		shared.LogInfof("Asked to shutdown by API, shutting down containers.")
+		logger.Infof("Asked to shutdown by API, shutting down containers.")
 
 		containersShutdown(d)
 
@@ -91,7 +97,7 @@ func cmdDaemon() error {
 		signal.Notify(ch, syscall.SIGTERM)
 		sig := <-ch
 
-		shared.LogInfof("Received '%s signal', exiting.", sig)
+		logger.Infof("Received '%s signal', exiting.", sig)
 		ret = d.Stop()
 		wg.Done()
 	}()

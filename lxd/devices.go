@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"math/big"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"sort"
@@ -19,6 +18,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/logger"
 
 	log "gopkg.in/inconshreveable/log15.v2"
 )
@@ -187,24 +187,24 @@ func deviceTaskBalance(d *Daemon) {
 		// Older kernel - use cpuset.cpus
 		effectiveCpus, err = cGroupGet("cpuset", "/", "cpuset.cpus")
 		if err != nil {
-			shared.LogErrorf("Error reading host's cpuset.cpus")
+			logger.Errorf("Error reading host's cpuset.cpus")
 			return
 		}
 	}
 	err = cGroupSet("cpuset", "/lxc", "cpuset.cpus", effectiveCpus)
 	if err != nil && shared.PathExists("/sys/fs/cgroup/cpuset/lxc") {
-		shared.LogWarn("Error setting lxd's cpuset.cpus", log.Ctx{"err": err})
+		logger.Warn("Error setting lxd's cpuset.cpus", log.Ctx{"err": err})
 	}
 	cpus, err := parseCpuset(effectiveCpus)
 	if err != nil {
-		shared.LogError("Error parsing host's cpu set", log.Ctx{"cpuset": effectiveCpus, "err": err})
+		logger.Error("Error parsing host's cpu set", log.Ctx{"cpuset": effectiveCpus, "err": err})
 		return
 	}
 
 	// Iterate through the containers
 	containers, err := dbContainersList(d.db, cTypeRegular)
 	if err != nil {
-		shared.LogError("problem loading containers list", log.Ctx{"err": err})
+		logger.Error("problem loading containers list", log.Ctx{"err": err})
 		return
 	}
 	fixedContainers := map[int][]container{}
@@ -268,7 +268,7 @@ func deviceTaskBalance(d *Daemon) {
 	for cpu, ctns := range fixedContainers {
 		c, ok := usage[cpu]
 		if !ok {
-			shared.LogErrorf("Internal error: container using unavailable cpu")
+			logger.Errorf("Internal error: container using unavailable cpu")
 			continue
 		}
 		id := c.strId
@@ -317,7 +317,7 @@ func deviceTaskBalance(d *Daemon) {
 		sort.Strings(set)
 		err := ctn.CGroupSet("cpuset.cpus", strings.Join(set, ","))
 		if err != nil {
-			shared.LogError("balance: Unable to set cpuset", log.Ctx{"name": ctn.Name(), "err": err, "value": strings.Join(set, ",")})
+			logger.Error("balance: Unable to set cpuset", log.Ctx{"name": ctn.Name(), "err": err, "value": strings.Join(set, ",")})
 		}
 	}
 }
@@ -361,7 +361,7 @@ func deviceNetworkPriority(d *Daemon, netif string) {
 func deviceEventListener(d *Daemon) {
 	chNetlinkCPU, chNetlinkNetwork, err := deviceNetlinkListener()
 	if err != nil {
-		shared.LogErrorf("scheduler: couldn't setup netlink listener")
+		logger.Errorf("scheduler: couldn't setup netlink listener")
 		return
 	}
 
@@ -369,7 +369,7 @@ func deviceEventListener(d *Daemon) {
 		select {
 		case e := <-chNetlinkCPU:
 			if len(e) != 2 {
-				shared.LogErrorf("Scheduler: received an invalid cpu hotplug event")
+				logger.Errorf("Scheduler: received an invalid cpu hotplug event")
 				continue
 			}
 
@@ -377,11 +377,11 @@ func deviceEventListener(d *Daemon) {
 				continue
 			}
 
-			shared.LogDebugf("Scheduler: cpu: %s is now %s: re-balancing", e[0], e[1])
+			logger.Debugf("Scheduler: cpu: %s is now %s: re-balancing", e[0], e[1])
 			deviceTaskBalance(d)
 		case e := <-chNetlinkNetwork:
 			if len(e) != 2 {
-				shared.LogErrorf("Scheduler: received an invalid network hotplug event")
+				logger.Errorf("Scheduler: received an invalid network hotplug event")
 				continue
 			}
 
@@ -389,11 +389,11 @@ func deviceEventListener(d *Daemon) {
 				continue
 			}
 
-			shared.LogDebugf("Scheduler: network: %s has been added: updating network priorities", e[0])
+			logger.Debugf("Scheduler: network: %s has been added: updating network priorities", e[0])
 			deviceNetworkPriority(d, e[0])
 		case e := <-deviceSchedRebalance:
 			if len(e) != 3 {
-				shared.LogErrorf("Scheduler: received an invalid rebalance event")
+				logger.Errorf("Scheduler: received an invalid rebalance event")
 				continue
 			}
 
@@ -401,7 +401,7 @@ func deviceEventListener(d *Daemon) {
 				continue
 			}
 
-			shared.LogDebugf("Scheduler: %s %s %s: re-balancing", e[0], e[1], e[2])
+			logger.Debugf("Scheduler: %s %s %s: re-balancing", e[0], e[1], e[2])
 			deviceTaskBalance(d)
 		}
 	}
@@ -498,7 +498,8 @@ func deviceNextVeth() string {
 }
 
 func deviceRemoveInterface(nic string) error {
-	return exec.Command("ip", "link", "del", nic).Run()
+	_, err := shared.RunCommand("ip", "link", "del", nic)
+	return err
 }
 
 func deviceMountDisk(srcPath string, dstPath string, readonly bool, recursive bool) error {
@@ -692,13 +693,13 @@ func deviceGetParentBlocks(path string) ([]string, error) {
 		// Accessible zfs filesystems
 		poolName := strings.Split(device[1], "/")[0]
 
-		output, err := exec.Command("zpool", "status", "-P", "-L", poolName).CombinedOutput()
+		output, err := shared.RunCommand("zpool", "status", "-P", "-L", poolName)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to query zfs filesystem information for %s: %s", device[1], output)
 		}
 
 		header := true
-		for _, line := range strings.Split(string(output), "\n") {
+		for _, line := range strings.Split(output, "\n") {
 			fields := strings.Fields(line)
 			if len(fields) < 5 {
 				continue
@@ -746,12 +747,12 @@ func deviceGetParentBlocks(path string) ([]string, error) {
 		}
 	} else if fs == "btrfs" && shared.PathExists(device[1]) {
 		// Accessible btrfs filesystems
-		output, err := exec.Command("btrfs", "filesystem", "show", device[1]).CombinedOutput()
+		output, err := shared.RunCommand("btrfs", "filesystem", "show", device[1])
 		if err != nil {
 			return nil, fmt.Errorf("Failed to query btrfs filesystem information for %s: %s", device[1], output)
 		}
 
-		for _, line := range strings.Split(string(output), "\n") {
+		for _, line := range strings.Split(output, "\n") {
 			fields := strings.Fields(line)
 			if len(fields) == 0 || fields[0] != "devid" {
 				continue

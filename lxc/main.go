@@ -12,12 +12,16 @@ import (
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/gnuflag"
 	"github.com/lxc/lxd/shared/i18n"
+	"github.com/lxc/lxd/shared/logger"
 	"github.com/lxc/lxd/shared/logging"
 )
 
 var configPath string
+var execName string
 
 func main() {
+	execName = os.Args[0]
+
 	if err := run(); err != nil {
 		msg := fmt.Sprintf(i18n.G("error: %v"), err)
 
@@ -58,12 +62,11 @@ func run() error {
 	}
 
 	if len(os.Args) >= 2 && (os.Args[1] == "--all") {
-		os.Args[1] = "help"
-		os.Args = append(os.Args, "--all")
+		os.Args = []string{os.Args[0], "help", "--all"}
 	}
 
-	if len(os.Args) == 2 && os.Args[1] == "--version" {
-		os.Args[1] = "version"
+	if shared.StringInSlice("--version", os.Args) {
+		os.Args = []string{os.Args[0], "version"}
 	}
 
 	if len(os.Args) < 2 {
@@ -105,14 +108,18 @@ func run() error {
 	}
 	cmd.flags()
 	gnuflag.Usage = func() {
-		fmt.Fprintf(os.Stderr, i18n.G("Usage: %s")+"\n\n"+i18n.G("Options:")+"\n\n", strings.TrimSpace(cmd.usage()))
+		fmt.Print(cmd.usage())
+		fmt.Printf("\n\n%s\n", i18n.G("Options:"))
+
+		gnuflag.SetOut(os.Stdout)
 		gnuflag.PrintDefaults()
+		os.Exit(0)
 	}
 
 	os.Args = os.Args[1:]
 	gnuflag.Parse(true)
 
-	shared.Log, err = logging.GetLogger("", "", *verbose, *debug, nil)
+	logger.Log, err = logging.GetLogger("", "", *verbose, *debug, nil)
 	if err != nil {
 		return err
 	}
@@ -135,16 +142,35 @@ func run() error {
 	}
 
 	err = cmd.run(config, gnuflag.Args())
-	if err == errArgs {
-		/* If we got an error about invalid arguments, let's try to
-		 * expand this as an alias
-		 */
-		if !*noAlias {
-			execIfAliases(config, origArgs)
+	if err == errArgs || err == errUsage {
+		out := os.Stdout
+		if err == errArgs {
+			/* If we got an error about invalid arguments, let's try to
+			 * expand this as an alias
+			 */
+			if !*noAlias {
+				execIfAliases(config, origArgs)
+			}
+
+			out = os.Stderr
 		}
-		fmt.Fprintf(os.Stderr, "%s\n\n"+i18n.G("error: %v")+"\n", cmd.usage(), err)
-		os.Exit(1)
+		gnuflag.SetOut(out)
+
+		if err == errArgs {
+			fmt.Fprintf(out, i18n.G("error: %v"), err)
+			fmt.Fprintf(out, "\n\n")
+		}
+		fmt.Fprint(out, cmd.usage())
+		fmt.Fprintf(out, "\n\n%s\n", i18n.G("Options:"))
+
+		gnuflag.PrintDefaults()
+
+		if err == errArgs {
+			os.Exit(1)
+		}
+		os.Exit(0)
 	}
+
 	return err
 }
 
@@ -171,38 +197,42 @@ var commands = map[string]command{
 	"monitor": &monitorCmd{},
 	"move":    &moveCmd{},
 	"pause": &actionCmd{
-		action:         shared.Freeze,
-		name:           "pause",
-		additionalHelp: i18n.G("The opposite of `lxc pause` is `lxc start`."),
+		action:      shared.Freeze,
+		description: i18n.G("Pause containers."),
+		name:        "pause",
 	},
 	"profile": &profileCmd{},
 	"publish": &publishCmd{},
 	"remote":  &remoteCmd{},
 	"restart": &actionCmd{
-		action:     shared.Restart,
-		hasTimeout: true,
-		visible:    true,
-		name:       "restart",
-		timeout:    -1,
+		action:      shared.Restart,
+		description: i18n.G("Restart containers."),
+		hasTimeout:  true,
+		visible:     true,
+		name:        "restart",
+		timeout:     -1,
 	},
 	"restore":  &restoreCmd{},
 	"snapshot": &snapshotCmd{},
 	"start": &actionCmd{
-		action:  shared.Start,
-		visible: true,
-		name:    "start",
+		action:      shared.Start,
+		description: i18n.G("Start containers."),
+		visible:     true,
+		name:        "start",
 	},
 	"stop": &actionCmd{
-		action:     shared.Stop,
-		hasTimeout: true,
-		visible:    true,
-		name:       "stop",
-		timeout:    -1,
+		action:      shared.Stop,
+		description: i18n.G("Stop containers."),
+		hasTimeout:  true,
+		visible:     true,
+		name:        "stop",
+		timeout:     -1,
 	},
 	"version": &versionCmd{},
 }
 
 var errArgs = fmt.Errorf(i18n.G("wrong number of subcommand arguments"))
+var errUsage = fmt.Errorf("show usage")
 
 func expandAlias(config *lxd.Config, origArgs []string) ([]string, bool) {
 	foundAlias := false
@@ -268,42 +298,4 @@ func execIfAliases(config *lxd.Config, origArgs []string) {
 	ret := syscall.Exec(path, newArgs, syscall.Environ())
 	fmt.Fprintf(os.Stderr, i18n.G("processing aliases failed %s\n"), ret)
 	os.Exit(5)
-}
-
-type ProgressRenderer struct {
-	Format string
-
-	maxLength int
-}
-
-func (p *ProgressRenderer) Done(msg string) {
-	if msg != "" {
-		msg += "\n"
-	}
-
-	if len(msg) > p.maxLength {
-		p.maxLength = len(msg)
-	} else {
-		fmt.Printf("\r%s", strings.Repeat(" ", p.maxLength))
-	}
-
-	fmt.Print("\r")
-	fmt.Print(msg)
-}
-
-func (p *ProgressRenderer) Update(status string) {
-	msg := "%s"
-	if p.Format != "" {
-		msg = p.Format
-	}
-
-	msg = fmt.Sprintf("\r"+msg, status)
-
-	if len(msg) > p.maxLength {
-		p.maxLength = len(msg)
-	} else {
-		fmt.Printf("\r%s", strings.Repeat(" ", p.maxLength))
-	}
-
-	fmt.Print(msg)
 }

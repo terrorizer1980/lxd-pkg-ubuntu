@@ -27,28 +27,6 @@ type column struct {
 
 type columnData func(api.Container, *api.ContainerState, []api.ContainerSnapshot) string
 
-type byName [][]string
-
-func (a byName) Len() int {
-	return len(a)
-}
-
-func (a byName) Swap(i, j int) {
-	a[i], a[j] = a[j], a[i]
-}
-
-func (a byName) Less(i, j int) bool {
-	if a[i][0] == "" {
-		return false
-	}
-
-	if a[j][0] == "" {
-		return true
-	}
-
-	return a[i][0] < a[j][0]
-}
-
 const (
 	listFormatTable = "table"
 	listFormatJSON  = "json"
@@ -66,41 +44,72 @@ func (c *listCmd) showByDefault() bool {
 
 func (c *listCmd) usage() string {
 	return i18n.G(
-		`Lists the containers.
+		`Usage: lxc list [<remote>:] [filters] [--format table|json] [-c <columns>] [--fast]
 
-lxc list [<remote>:] [filters] [--format table|json] [-c <columns>] [--fast]
-
-The filters are:
-* A single keyword like "web" which will list any container with a name starting by "web".
-* A regular expression on the container name. (e.g. .*web.*01$)
-* A key/value pair referring to a configuration item. For those, the namespace can be abbreviated to the smallest unambiguous identifier:
- * "user.blah=abc" will list all containers with the "blah" user property set to "abc".
- * "u.blah=abc" will do the same
- * "security.privileged=1" will list all privileged containers
- * "s.privileged=1" will do the same
-* A regular expression matching a configuration item or its value. (e.g. volatile.eth0.hwaddr=00:16:3e:.*)
-
-Columns for table format are:
-* 4 - IPv4 address
-* 6 - IPv6 address
-* a - architecture
-* c - creation date
-* n - name
-* p - pid of container init process
-* P - profiles
-* s - state
-* S - number of snapshots
-* t - type (persistent or ephemeral)
+List the existing containers.
 
 Default column layout: ns46tS
-Fast column layout: nsacPt`)
+Fast column layout: nsacPt
+
+*Filters*
+A single keyword like "web" which will list any container with a name starting by "web".
+
+A regular expression on the container name. (e.g. .*web.*01$).
+
+A key/value pair referring to a configuration item. For those, the namespace can be abbreviated to the smallest unambiguous identifier.
+    - "user.blah=abc" will list all containers with the "blah" user property set to "abc".
+
+    - "u.blah=abc" will do the same
+
+    - "security.privileged=1" will list all privileged containers
+
+    - "s.privileged=1" will do the same
+
+A regular expression matching a configuration item or its value. (e.g. volatile.eth0.hwaddr=00:16:3e:.*).
+
+*Columns*
+The -c option takes a comma separated list of arguments that control
+which container attributes to output when displaying in table format.
+
+Column arguments are either pre-defined shorthand chars (see below),
+or (extended) config keys.
+
+Commas between consecutive shorthand chars are optional.
+
+Pre-defined column shorthand chars:
+
+    4 - IPv4 address
+
+    6 - IPv6 address
+
+    a - Architecture
+
+    c - Creation date
+
+    l - Last used date
+
+    n - Name
+
+    p - PID of the container's init process
+
+    P - Profiles
+
+    s - State
+
+    S - Number of snapshots
+
+    t - Type (persistent or ephemeral)
+
+*Examples*
+lxc list -c ns46
+    Shows a list of containers using the "NAME", "STATE", "IPV4", "IPV6" columns.`)
 }
 
 func (c *listCmd) flags() {
 	gnuflag.StringVar(&c.chosenColumnRunes, "c", "ns46tS", i18n.G("Columns"))
 	gnuflag.StringVar(&c.chosenColumnRunes, "columns", "ns46tS", i18n.G("Columns"))
-	gnuflag.StringVar(&c.format, "format", "table", i18n.G("Format"))
-	gnuflag.BoolVar(&c.fast, "fast", false, i18n.G("Fast mode (same as --columns=nsacPt"))
+	gnuflag.StringVar(&c.format, "format", "table", i18n.G("Format (table|json)"))
+	gnuflag.BoolVar(&c.fast, "fast", false, i18n.G("Fast mode (same as --columns=nsacPt)"))
 }
 
 // This seems a little excessive.
@@ -300,8 +309,7 @@ func (c *listCmd) listContainers(d *lxd.Client, cinfos []api.Container, filters 
 	cStatesWg.Wait()
 	cSnapshotsWg.Wait()
 
-	switch c.format {
-	case listFormatTable:
+	tableData := func() [][]string {
 		data := [][]string{}
 		for _, cInfo := range cinfos {
 			if !c.shouldShow(filters, &cInfo) {
@@ -315,13 +323,18 @@ func (c *listCmd) listContainers(d *lxd.Client, cinfos []api.Container, filters 
 			data = append(data, col)
 		}
 
+		sort.Sort(byName(data))
+		return data
+	}
+
+	switch c.format {
+	case listFormatTable:
 		table := tablewriter.NewWriter(os.Stdout)
 		table.SetAutoWrapText(false)
 		table.SetAlignment(tablewriter.ALIGN_LEFT)
 		table.SetRowLine(true)
 		table.SetHeader(headers)
-		sort.Sort(byName(data))
-		table.AppendBulk(data)
+		table.AppendBulk(tableData())
 		table.Render()
 	case listFormatJSON:
 		data := make([]listContainerItem, len(cinfos))

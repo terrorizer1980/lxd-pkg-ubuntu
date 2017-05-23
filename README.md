@@ -8,7 +8,7 @@ To easily see what LXD is about, you can [try it online](https://linuxcontainers
 
 ## Status
 
-* GoDoc: [![GoDoc](https://godoc.org/github.com/lxc/lxd?status.svg)](https://godoc.org/github.com/lxc/lxd)
+* GoDoc: [![GoDoc](https://godoc.org/github.com/lxc/lxd/client?status.svg)](https://godoc.org/github.com/lxc/lxd/client)
 * Jenkins (Linux): [![Build Status](https://jenkins.linuxcontainers.org/job/lxd-github-commit/badge/icon)](https://jenkins.linuxcontainers.org/job/lxd-github-commit/)
 * Travis (macOS): [![Build Status](https://travis-ci.org/lxc/lxd.svg?branch=master)](https://travis-ci.org/lxc/lxd/)
 * AppVeyor (Windows): [![Build Status](https://ci.appveyor.com/api/projects/status/rb4141dsi2xm3n0x/branch/master?svg=true)](https://ci.appveyor.com/project/lxc/lxd/)
@@ -107,7 +107,8 @@ host boot, but are needed if you'd like to use a particular backend:
 
 To run the testsuite, you'll also need:
 
-    sudo apt-get install curl gettext jq sqlite3 uuid-runtime pyflakes pep8 shellcheck bzr
+    sudo apt-get install curl gettext jq sqlite3 uuid-runtime bzr
+
 
 ### Building the tools
 

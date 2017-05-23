@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +18,18 @@ import (
 )
 
 // Helper functions
+
+// Returns the parent container name, snapshot name, and whether it actually was
+// a snapshot name.
+func containerGetParentAndSnapshotName(name string) (string, string, bool) {
+	fields := strings.SplitN(name, shared.SnapshotDelimiter, 2)
+	if len(fields) == 1 {
+		return name, "", false
+	}
+
+	return fields[0], fields[1], true
+}
+
 func containerPath(name string, isSnapshot bool) string {
 	if isSnapshot {
 		return shared.VarPath("snapshots", name)
@@ -203,6 +216,10 @@ func containerValidConfigKey(key string, value string) error {
 		if strings.HasSuffix(key, ".name") {
 			return nil
 		}
+
+		if strings.HasSuffix(key, ".host_name") {
+			return nil
+		}
 	}
 
 	if strings.HasPrefix(key, "environment.") {
@@ -292,7 +309,7 @@ func containerValidDeviceConfigKey(t, k string) bool {
 	}
 }
 
-func containerValidConfig(config map[string]string, profile bool, expanded bool) error {
+func containerValidConfig(d *Daemon, config map[string]string, profile bool, expanded bool) error {
 	if config == nil {
 		return nil
 	}
@@ -308,7 +325,41 @@ func containerValidConfig(config map[string]string, profile bool, expanded bool)
 		}
 	}
 
+	if expanded && (config["security.privileged"] == "" || !shared.IsTrue(config["security.privileged"])) && d.IdmapSet == nil {
+		return fmt.Errorf("LXD doesn't have a uid/gid allocation. In this mode, only privileged containers are supported.")
+	}
+
 	return nil
+}
+
+func isRootDiskDevice(device types.Device) bool {
+	if device["type"] == "disk" && device["path"] == "/" && device["source"] == "" {
+		return true
+	}
+
+	return false
+}
+
+func containerGetRootDiskDevice(devices types.Devices) (string, types.Device, error) {
+	var devName string
+	var dev types.Device
+
+	for n, d := range devices {
+		if isRootDiskDevice(d) {
+			if devName != "" {
+				return "", types.Device{}, fmt.Errorf("More than one root device found.")
+			}
+
+			devName = n
+			dev = d
+		}
+	}
+
+	if devName != "" {
+		return devName, dev, nil
+	}
+
+	return "", types.Device{}, fmt.Errorf("No root device could be found.")
 }
 
 func containerValidDevices(devices types.Devices, profile bool, expanded bool) error {
@@ -317,6 +368,7 @@ func containerValidDevices(devices types.Devices, profile bool, expanded bool) e
 		return nil
 	}
 
+	var diskDevicePaths []string
 	// Check each device individually
 	for name, m := range devices {
 		if m["type"] == "" {
@@ -346,6 +398,12 @@ func containerValidDevices(devices types.Devices, profile bool, expanded bool) e
 				return fmt.Errorf("Missing parent for %s type nic.", m["nictype"])
 			}
 		} else if m["type"] == "disk" {
+			if !expanded && !shared.StringInSlice(m["path"], diskDevicePaths) {
+				diskDevicePaths = append(diskDevicePaths, m["path"])
+			} else if !expanded {
+				return fmt.Errorf("More than one disk device uses the same path: %s.", m["path"])
+			}
+
 			if m["path"] == "" {
 				return fmt.Errorf("Disk entry is missing the required \"path\" property.")
 			}
@@ -369,6 +427,25 @@ func containerValidDevices(devices types.Devices, profile bool, expanded bool) e
 			if m["path"] == "" {
 				return fmt.Errorf("Unix device entry is missing the required \"path\" property.")
 			}
+
+			if m["major"] == "" || m["minor"] == "" {
+				if !shared.PathExists(m["path"]) {
+					return fmt.Errorf("The device path doesn't exist on the host and major/minor wasn't specified.")
+				}
+
+				dType, _, _, err := deviceGetAttributes(m["path"])
+				if err != nil {
+					return err
+				}
+
+				if m["type"] == "unix-char" && dType != "c" {
+					return fmt.Errorf("Path specified for unix-char device is a block device.")
+				}
+
+				if m["type"] == "unix-block" && dType != "b" {
+					return fmt.Errorf("Path specified for unix-block device is a character device.")
+				}
+			}
 		} else if m["type"] == "none" {
 			continue
 		} else {
@@ -378,15 +455,9 @@ func containerValidDevices(devices types.Devices, profile bool, expanded bool) e
 
 	// Checks on the expanded config
 	if expanded {
-		foundRootfs := false
-		for _, m := range devices {
-			if m["type"] == "disk" && m["path"] == "/" {
-				foundRootfs = true
-			}
-		}
-
-		if !foundRootfs {
-			return fmt.Errorf("Container is lacking rootfs entry")
+		_, _, err := containerGetRootDiskDevice(devices)
+		if err != nil {
+			return err
 		}
 	}
 
@@ -440,9 +511,9 @@ type container interface {
 	ConfigKeySet(key string, value string) error
 
 	// File handling
-	FilePull(srcpath string, dstpath string) (int, int, os.FileMode, error)
+	FilePull(srcpath string, dstpath string) (int64, int64, os.FileMode, error)
 	FileExists(path string) error
-	FilePush(srcpath string, dstpath string, uid int, gid int, mode int) error
+	FilePush(srcpath string, dstpath string, uid int64, gid int64, mode int) error
 	FileRemove(path string) error
 
 	/* Command execution:
@@ -457,7 +528,7 @@ type container interface {
 	         *      (the PID returned in the first return argument). It can however
 	         *      be used to e.g. forward signals.)
 	*/
-	Exec(command []string, env map[string]string, stdin *os.File, stdout *os.File, stderr *os.File, wait bool) (int, int, error)
+	Exec(command []string, env map[string]string, stdin *os.File, stdout *os.File, stderr *os.File, wait bool) (*exec.Cmd, int, int, error)
 
 	// Status
 	Render() (interface{}, error)
@@ -499,7 +570,7 @@ type container interface {
 	StorageStart() error
 	StorageStop() error
 	Storage() storage
-	IdmapSet() *shared.IdmapSet
+	IdmapSet() (*shared.IdmapSet, error)
 	LastIdmapSet() (*shared.IdmapSet, error)
 	TemplateApply(trigger string) error
 	Daemon() *Daemon
@@ -546,6 +617,9 @@ func containerCreateEmptySnapshot(d *Daemon, args containerArgs) (container, err
 }
 
 func containerCreateFromImage(d *Daemon, args containerArgs, hash string) (container, error) {
+	// Set the BaseImage field (regardless of previous value)
+	args.BaseImage = hash
+
 	// Create the container
 	c, err := containerCreateInternal(d, args)
 	if err != nil {
@@ -599,15 +673,16 @@ func containerCreateAsSnapshot(d *Daemon, args containerArgs, sourceContainer co
 	// Deal with state
 	if args.Stateful {
 		if !sourceContainer.IsRunning() {
-			return nil, fmt.Errorf("Container not running, cannot do stateful snapshot")
+			return nil, fmt.Errorf("Unable to create a stateful snapshot. The container isn't running.")
 		}
 
-		if err := findCriu("snapshot"); err != nil {
-			return nil, err
+		_, err := exec.LookPath("criu")
+		if err != nil {
+			return nil, fmt.Errorf("Unable to create a stateful snapshot. CRIU isn't installed.")
 		}
 
 		stateDir := sourceContainer.StatePath()
-		err := os.MkdirAll(stateDir, 0700)
+		err = os.MkdirAll(stateDir, 0700)
 		if err != nil {
 			return nil, err
 		}
@@ -680,7 +755,7 @@ func containerCreateInternal(d *Daemon, args containerArgs) (container, error) {
 	}
 
 	// Validate container config
-	err := containerValidConfig(args.Config, false, false)
+	err := containerValidConfig(d, args.Config, false, false)
 	if err != nil {
 		return nil, err
 	}
@@ -695,6 +770,10 @@ func containerCreateInternal(d *Daemon, args containerArgs) (container, error) {
 	_, err = osarch.ArchitectureName(args.Architecture)
 	if err != nil {
 		return nil, err
+	}
+
+	if !shared.IntInSlice(args.Architecture, d.architectures) {
+		return nil, fmt.Errorf("Requested architecture isn't supported by this host")
 	}
 
 	// Validate profiles
@@ -734,27 +813,33 @@ func containerCreateInternal(d *Daemon, args containerArgs) (container, error) {
 	}
 	args.CreationDate = dbArgs.CreationDate
 
-	return containerLXCCreate(d, args)
+	// Setup the container struct and finish creation (storage and idmap)
+	c, err := containerLXCCreate(d, args)
+	if err != nil {
+		return nil, err
+	}
+
+	return c, nil
 }
 
 func containerConfigureInternal(c container) error {
 	// Find the root device
-	for _, m := range c.ExpandedDevices() {
-		if m["type"] != "disk" || m["path"] != "/" || m["size"] == "" {
-			continue
-		}
+	_, rootDiskDevice, err := containerGetRootDiskDevice(c.ExpandedDevices())
+	if err != nil {
+		return err
+	}
 
-		size, err := shared.ParseByteSizeString(m["size"])
+	if rootDiskDevice["size"] != "" {
+		size, err := shared.ParseByteSizeString(rootDiskDevice["size"])
 		if err != nil {
 			return err
 		}
 
+		// Storage is guaranteed to be ready.
 		err = c.Storage().ContainerSetQuota(c, size)
 		if err != nil {
 			return err
 		}
-
-		break
 	}
 
 	return nil

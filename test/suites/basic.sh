@@ -1,5 +1,3 @@
-#!/bin/sh
-
 gen_third_cert() {
   [ -f "${LXD_CONF}/client3.crt" ] && return
   mv "${LXD_CONF}/client.crt" "${LXD_CONF}/client.crt.bak"
@@ -12,6 +10,10 @@ gen_third_cert() {
 }
 
 test_basic_usage() {
+  # shellcheck disable=2039
+  local lxd_backend
+  lxd_backend=$(storage_backend "$LXD_DIR")
+
   ensure_import_testimage
   ensure_has_localhost_remote "${LXD_ADDR}"
 
@@ -131,9 +133,9 @@ test_basic_usage() {
   # the container's filesystem. That's ok though: the logic we're trying to
   # test here is independent of storage backend, so running it for just one
   # backend (or all non-lvm backends) is enough.
-  if [ "${LXD_BACKEND}" != "lvm" ]; then
+  if [ "$lxd_backend" = "lvm" ]; then
     lxc init testimage nometadata
-    rm "${LXD_DIR}/containers/nometadata/metadata.yaml"
+    rm -f "${LXD_DIR}/containers/nometadata/metadata.yaml"
     lxc publish nometadata --alias=nometadata-image
     lxc image delete nometadata-image
     lxc delete nometadata
@@ -285,7 +287,7 @@ test_basic_usage() {
   rm "${LXD_DIR}/out"
 
   # FIXME: make this backend agnostic
-  if [ "${LXD_BACKEND}" = "dir" ]; then
+  if [ "$lxd_backend" = "dir" ]; then
     content=$(cat "${LXD_DIR}/containers/foo/rootfs/tmp/foo")
     [ "${content}" = "foo" ]
   fi
@@ -338,7 +340,7 @@ test_basic_usage() {
   REBOOTED="false"
 
   # shellcheck disable=SC2034
-  for i in $(seq 10); do
+  for i in $(seq 20); do
     NEW_INIT=$(lxc info foo | grep ^Pid || true)
 
     if [ -n "${NEW_INIT}" ] && [ "${OLD_INIT}" != "${NEW_INIT}" ]; then

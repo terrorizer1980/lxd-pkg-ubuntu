@@ -1,5 +1,3 @@
-#!/bin/sh
-
 test_template() {
   # Import a template which only triggers on create
   deps/import-busybox --alias template-test --template create
@@ -85,5 +83,5 @@ test_template() {
 
   # Cleanup
   lxc image delete template-test
-  lxc delete template --force
+  lxc delete template template1 --force
 }
