@@ -11,22 +11,22 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/lxc/lxd"
-	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/gnuflag"
 	"github.com/lxc/lxd/shared/i18n"
+	"github.com/lxc/lxd/shared/logger"
 	"github.com/lxc/lxd/shared/termios"
 )
 
-type envFlag []string
+type envList []string
 
-func (f *envFlag) String() string {
+func (f *envList) String() string {
 	return fmt.Sprint(*f)
 }
 
-func (f *envFlag) Set(value string) error {
+func (f *envList) Set(value string) error {
 	if f == nil {
-		*f = make(envFlag, 1)
+		*f = make(envList, 1)
 	} else {
 		*f = append(*f, value)
 	}
@@ -35,7 +35,7 @@ func (f *envFlag) Set(value string) error {
 
 type execCmd struct {
 	modeFlag string
-	envArgs  envFlag
+	envArgs  envList
 }
 
 func (c *execCmd) showByDefault() bool {
@@ -44,9 +44,9 @@ func (c *execCmd) showByDefault() bool {
 
 func (c *execCmd) usage() string {
 	return i18n.G(
-		`Execute the specified command in a container.
+		`Usage: lxc exec [<remote>:]<container> [--mode=auto|interactive|non-interactive] [--env KEY=VALUE...] [--] <command line>
 
-lxc exec [<remote>:]<container> [--mode=auto|interactive|non-interactive] [--env KEY=VALUE...] [--] <command line>
+Execute commands in containers.
 
 Mode defaults to non-interactive, interactive mode is selected if both stdin AND stdout are terminals (stderr is ignored).`)
 }
@@ -62,7 +62,7 @@ func (c *execCmd) sendTermSize(control *websocket.Conn) error {
 		return err
 	}
 
-	shared.LogDebugf("Window size is now: %dx%d", width, height)
+	logger.Debugf("Window size is now: %dx%d", width, height)
 
 	w, err := control.NextWriter(websocket.TextMessage)
 	if err != nil {
@@ -96,6 +96,9 @@ func (c *execCmd) run(config *lxd.Config, args []string) error {
 		return err
 	}
 
+	/* FIXME: Default values for HOME and USER are now handled by LXD.
+	   This code should be removed after most users upgraded.
+	*/
 	env := map[string]string{"HOME": "/root", "USER": "root"}
 	if myTerm, ok := c.getTERM(); ok {
 		env["TERM"] = myTerm

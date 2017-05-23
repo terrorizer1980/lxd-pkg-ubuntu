@@ -20,6 +20,7 @@ import (
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/gnuflag"
 	"github.com/lxc/lxd/shared/i18n"
+	"github.com/lxc/lxd/shared/logger"
 )
 
 type remoteCmd struct {
@@ -35,16 +36,30 @@ func (c *remoteCmd) showByDefault() bool {
 
 func (c *remoteCmd) usage() string {
 	return i18n.G(
-		`Manage remote LXD servers.
+		`Usage: lxc remote <subcommand> [options]
 
-lxc remote add <remote> <IP|FQDN|URL> [--accept-certificate] [--password=PASSWORD]
-                                      [--public] [--protocol=PROTOCOL]      Add the remote <remote> at <url>.
-lxc remote remove <remote>                                                  Remove the remote <remote>.
-lxc remote list                                                             List all remotes.
-lxc remote rename <old name> <new name>                                     Rename remote <old name> to <new name>.
-lxc remote set-url <remote> <url>                                           Update <remote>'s url to <url>.
-lxc remote set-default <remote>                                             Set the default remote.
-lxc remote get-default                                                      Print the default remote.`)
+Manage the list of remote LXD servers.
+
+lxc remote add <remote> <IP|FQDN|URL> [--accept-certificate] [--password=PASSWORD] [--public] [--protocol=PROTOCOL]
+    Add the remote <remote> at <url>.
+
+lxc remote remove <remote>
+    Remove the remote <remote>.
+
+lxc remote list
+    List all remotes.
+
+lxc remote rename <old name> <new name>
+    Rename remote <old name> to <new name>.
+
+lxc remote set-url <remote> <url>
+    Update <remote>'s url to <url>.
+
+lxc remote set-default <remote>
+    Set the default remote.
+
+lxc remote get-default
+    Print the default remote.`)
 }
 
 func (c *remoteCmd) flags() {
@@ -54,7 +69,7 @@ func (c *remoteCmd) flags() {
 	gnuflag.BoolVar(&c.public, "public", false, i18n.G("Public image server"))
 }
 
-func getRemoteCertificate(address string) (*x509.Certificate, error) {
+func (c *remoteCmd) getRemoteCertificate(address string) (*x509.Certificate, error) {
 	// Setup a permissive TLS config
 	tlsConfig, err := shared.GetTLSConfig("", "", nil)
 	if err != nil {
@@ -181,7 +196,7 @@ func (c *remoteCmd) addServer(config *lxd.Config, server string, addr string, ac
 	_, err = d.GetServerConfig()
 	if err != nil {
 		// Failed to connect using the system CA, so retrieve the remote certificate
-		certificate, err = getRemoteCertificate(addr)
+		certificate, err = c.getRemoteCertificate(addr)
 		if err != nil {
 			return err
 		}
@@ -191,7 +206,7 @@ func (c *remoteCmd) addServer(config *lxd.Config, server string, addr string, ac
 		if !acceptCert {
 			digest := shared.CertFingerprint(certificate)
 
-			fmt.Printf(i18n.G("Certificate fingerprint: %x")+"\n", digest)
+			fmt.Printf(i18n.G("Certificate fingerprint: %s")+"\n", digest)
 			fmt.Printf(i18n.G("ok (y/n)?") + " ")
 			line, err := shared.ReadStdin()
 			if err != nil {
@@ -270,14 +285,14 @@ func (c *remoteCmd) addServer(config *lxd.Config, server string, addr string, ac
 
 func (c *remoteCmd) removeCertificate(config *lxd.Config, remote string) {
 	certf := config.ServerCertPath(remote)
-	shared.LogDebugf("Trying to remove %s", certf)
+	logger.Debugf("Trying to remove %s", certf)
 
 	os.Remove(certf)
 }
 
 func (c *remoteCmd) run(config *lxd.Config, args []string) error {
 	if len(args) < 1 {
-		return errArgs
+		return errUsage
 	}
 
 	switch args[0] {

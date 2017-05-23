@@ -21,16 +21,14 @@ func (c *launchCmd) showByDefault() bool {
 
 func (c *launchCmd) usage() string {
 	return i18n.G(
-		`Launch a container from a particular image.
+		`Usage: lxc launch [<remote>:]<image> [<remote>:][<name>] [--ephemeral|-e] [--profile|-p <profile>...] [--config|-c <key=value>...]
 
-lxc launch [<remote>:]<image> [<remote>:][<name>] [--ephemeral|-e] [--profile|-p <profile>...] [--config|-c <key=value>...]
-
-Launches a container using the specified image and name.
+Create and start containers from images.
 
 Not specifying -p will result in the default profile.
 Specifying "-p" with no argument will result in no profile.
 
-Example:
+Examples:
     lxc launch ubuntu:16.04 u1`)
 }
 
@@ -87,11 +85,13 @@ func (c *launchCmd) run(config *lxd.Config, args []string) error {
 	if name == "" {
 		op, err := resp.MetadataAsOperation()
 		if err != nil {
+			progress.Done("")
 			return fmt.Errorf(i18n.G("didn't get any affected image, container or snapshot from server"))
 		}
 
 		containers, ok := op.Resources["containers"]
 		if !ok || len(containers) == 0 {
+			progress.Done("")
 			return fmt.Errorf(i18n.G("didn't get any affected image, container or snapshot from server"))
 		}
 
@@ -99,20 +99,24 @@ func (c *launchCmd) run(config *lxd.Config, args []string) error {
 		toScan := strings.Replace(containers[0], "/", " ", -1)
 		count, err := fmt.Sscanf(toScan, " %s containers %s", &restVersion, &name)
 		if err != nil {
+			progress.Done("")
 			return err
 		}
 
 		if count != 2 {
+			progress.Done("")
 			return fmt.Errorf(i18n.G("bad number of things scanned from image, container or snapshot"))
 		}
 
 		if restVersion != version.APIVersion {
+			progress.Done("")
 			return fmt.Errorf(i18n.G("got bad version"))
 		}
 	}
 	fmt.Printf(i18n.G("Creating %s")+"\n", name)
 
 	if err = d.WaitForSuccess(resp.Operation); err != nil {
+		progress.Done("")
 		return err
 	}
 	progress.Done("")

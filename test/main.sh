@@ -20,7 +20,8 @@ if [ -n "${LXD_DEBUG:-}" ]; then
 fi
 
 echo "==> Checking for dependencies"
-for dep in lxd lxc curl jq git xgettext sqlite3 msgmerge msgfmt shuf setfacl uuidgen pyflakes3 pep8 shellcheck; do
+deps="lxd lxc curl jq git xgettext sqlite3 msgmerge msgfmt shuf setfacl uuidgen"
+for dep in $deps; do
   which "${dep}" >/dev/null 2>&1 || (echo "Missing dependency: ${dep}" >&2 && exit 1)
 done
 
@@ -47,15 +48,56 @@ local_tcp_port() {
   done
 }
 
-# import all the backends
-for backend in backends/*.sh; do
-  # shellcheck disable=SC1090
-  . "${backend}"
-done
+# return a list of available storage backends
+available_storage_backends() {
+  # shellcheck disable=2039
+  local backend backends
 
+  backends="dir"
+  for backend in btrfs lvm zfs; do
+    if which $backend >/dev/null 2>&1; then
+      backends="$backends $backend"
+    fi
+  done
+  echo "$backends"
+}
+
+# whether a storage backend is available
+storage_backend_available() {
+  # shellcheck disable=2039
+  local backends
+  backends="$(available_storage_backends)"
+  [ "${backends#*$1}" != "$backends" ]
+}
+
+# choose a random available backend, excluding LXD_BACKEND
+random_storage_backend() {
+    # shellcheck disable=2046
+    shuf -e $(available_storage_backends) | head -n 1
+}
+
+# return the storage backend being used by a LXD instance
+storage_backend() {
+    cat "$1/lxd.backend"
+}
+
+# Set default backend to dir
 if [ -z "${LXD_BACKEND:-}" ]; then
-  LXD_BACKEND=dir
+    LXD_BACKEND=dir
 fi
+
+echo "==> Available storage backends: $(available_storage_backends | sort)"
+if [ "$LXD_BACKEND" != "random" ] && ! storage_backend_available "$LXD_BACKEND"; then
+  echo "Storage backage \"$LXD_BACKEND\" is not available"
+  exit 1
+fi
+echo "==> Using storage backend ${LXD_BACKEND}"
+
+# import storage backends
+for backend in $(available_storage_backends); do
+  # shellcheck disable=SC1090
+  . "backends/${backend}.sh"
+done
 
 spawn_lxd() {
   set +x
@@ -63,17 +105,24 @@ spawn_lxd() {
   # overwrites the environment and we would lose LXD_DIR's value otherwise.
 
   # shellcheck disable=2039
-  local LXD_DIR
+  local LXD_DIR lxddir lxd_backend
 
   lxddir=${1}
   shift
+
+  if [ "$LXD_BACKEND" = "random" ]; then
+    lxd_backend="$(random_storage_backend)"
+  else
+    lxd_backend="$LXD_BACKEND"
+  fi
 
   # Copy pre generated Certs
   cp deps/server.crt "${lxddir}"
   cp deps/server.key "${lxddir}"
 
   # setup storage
-  "$LXD_BACKEND"_setup "${lxddir}"
+  "$lxd_backend"_setup "${lxddir}"
+  echo "$lxd_backend" > "${lxddir}/lxd.backend"
 
   echo "==> Spawning lxd in ${lxddir}"
   # shellcheck disable=SC2086
@@ -103,7 +152,7 @@ spawn_lxd() {
   fi
 
   echo "==> Configuring storage backend"
-  "$LXD_BACKEND"_configure "${lxddir}"
+  "$lxd_backend"_configure "${lxddir}"
 }
 
 lxc() {
@@ -191,12 +240,13 @@ kill_lxd() {
   # overwrites the environment and we would lose LXD_DIR's value otherwise.
 
   # shellcheck disable=2039
-  local LXD_DIR
+  local LXD_DIR daemon_dir daemon_pid check_leftovers lxd_backend
 
   daemon_dir=${1}
   LXD_DIR=${daemon_dir}
   daemon_pid=$(cat "${daemon_dir}/lxd.pid")
   check_leftovers="false"
+  lxd_backend=$(storage_backend "$daemon_dir")
   echo "==> Killing LXD at ${daemon_dir}"
 
   if [ -e "${daemon_dir}/unix.socket" ]; then
@@ -228,6 +278,7 @@ kill_lxd() {
 
     # Cleanup shmounts (needed due to the forceful kill)
     find "${daemon_dir}" -name shmounts -exec "umount" "-l" "{}" \; >/dev/null 2>&1 || true
+    find "${daemon_dir}" -name devlxd -exec "umount" "-l" "{}" \; >/dev/null 2>&1 || true
 
     check_leftovers="true"
   fi
@@ -271,7 +322,7 @@ kill_lxd() {
   fi
 
   # teardown storage
-  "$LXD_BACKEND"_teardown "${daemon_dir}"
+  "$lxd_backend"_teardown "${daemon_dir}"
 
   # Wipe the daemon directory
   wipe "${daemon_dir}"
@@ -328,7 +379,7 @@ wipe() {
 
   # shellcheck disable=SC2009
   ps aux | grep lxc-monitord | grep "${1}" | awk '{print $2}' | while read -r pid; do
-    kill -9 "${pid}"
+    kill -9 "${pid}" || true
   done
 
   if [ -f "${TEST_DIR}/loops" ]; then
@@ -341,6 +392,60 @@ wipe() {
   fi
 
   rm -Rf "${1}"
+}
+
+configure_loop_device() {
+  lv_loop_file=$(mktemp -p "${TEST_DIR}" XXXX.img)
+  truncate -s 10G "${lv_loop_file}"
+  pvloopdev=$(losetup --show -f "${lv_loop_file}")
+  if [ ! -e "${pvloopdev}" ]; then
+    echo "failed to setup loop"
+    false
+  fi
+  echo "${pvloopdev}" >> "${TEST_DIR}/loops"
+
+  # The following code enables to return a value from a shell function by
+  # calling the function as: fun VAR1
+
+  # shellcheck disable=2039
+  local  __tmp1="${1}"
+  # shellcheck disable=2039
+  local  res1="${lv_loop_file}"
+  if [ "${__tmp1}" ]; then
+      eval "${__tmp1}='${res1}'"
+  fi
+
+  # shellcheck disable=2039
+  local  __tmp2="${2}"
+  # shellcheck disable=2039
+  local  res2="${pvloopdev}"
+  if [ "${__tmp2}" ]; then
+      eval "${__tmp2}='${res2}'"
+  fi
+}
+
+deconfigure_loop_device() {
+  lv_loop_file="${1}"
+  loopdev="${2}"
+
+  SUCCESS=0
+  # shellcheck disable=SC2034
+  for i in $(seq 10); do
+    if losetup -d "${loopdev}"; then
+      SUCCESS=1
+      break
+    fi
+
+    sleep 0.5
+  done
+
+  if [ "${SUCCESS}" = "0" ]; then
+    echo "Failed to tear down loop device"
+    false
+  fi
+
+  rm -f "${lv_loop_file}"
+  sed -i "\|^${loopdev}|d" "${TEST_DIR}/loops"
 }
 
 # Must be set before cleanup()
@@ -366,7 +471,6 @@ fi
 LXD_CONF=$(mktemp -d -p "${TEST_DIR}" XXX)
 export LXD_CONF
 
-# Setup the first LXD
 LXD_DIR=$(mktemp -d -p "${TEST_DIR}" XXX)
 export LXD_DIR
 chmod +x "${LXD_DIR}"
@@ -374,21 +478,16 @@ spawn_lxd "${LXD_DIR}"
 LXD_ADDR=$(cat "${LXD_DIR}/lxd.addr")
 export LXD_ADDR
 
-# Setup the second LXD
-LXD2_DIR=$(mktemp -d -p "${TEST_DIR}" XXX)
-chmod +x "${LXD2_DIR}"
-spawn_lxd "${LXD2_DIR}"
-LXD2_ADDR=$(cat "${LXD2_DIR}/lxd.addr")
-export LXD2_ADDR
-
-
 run_test() {
   TEST_CURRENT=${1}
   TEST_CURRENT_DESCRIPTION=${2:-${1}}
 
   echo "==> TEST BEGIN: ${TEST_CURRENT_DESCRIPTION}"
+  START_TIME=$(date +%s)
   ${TEST_CURRENT}
-  echo "==> TEST DONE: ${TEST_CURRENT_DESCRIPTION}"
+  END_TIME=$(date +%s)
+
+  echo "==> TEST DONE: ${TEST_CURRENT_DESCRIPTION} ($((END_TIME-START_TIME))s)"
 }
 
 # allow for running a specific set of tests
@@ -401,7 +500,7 @@ fi
 run_test test_check_deps "checking dependencies"
 run_test test_static_analysis "static analysis"
 run_test test_database_update "database schema updates"
-run_test test_remote_url "remote  url handling"
+run_test test_remote_url "remote url handling"
 run_test test_remote_admin "remote administration"
 run_test test_remote_usage "remote usage"
 run_test test_basic_usage "basic usage"
@@ -422,5 +521,6 @@ run_test test_migration "migration"
 run_test test_fdleak "fd leak"
 run_test test_cpu_profiling "CPU profiling"
 run_test test_mem_profiling "memory profiling"
+run_test test_lxd_autoinit "lxd init auto"
 
 TEST_RESULT=success

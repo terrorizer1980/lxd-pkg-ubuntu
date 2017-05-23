@@ -4,17 +4,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"syscall"
-	"time"
 
 	"github.com/gorilla/websocket"
 
 	"github.com/lxc/lxd/lxd/types"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
+	"github.com/lxc/lxd/shared/logger"
 	"github.com/lxc/lxd/shared/logging"
 
 	log "gopkg.in/inconshreveable/log15.v2"
@@ -55,7 +54,7 @@ func filesystemDetect(path string) (string, error) {
 	case filesystemSuperMagicNfs:
 		return "nfs", nil
 	default:
-		shared.LogDebugf("Unknown backing filesystem type: 0x%x", fs.Type)
+		logger.Debugf("Unknown backing filesystem type: 0x%x", fs.Type)
 		return string(fs.Type), nil
 	}
 }
@@ -71,7 +70,7 @@ func storageRsyncCopy(source string, dest string) (string, error) {
 		rsyncVerbosity = "-vi"
 	}
 
-	output, err := exec.Command(
+	output, err := shared.RunCommand(
 		"rsync",
 		"-a",
 		"-HAX",
@@ -81,7 +80,7 @@ func storageRsyncCopy(source string, dest string) (string, error) {
 		"--numeric-ids",
 		rsyncVerbosity,
 		shared.AddSlash(source),
-		dest).CombinedOutput()
+		dest)
 
 	return string(output), err
 }
@@ -290,12 +289,12 @@ type storageShared struct {
 	sTypeName    string
 	sTypeVersion string
 
-	log shared.Logger
+	log logger.Logger
 }
 
 func (ss *storageShared) initShared() error {
 	ss.log = logging.AddContext(
-		shared.Log,
+		logger.Log,
 		log.Ctx{"driver": fmt.Sprintf("storage/%s", ss.sTypeName)},
 	)
 	return nil
@@ -317,18 +316,21 @@ func (ss *storageShared) shiftRootfs(c container) error {
 	dpath := c.Path()
 	rpath := c.RootfsPath()
 
-	shared.LogDebug("Shifting root filesystem",
+	logger.Debug("Shifting root filesystem",
 		log.Ctx{"container": c.Name(), "rootfs": rpath})
 
-	idmapset := c.IdmapSet()
+	idmapset, err := c.IdmapSet()
+	if err != nil {
+		return err
+	}
 
 	if idmapset == nil {
 		return fmt.Errorf("IdmapSet of container '%s' is nil", c.Name())
 	}
 
-	err := idmapset.ShiftRootfs(rpath)
+	err = idmapset.ShiftRootfs(rpath)
 	if err != nil {
-		shared.LogDebugf("Shift of rootfs %s failed: %s", rpath, err)
+		logger.Debugf("Shift of rootfs %s failed: %s", rpath, err)
 		return err
 	}
 
@@ -339,7 +341,10 @@ func (ss *storageShared) shiftRootfs(c container) error {
 }
 
 func (ss *storageShared) setUnprivUserAcl(c container, destPath string) error {
-	idmapset := c.IdmapSet()
+	idmapset, err := c.IdmapSet()
+	if err != nil {
+		return err
+	}
 
 	// Skip for privileged containers
 	if idmapset == nil {
@@ -357,9 +362,9 @@ func (ss *storageShared) setUnprivUserAcl(c container, destPath string) error {
 
 	// Attempt to set a POSIX ACL first. Fallback to chmod if the fs doesn't support it.
 	acl := fmt.Sprintf("%d:rx", uid)
-	_, err := exec.Command("setfacl", "-m", acl, destPath).CombinedOutput()
+	_, err = shared.RunCommand("setfacl", "-m", acl, destPath)
 	if err != nil {
-		_, err := exec.Command("chmod", "+x", destPath).CombinedOutput()
+		_, err := shared.RunCommand("chmod", "+x", destPath)
 		if err != nil {
 			return fmt.Errorf("Failed to chmod the container path.")
 		}
@@ -370,13 +375,13 @@ func (ss *storageShared) setUnprivUserAcl(c container, destPath string) error {
 
 type storageLogWrapper struct {
 	w   storage
-	log shared.Logger
+	log logger.Logger
 }
 
 func (lw *storageLogWrapper) Init(config map[string]interface{}) (storage, error) {
 	_, err := lw.w.Init(config)
 	lw.log = logging.AddContext(
-		shared.Log,
+		logger.Log,
 		log.Ctx{"driver": fmt.Sprintf("storage/%s", lw.w.GetStorageTypeName())},
 	)
 
@@ -581,7 +586,11 @@ func (lw *storageLogWrapper) MigrationSink(live bool, container container, objec
 }
 
 func ShiftIfNecessary(container container, srcIdmap *shared.IdmapSet) error {
-	dstIdmap := container.IdmapSet()
+	dstIdmap, err := container.IdmapSet()
+	if err != nil {
+		return err
+	}
+
 	if dstIdmap == nil {
 		dstIdmap = new(shared.IdmapSet)
 	}
@@ -617,6 +626,7 @@ func (s rsyncStorageSourceDriver) Snapshots() []container {
 }
 
 func (s rsyncStorageSourceDriver) SendWhileRunning(conn *websocket.Conn) error {
+	ctName, _, _ := containerGetParentAndSnapshotName(s.container.Name())
 	for _, send := range s.snapshots {
 		if err := send.StorageStart(); err != nil {
 			return err
@@ -624,17 +634,19 @@ func (s rsyncStorageSourceDriver) SendWhileRunning(conn *websocket.Conn) error {
 		defer send.StorageStop()
 
 		path := send.Path()
-		if err := RsyncSend(shared.AddSlash(path), conn); err != nil {
+		if err := RsyncSend(ctName, shared.AddSlash(path), conn); err != nil {
 			return err
 		}
 	}
 
-	return RsyncSend(shared.AddSlash(s.container.Path()), conn)
+	return RsyncSend(ctName, shared.AddSlash(s.container.Path()), conn)
 }
 
 func (s rsyncStorageSourceDriver) SendAfterCheckpoint(conn *websocket.Conn) error {
+	ctName, _, _ := containerGetParentAndSnapshotName(s.container.Name())
+
 	/* resync anything that changed between our first send and the checkpoint */
-	return RsyncSend(shared.AddSlash(s.container.Path()), conn)
+	return RsyncSend(ctName, shared.AddSlash(s.container.Path()), conn)
 }
 
 func (s rsyncStorageSourceDriver) Cleanup() {
@@ -744,61 +756,6 @@ func rsyncMigrationSink(live bool, container container, snapshots []*Snapshot, c
 	}
 
 	if err := ShiftIfNecessary(container, srcIdmap); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// Useful functions for unreliable backends
-func tryExec(name string, arg ...string) ([]byte, error) {
-	var err error
-	var output []byte
-
-	for i := 0; i < 20; i++ {
-		output, err = exec.Command(name, arg...).CombinedOutput()
-		if err == nil {
-			break
-		}
-
-		time.Sleep(500 * time.Millisecond)
-	}
-
-	return output, err
-}
-
-func tryMount(src string, dst string, fs string, flags uintptr, options string) error {
-	var err error
-
-	for i := 0; i < 20; i++ {
-		err = syscall.Mount(src, dst, fs, flags, options)
-		if err == nil {
-			break
-		}
-
-		time.Sleep(500 * time.Millisecond)
-	}
-
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func tryUnmount(path string, flags int) error {
-	var err error
-
-	for i := 0; i < 20; i++ {
-		err = syscall.Unmount(path, flags)
-		if err == nil {
-			break
-		}
-
-		time.Sleep(500 * time.Millisecond)
-	}
-
-	if err != nil {
 		return err
 	}
 

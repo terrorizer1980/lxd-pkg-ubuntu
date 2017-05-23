@@ -14,7 +14,9 @@ func (c *moveCmd) showByDefault() bool {
 
 func (c *moveCmd) usage() string {
 	return i18n.G(
-		`Move containers within or in between lxd instances.
+		`Usage: lxc move [<remote>:]<container>[/<snapshot>] [<remote>:][<container>[/<snapshot>]]
+
+Move containers within or in between LXD instances.
 
 lxc move [<remote>:]<source container> [<remote>:][<destination container>]
     Move a container between two hosts, renaming it if destination name differs.
@@ -59,7 +61,8 @@ func (c *moveCmd) run(config *lxd.Config, args []string) error {
 
 	// A move is just a copy followed by a delete; however, we want to
 	// keep the volatile entries around since we are moving the container.
-	if err := cpy.copyContainer(config, args[0], args[1], true, -1); err != nil {
+	err := cpy.copyContainer(config, args[0], args[1], true, -1)
+	if err != nil {
 		return err
 	}
 

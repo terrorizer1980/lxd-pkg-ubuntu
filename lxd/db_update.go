@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/logger"
 
 	log "gopkg.in/inconshreveable/log15.v2"
 )
@@ -76,7 +76,7 @@ type dbUpdate struct {
 func (u *dbUpdate) apply(currentVersion int, d *Daemon) error {
 	// Get the current schema version
 
-	shared.LogDebugf("Updating DB schema from %d to %d", currentVersion, u.version)
+	logger.Debugf("Updating DB schema from %d to %d", currentVersion, u.version)
 
 	err := u.run(currentVersion, u.version, d)
 	if err != nil {
@@ -101,7 +101,7 @@ func dbUpdatesApplyAll(d *Daemon) error {
 		}
 
 		if !d.MockMode && !backup {
-			shared.LogInfof("Updating the LXD database schema. Backup made as \"lxd.db.bak\"")
+			logger.Infof("Updating the LXD database schema. Backup made as \"lxd.db.bak\"")
 			err := shared.FileCopy(shared.VarPath("lxd.db"), shared.VarPath("lxd.db.bak"))
 			if err != nil {
 				return err
@@ -309,7 +309,7 @@ func dbUpdateFromV18(currentVersion int, version int, d *Daemon) error {
 		// Deal with completely broken values
 		_, err = shared.ParseByteSizeString(value)
 		if err != nil {
-			shared.LogDebugf("Invalid container memory limit, id=%d value=%s, removing.", id, value)
+			logger.Debugf("Invalid container memory limit, id=%d value=%s, removing.", id, value)
 			_, err = d.db.Exec("DELETE FROM containers_config WHERE id=?;", id)
 			if err != nil {
 				return err
@@ -346,7 +346,7 @@ func dbUpdateFromV18(currentVersion int, version int, d *Daemon) error {
 		// Deal with completely broken values
 		_, err = shared.ParseByteSizeString(value)
 		if err != nil {
-			shared.LogDebugf("Invalid profile memory limit, id=%d value=%s, removing.", id, value)
+			logger.Debugf("Invalid profile memory limit, id=%d value=%s, removing.", id, value)
 			_, err = d.db.Exec("DELETE FROM profiles_config WHERE id=?;", id)
 			if err != nil {
 				return err
@@ -412,15 +412,15 @@ func dbUpdateFromV15(currentVersion int, version int, d *Daemon) error {
 		newLVName = strings.Replace(newLVName, shared.SnapshotDelimiter, "-", -1)
 
 		if cName == newLVName {
-			shared.LogDebug("No need to rename, skipping", log.Ctx{"cName": cName, "newLVName": newLVName})
+			logger.Debug("No need to rename, skipping", log.Ctx{"cName": cName, "newLVName": newLVName})
 			continue
 		}
 
-		shared.LogDebug("About to rename cName in lv upgrade", log.Ctx{"lvLinkPath": lvLinkPath, "cName": cName, "newLVName": newLVName})
+		logger.Debug("About to rename cName in lv upgrade", log.Ctx{"lvLinkPath": lvLinkPath, "cName": cName, "newLVName": newLVName})
 
-		output, err := exec.Command("lvrename", vgName, cName, newLVName).CombinedOutput()
+		output, err := shared.RunCommand("lvrename", vgName, cName, newLVName)
 		if err != nil {
-			return fmt.Errorf("Could not rename LV '%s' to '%s': %v\noutput:%s", cName, newLVName, err, string(output))
+			return fmt.Errorf("Could not rename LV '%s' to '%s': %v\noutput:%s", cName, newLVName, err, output)
 		}
 
 		if err := os.Remove(lvLinkPath); err != nil {
@@ -498,11 +498,11 @@ func dbUpdateFromV11(currentVersion int, version int, d *Daemon) error {
 	errors := 0
 
 	for _, cName := range cNames {
-		snappieces := strings.SplitN(cName, shared.SnapshotDelimiter, 2)
-		oldPath := shared.VarPath("containers", snappieces[0], "snapshots", snappieces[1])
-		newPath := shared.VarPath("snapshots", snappieces[0], snappieces[1])
+		snapParentName, snapOnlyName, _ := containerGetParentAndSnapshotName(cName)
+		oldPath := shared.VarPath("containers", snapParentName, "snapshots", snapOnlyName)
+		newPath := shared.VarPath("snapshots", snapParentName, snapOnlyName)
 		if shared.PathExists(oldPath) && !shared.PathExists(newPath) {
-			shared.LogInfo(
+			logger.Info(
 				"Moving snapshot",
 				log.Ctx{
 					"snapshot": cName,
@@ -515,7 +515,7 @@ func dbUpdateFromV11(currentVersion int, version int, d *Daemon) error {
 			// snapshots/<container>/<snap0>
 			output, err := storageRsyncCopy(oldPath, newPath)
 			if err != nil {
-				shared.LogError(
+				logger.Error(
 					"Failed rsync snapshot",
 					log.Ctx{
 						"snapshot": cName,
@@ -527,7 +527,7 @@ func dbUpdateFromV11(currentVersion int, version int, d *Daemon) error {
 
 			// Remove containers/<container>/snapshots/<snap0>
 			if err := os.RemoveAll(oldPath); err != nil {
-				shared.LogError(
+				logger.Error(
 					"Failed to remove the old snapshot path",
 					log.Ctx{
 						"snapshot": cName,
@@ -570,7 +570,7 @@ func dbUpdateFromV10(currentVersion int, version int, d *Daemon) error {
 			return err
 		}
 
-		shared.LogDebugf("Restarting all the containers following directory rename")
+		logger.Debugf("Restarting all the containers following directory rename")
 		containersShutdown(d)
 		containersRestart(d)
 	}

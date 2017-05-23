@@ -1,5 +1,3 @@
-#!/bin/sh
-
 test_database_update(){
   LXD_MIGRATE_DIR=$(mktemp -d -p "${TEST_DIR}" XXX)
   MIGRATE_DB=${LXD_MIGRATE_DIR}/lxd.db
@@ -19,4 +17,6 @@ test_database_update(){
   expected_cascades=11
   cascades=$(sqlite3 "${MIGRATE_DB}" ".dump" | grep -c "ON DELETE CASCADE")
   [ "${cascades}" -eq "${expected_cascades}" ] || { echo "FAIL: Wrong number of ON DELETE CASCADE foreign keys. Found: ${cascades}, exected: ${expected_cascades}"; false; }
+
+  kill_lxd "$LXD_MIGRATE_DIR"
 }

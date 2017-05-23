@@ -16,6 +16,7 @@ import (
 	"github.com/gorilla/mux"
 
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/logger"
 	"github.com/lxc/lxd/shared/version"
 )
 
@@ -218,7 +219,7 @@ func (m *ConnPidMapper) ConnStateHandler(conn net.Conn, state http.ConnState) {
 	case http.StateNew:
 		cred, err := getCred(unixConn)
 		if err != nil {
-			shared.LogDebugf("Error getting ucred for conn %s", err)
+			logger.Debugf("Error getting ucred for conn %s", err)
 		} else {
 			m.m[unixConn] = cred
 		}
@@ -239,7 +240,7 @@ func (m *ConnPidMapper) ConnStateHandler(conn net.Conn, state http.ConnState) {
 	case http.StateClosed:
 		delete(m.m, unixConn)
 	default:
-		shared.LogDebugf("Unknown state for connection %s", state)
+		logger.Debugf("Unknown state for connection %s", state)
 	}
 }
 
@@ -247,16 +248,38 @@ func (m *ConnPidMapper) ConnStateHandler(conn net.Conn, state http.ConnState) {
  * I also don't see that golang exports an API to get at the underlying FD, but
  * we need it to get at SO_PEERCRED, so let's grab it.
  */
-func extractUnderlyingFd(unixConnPtr *net.UnixConn) int {
+func extractUnderlyingFd(unixConnPtr *net.UnixConn) (int, error) {
 	conn := reflect.Indirect(reflect.ValueOf(unixConnPtr))
+
 	netFdPtr := conn.FieldByName("fd")
+	if !netFdPtr.IsValid() {
+		return -1, fmt.Errorf("Unable to extract fd from net.UnixConn")
+	}
 	netFd := reflect.Indirect(netFdPtr)
+
 	fd := netFd.FieldByName("sysfd")
-	return int(fd.Int())
+	if !fd.IsValid() {
+		// Try under the new name
+		pfdPtr := netFd.FieldByName("pfd")
+		if !pfdPtr.IsValid() {
+			return -1, fmt.Errorf("Unable to extract pfd from netFD")
+		}
+		pfd := reflect.Indirect(pfdPtr)
+
+		fd = pfd.FieldByName("Sysfd")
+		if !fd.IsValid() {
+			return -1, fmt.Errorf("Unable to extract Sysfd from poll.FD")
+		}
+	}
+
+	return int(fd.Int()), nil
 }
 
 func getCred(conn *net.UnixConn) (*ucred, error) {
-	fd := extractUnderlyingFd(conn)
+	fd, err := extractUnderlyingFd(conn)
+	if err != nil {
+		return nil, err
+	}
 
 	uid, gid, pid, err := getUcred(fd)
 	if err != nil {

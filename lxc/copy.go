@@ -21,9 +21,9 @@ func (c *copyCmd) showByDefault() bool {
 
 func (c *copyCmd) usage() string {
 	return i18n.G(
-		`Copy containers within or in between LXD instances.
+		`Usage: lxc copy [<remote>:]<source>[/<snapshot>] [[<remote>:]<destination>] [--ephemeral|e]
 
-lxc copy [<remote>:]<source>[/<snapshot>] [<remote>:]<destination> [--ephemeral|e]`)
+Copy containers within or in between LXD instances.`)
 }
 
 func (c *copyCmd) flags() {
@@ -165,27 +165,57 @@ func (c *copyCmd) copyContainer(config *lxd.Config, sourceResource string, destR
 	 * course, if all the errors are websocket errors, let's just
 	 * report that.
 	 */
+	waitchan := make(chan map[int]error, 2)
+	wait := func(cli *lxd.Client, op string, ch chan map[int]error, senderid int) {
+		ch <- map[int]error{senderid: cli.WaitForSuccess(op)}
+	}
+
+	var migrationErrFromClient error
 	for _, addr := range addresses {
 		var migration *api.Response
 
 		sourceWSUrl := "https://" + addr + sourceWSResponse.Operation
-		migration, err = dest.MigrateFrom(destName, sourceWSUrl, source.Certificate, secrets, status.Architecture, status.Config, status.Devices, status.Profiles, baseImage, ephemeral == 1)
-		if err != nil {
+		migration, migrationErrFromClient = dest.MigrateFrom(destName, sourceWSUrl, source.Certificate, secrets, status.Architecture, status.Config, status.Devices, status.Profiles, baseImage, ephemeral == 1)
+		if migrationErrFromClient != nil {
 			continue
 		}
 
-		if err = dest.WaitForSuccess(migration.Operation); err != nil {
+		destOpId := 0
+		go wait(dest, migration.Operation, waitchan, destOpId)
+		sourceOpId := 1
+		go wait(source, sourceWSResponse.Operation, waitchan, sourceOpId)
+
+		var sourceOpErr error
+		var destOpErr error
+		for i := 0; i < cap(waitchan); i++ {
+			tmp := <-waitchan
+			err, ok := tmp[sourceOpId]
+			if ok {
+				sourceOpErr = err
+			} else {
+				destOpErr = err
+			}
+		}
+
+		if destOpErr != nil {
 			continue
 		}
 
-		if err = source.WaitForSuccess(sourceWSResponse.Operation); err != nil {
-			return err
+		if sourceOpErr != nil {
+			return sourceOpErr
 		}
 
 		return nil
 	}
 
-	return err
+	// Check for an error at the source
+	sourceOp, sourceErr := source.GetOperation(sourceWSResponse.Operation)
+	if sourceErr == nil && sourceOp.Err != "" {
+		return fmt.Errorf(i18n.G("Migration failed on source host: %s"), sourceOp.Err)
+	}
+
+	// Return the error from destination
+	return fmt.Errorf(i18n.G("Migration failed on target host: %s"), migrationErrFromClient)
 }
 
 func (c *copyCmd) run(config *lxd.Config, args []string) error {

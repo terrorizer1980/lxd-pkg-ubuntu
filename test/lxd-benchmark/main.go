@@ -8,10 +8,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lxc/lxd"
+	"github.com/lxc/lxd/client"
+	"github.com/lxc/lxd/lxc/config"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/gnuflag"
+	"github.com/lxc/lxd/shared/version"
 )
 
 var argCount = gnuflag.Int("count", 100, "Number of containers to create")
@@ -32,18 +34,34 @@ func main() {
 
 func run(args []string) error {
 	// Parse command line
-	gnuflag.Parse(true)
-
 	if len(os.Args) == 1 || !shared.StringInSlice(os.Args[1], []string{"spawn", "delete"}) {
-		fmt.Printf("Usage: %s spawn [--count=COUNT] [--image=IMAGE] [--privileged=BOOL] [--parallel=COUNT]\n", os.Args[0])
-		fmt.Printf("       %s delete [--parallel=COUNT]\n\n", os.Args[0])
-		gnuflag.Usage()
-		fmt.Printf("\n")
-		return fmt.Errorf("An action (spawn or delete) must be passed.")
+		if len(os.Args) > 1 && os.Args[1] == "--version" {
+			fmt.Println(version.Version)
+			return nil
+		}
+
+		out := os.Stderr
+		if len(os.Args) > 1 && os.Args[1] == "--help" {
+			out = os.Stdout
+		}
+		gnuflag.SetOut(out)
+
+		fmt.Fprintf(out, "Usage: %s spawn [--count=COUNT] [--image=IMAGE] [--privileged=BOOL] [--parallel=COUNT]\n", os.Args[0])
+		fmt.Fprintf(out, "       %s delete [--parallel=COUNT]\n\n", os.Args[0])
+		gnuflag.PrintDefaults()
+		fmt.Fprintf(out, "\n")
+
+		if len(os.Args) > 1 && os.Args[1] == "--help" {
+			return nil
+		}
+
+		return fmt.Errorf("An valid action (spawn or delete) must be passed.")
 	}
 
+	gnuflag.Parse(true)
+
 	// Connect to LXD
-	c, err := lxd.NewClient(&lxd.DefaultConfig, "local")
+	c, err := lxd.ConnectLXDUnix("", nil)
 	if err != nil {
 		return err
 	}
@@ -62,7 +80,7 @@ func logf(format string, args ...interface{}) {
 	fmt.Printf(fmt.Sprintf("[%s] %s\n", time.Now().Format(time.StampMilli), format), args...)
 }
 
-func spawnContainers(c *lxd.Client, count int, image string, privileged bool) error {
+func spawnContainers(c lxd.ContainerServer, count int, image string, privileged bool) error {
 	batch := *argParallel
 	if batch < 1 {
 		// Detect the number of parallel actions
@@ -78,7 +96,7 @@ func spawnContainers(c *lxd.Client, count int, image string, privileged bool) er
 	remainder := count % batch
 
 	// Print the test header
-	st, err := c.ServerStatus()
+	st, _, err := c.GetServer()
 	if err != nil {
 		return err
 	}
@@ -118,27 +136,47 @@ func spawnContainers(c *lxd.Client, count int, image string, privileged bool) er
 	var fingerprint string
 	if strings.Contains(image, ":") {
 		var remote string
-		remote, fingerprint = lxd.DefaultConfig.ParseRemoteAndContainer(image)
+
+		defaultConfig := config.DefaultConfig
+		defaultConfig.UserAgent = version.UserAgent
+
+		remote, fingerprint, err = defaultConfig.ParseRemote(image)
+		if err != nil {
+			return err
+		}
+
+		d, err := defaultConfig.GetImageServer(remote)
+		if err != nil {
+			return err
+		}
 
 		if fingerprint == "" {
 			fingerprint = "default"
 		}
 
-		d, err := lxd.NewClient(&lxd.DefaultConfig, remote)
-		if err != nil {
-			return err
+		alias, _, err := d.GetImageAlias(fingerprint)
+		if err == nil {
+			fingerprint = alias.Target
 		}
 
-		target := d.GetAlias(fingerprint)
-		if target != "" {
-			fingerprint = target
-		}
-
-		_, err = c.GetImageInfo(fingerprint)
+		_, _, err = c.GetImage(fingerprint)
 		if err != nil {
 			logf("Importing image into local store: %s", fingerprint)
-			err := d.CopyImage(fingerprint, c, false, nil, false, false, nil)
+			image, _, err := d.GetImage(fingerprint)
 			if err != nil {
+				logf(fmt.Sprintf("Failed to import image: %s", err))
+				return err
+			}
+
+			op, err := d.CopyImage(*image, c, nil)
+			if err != nil {
+				logf(fmt.Sprintf("Failed to import image: %s", err))
+				return err
+			}
+
+			err = op.Wait()
+			if err != nil {
+				logf(fmt.Sprintf("Failed to import image: %s", err))
 				return err
 			}
 		} else {
@@ -166,26 +204,35 @@ func spawnContainers(c *lxd.Client, count int, image string, privileged bool) er
 		config["user.lxd-benchmark"] = "true"
 
 		// Create
-		resp, err := c.Init(name, "local", fingerprint, nil, config, false)
+		req := api.ContainersPost{
+			Name: name,
+			Source: api.ContainerSource{
+				Type:        "image",
+				Fingerprint: fingerprint,
+			},
+		}
+		req.Config = config
+
+		op, err := c.CreateContainer(req)
 		if err != nil {
 			logf(fmt.Sprintf("Failed to spawn container '%s': %s", name, err))
 			return
 		}
 
-		err = c.WaitForSuccess(resp.Operation)
+		err = op.Wait()
 		if err != nil {
 			logf(fmt.Sprintf("Failed to spawn container '%s': %s", name, err))
 			return
 		}
 
 		// Start
-		resp, err = c.Action(name, "start", -1, false, false)
+		op, err = c.UpdateContainerState(name, api.ContainerStatePut{Action: "start", Timeout: -1}, "")
 		if err != nil {
 			logf(fmt.Sprintf("Failed to spawn container '%s': %s", name, err))
 			return
 		}
 
-		err = c.WaitForSuccess(resp.Operation)
+		err = op.Wait()
 		if err != nil {
 			logf(fmt.Sprintf("Failed to spawn container '%s': %s", name, err))
 			return
@@ -193,13 +240,13 @@ func spawnContainers(c *lxd.Client, count int, image string, privileged bool) er
 
 		// Freeze
 		if *argFreeze {
-			resp, err = c.Action(name, "freeze", -1, false, false)
+			op, err := c.UpdateContainerState(name, api.ContainerStatePut{Action: "freeze", Timeout: -1}, "")
 			if err != nil {
 				logf(fmt.Sprintf("Failed to spawn container '%s': %s", name, err))
 				return
 			}
 
-			err = c.WaitForSuccess(resp.Operation)
+			err = op.Wait()
 			if err != nil {
 				logf(fmt.Sprintf("Failed to spawn container '%s': %s", name, err))
 				return
@@ -241,7 +288,7 @@ func spawnContainers(c *lxd.Client, count int, image string, privileged bool) er
 	return nil
 }
 
-func deleteContainers(c *lxd.Client) error {
+func deleteContainers(c lxd.ContainerServer) error {
 	batch := *argParallel
 	if batch < 1 {
 		// Detect the number of parallel actions
@@ -254,7 +301,7 @@ func deleteContainers(c *lxd.Client) error {
 	}
 
 	// List all the containers
-	allContainers, err := c.ListContainers()
+	allContainers, err := c.GetContainers()
 	if err != nil {
 		return err
 	}
@@ -283,27 +330,27 @@ func deleteContainers(c *lxd.Client) error {
 
 		// Stop
 		if ct.IsActive() {
-			resp, err := c.Action(ct.Name, "stop", -1, true, false)
+			op, err := c.UpdateContainerState(ct.Name, api.ContainerStatePut{Action: "stop", Timeout: -1, Force: true}, "")
 			if err != nil {
-				logf("Failed to delete container: %s", ct.Name)
+				logf(fmt.Sprintf("Failed to delete container '%s': %s", ct.Name, err))
 				return
 			}
 
-			err = c.WaitForSuccess(resp.Operation)
+			err = op.Wait()
 			if err != nil {
-				logf("Failed to delete container: %s", ct.Name)
+				logf(fmt.Sprintf("Failed to delete container '%s': %s", ct.Name, err))
 				return
 			}
 		}
 
 		// Delete
-		resp, err := c.Delete(ct.Name)
+		op, err := c.DeleteContainer(ct.Name)
 		if err != nil {
 			logf("Failed to delete container: %s", ct.Name)
 			return
 		}
 
-		err = c.WaitForSuccess(resp.Operation)
+		err = op.Wait()
 		if err != nil {
 			logf("Failed to delete container: %s", ct.Name)
 			return

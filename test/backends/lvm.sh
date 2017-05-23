@@ -1,5 +1,3 @@
-#!/bin/sh
-
 lvm_setup() {
   # shellcheck disable=2039
   local LXD_DIR
@@ -7,10 +5,6 @@ lvm_setup() {
   LXD_DIR=$1
 
   echo "==> Setting up lvm backend in ${LXD_DIR}"
-
-  if ! which lvm >/dev/null 2>&1; then
-    echo "Couldn't find the lvm binary"; false
-  fi
 
   truncate -s 4G "${TEST_DIR}/$(basename "${LXD_DIR}").lvm"
   pvloopdev=$(losetup --show -f "${TEST_DIR}/$(basename "${LXD_DIR}").lvm")

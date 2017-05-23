@@ -6,11 +6,11 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
-	"os/exec"
 	"path"
 	"strings"
 
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/logger"
 
 	log "gopkg.in/inconshreveable/log15.v2"
 )
@@ -319,14 +319,9 @@ func getAAProfileContent(c container) string {
 		profile += "  mount fstype=cgroup -> /sys/fs/cgroup/**,\n"
 	}
 
-	if aaStacking {
+	if aaStacking && !aaStacked {
 		profile += "\n  ### Feature: apparmor stacking\n"
-
-		if c.IsPrivileged() {
-			profile += "\n  ### Configuration: apparmor loading disabled in privileged containers\n"
-			profile += "  deny /sys/k*{,/**} rwklx,\n"
-		} else {
-			profile += `  ### Configuration: apparmor loading in unprivileged containers
+		profile += `  ### Configuration: apparmor profile loading (in namespace)
   deny /sys/k[^e]*{,/**} wklx,
   deny /sys/ke[^r]*{,/**} wklx,
   deny /sys/ker[^n]*{,/**} wklx,
@@ -352,8 +347,7 @@ func getAAProfileContent(c container) string {
   deny /sys/kernel/security?*{,/**} wklx,
   deny /sys/kernel?*{,/**} wklx,
 `
-			profile += fmt.Sprintf("  change_profile -> \":%s://*\",\n", AANamespace(c))
-		}
+		profile += fmt.Sprintf("  change_profile -> \":%s://*\",\n", AANamespace(c))
 	} else {
 		profile += "\n  ### Feature: apparmor stacking (not present)\n"
 		profile += "  deny /sys/k*{,/**} rwklx,\n"
@@ -363,12 +357,12 @@ func getAAProfileContent(c container) string {
 		// Apply nesting bits
 		profile += "\n  ### Configuration: nesting\n"
 		profile += strings.TrimLeft(AA_PROFILE_NESTING, "\n")
-		if !aaStacking || c.IsPrivileged() {
+		if !aaStacking || aaStacked {
 			profile += fmt.Sprintf("  change_profile -> \"%s\",\n", AAProfileFull(c))
 		}
 	}
 
-	if !c.IsPrivileged() {
+	if !c.IsPrivileged() || runningInUserns {
 		// Apply unprivileged bits
 		profile += "\n  ### Configuration: unprivileged containers\n"
 		profile += strings.TrimLeft(AA_PROFILE_UNPRIVILEGED, "\n")
@@ -395,23 +389,22 @@ func runApparmor(command string, c container) error {
 		return nil
 	}
 
-	cmd := exec.Command("apparmor_parser", []string{
+	output, err := shared.RunCommand("apparmor_parser", []string{
 		fmt.Sprintf("-%sWL", command),
 		path.Join(aaPath, "cache"),
 		path.Join(aaPath, "profiles", AAProfileShort(c)),
 	}...)
 
-	output, err := cmd.CombinedOutput()
 	if err != nil {
-		shared.LogError("Running apparmor",
-			log.Ctx{"action": command, "output": string(output), "err": err})
+		logger.Error("Running apparmor",
+			log.Ctx{"action": command, "output": output, "err": err})
 	}
 
 	return err
 }
 
 func mkApparmorNamespace(namespace string) error {
-	if !aaStacking {
+	if !aaStacking || aaStacked {
 		return nil
 	}
 
@@ -477,10 +470,10 @@ func AADestroy(c container) error {
 		return nil
 	}
 
-	if aaStacking {
+	if aaStacking && !aaStacked {
 		p := path.Join("/sys/kernel/security/apparmor/policy/namespaces", AANamespace(c))
 		if err := os.Remove(p); err != nil {
-			shared.LogError("error removing apparmor namespace", log.Ctx{"err": err, "ns": p})
+			logger.Error("error removing apparmor namespace", log.Ctx{"err": err, "ns": p})
 		}
 	}
 
@@ -515,11 +508,12 @@ func aaProfile() string {
 	if err == nil {
 		return strings.TrimSpace(string(contents))
 	}
+
 	return ""
 }
 
 func aaParserSupports(feature string) bool {
-	out, err := exec.Command("apparmor_parser", "--version").CombinedOutput()
+	out, err := shared.RunCommand("apparmor_parser", "--version")
 	if err != nil {
 		return false
 	}
@@ -528,7 +522,7 @@ func aaParserSupports(feature string) bool {
 	minor := 0
 	micro := 0
 
-	_, err = fmt.Sscanf(strings.Split(string(out), "\n")[0], "AppArmor parser version %d.%d.%d", &major, &minor, &micro)
+	_, err = fmt.Sscanf(strings.Split(out, "\n")[0], "AppArmor parser version %d.%d.%d", &major, &minor, &micro)
 	if err != nil {
 		return false
 	}

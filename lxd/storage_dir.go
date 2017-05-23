@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -36,10 +35,15 @@ func (s *storageDir) ContainerCreate(container container) error {
 		return fmt.Errorf("Error creating containers directory")
 	}
 
+	var mode os.FileMode
 	if container.IsPrivileged() {
-		if err := os.Chmod(cPath, 0700); err != nil {
-			return err
-		}
+		mode = 0700
+	} else {
+		mode = 0755
+	}
+
+	if err := os.Chmod(cPath, mode); err != nil {
+		return err
 	}
 
 	return container.TemplateApply("create")
@@ -53,10 +57,15 @@ func (s *storageDir) ContainerCreateFromImage(
 		return fmt.Errorf("Error creating rootfs directory")
 	}
 
+	var mode os.FileMode
 	if container.IsPrivileged() {
-		if err := os.Chmod(container.Path(), 0700); err != nil {
-			return err
-		}
+		mode = 0700
+	} else {
+		mode = 0755
+	}
+
+	if err := os.Chmod(container.Path(), mode); err != nil {
+		return err
 	}
 
 	imagePath := shared.VarPath("images", imageFingerprint)
@@ -89,7 +98,7 @@ func (s *storageDir) ContainerDelete(container container) error {
 	err := os.RemoveAll(cPath)
 	if err != nil {
 		// RemovaAll fails on very long paths, so attempt an rm -Rf
-		output, err := exec.Command("rm", "-Rf", cPath).CombinedOutput()
+		output, err := shared.RunCommand("rm", "-Rf", cPath)
 		if err != nil {
 			s.log.Error("ContainerDelete: failed", log.Ctx{"cPath": cPath, "output": output})
 			return fmt.Errorf("Error cleaning up %s: %s", cPath, string(output))

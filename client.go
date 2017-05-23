@@ -26,6 +26,7 @@ import (
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/ioprogress"
+	"github.com/lxc/lxd/shared/logger"
 	"github.com/lxc/lxd/shared/simplestreams"
 	"github.com/lxc/lxd/shared/version"
 )
@@ -72,7 +73,7 @@ func ParseResponse(r *http.Response) (*api.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	shared.LogDebugf("Raw response: %s", string(s))
+	logger.Debugf("Raw response: %s", string(s))
 
 	if err := json.Unmarshal(s, &ret); err != nil {
 		return nil, err
@@ -265,6 +266,15 @@ func NewClientFromInfo(info ConnectInfo) (*Client, error) {
 		},
 	}
 	c.Name = info.Name
+
+	// Setup redirect policy
+	c.Http.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		// Replicate the headers
+		req.Header = via[len(via)-1].Header
+
+		return nil
+	}
+
 	var err error
 	if strings.HasPrefix(info.RemoteConfig.Addr, "unix:") {
 		err = connectViaUnix(c, &info.RemoteConfig)
@@ -359,7 +369,7 @@ func (c *Client) doUpdateMethod(method string, base string, args interface{}, rt
 		return nil, err
 	}
 
-	shared.LogDebugf("%s %s to %s", method, buf.String(), uri)
+	logger.Debugf("%s %s to %s", method, buf.String(), uri)
 
 	req, err := http.NewRequest(method, uri, &buf)
 	if err != nil {
@@ -508,7 +518,7 @@ func (c *Client) AmTrusted() bool {
 		return false
 	}
 
-	shared.LogDebugf("%s", resp)
+	logger.Debugf("%s", resp)
 
 	meta, err := resp.MetadataAsMap()
 	if err != nil {
@@ -529,7 +539,7 @@ func (c *Client) IsPublic() bool {
 		return false
 	}
 
-	shared.LogDebugf("%s", resp)
+	logger.Debugf("%s", resp)
 
 	meta, err := resp.MetadataAsMap()
 	if err != nil {
@@ -1082,7 +1092,7 @@ func (c *Client) PostImage(imageFile string, rootfsFile string, properties []str
 
 func (c *Client) GetImageInfo(image string) (*api.Image, error) {
 	if c.Remote.Protocol == "simplestreams" && c.simplestreams != nil {
-		return c.simplestreams.GetImageInfo(image)
+		return c.simplestreams.GetImage(image)
 	}
 
 	resp, err := c.get(fmt.Sprintf("images/%s", image))
@@ -1240,7 +1250,12 @@ func (c *Client) IsAlias(alias string) (bool, error) {
 
 func (c *Client) GetAlias(alias string) string {
 	if c.Remote.Protocol == "simplestreams" && c.simplestreams != nil {
-		return c.simplestreams.GetAlias(alias)
+		alias, err := c.simplestreams.GetAlias(alias)
+		if err != nil {
+			return ""
+		}
+
+		return alias.Target
 	}
 
 	resp, err := c.get(fmt.Sprintf("images/aliases/%s", alias))
@@ -1758,7 +1773,7 @@ func (c *Client) PushFile(container string, p string, gid int, uid int, mode str
 	return err
 }
 
-func (c *Client) PullFile(container string, p string) (int, int, int, io.ReadCloser, error) {
+func (c *Client) PullFile(container string, p string) (int64, int64, int, io.ReadCloser, error) {
 	if c.Remote.Public {
 		return 0, 0, 0, nil, fmt.Errorf("This function isn't supported by public remotes.")
 	}
@@ -1853,8 +1868,16 @@ func (c *Client) WaitFor(waitURL string) (*api.Operation, error) {
 	 * "/<version>/operations/" in it; we chop off the leading / and pass
 	 * it to url directly.
 	 */
-	shared.LogDebugf(path.Join(waitURL[1:], "wait"))
 	resp, err := c.baseGet(c.url(waitURL, "wait"))
+	if err != nil {
+		return nil, err
+	}
+
+	return resp.MetadataAsOperation()
+}
+
+func (c *Client) GetOperation(url string) (*api.Operation, error) {
+	resp, err := c.baseGet(c.url(url))
 	if err != nil {
 		return nil, err
 	}
@@ -2106,7 +2129,7 @@ func (c *Client) SetProfileConfigItem(profile, key, value string) error {
 
 	st, err := c.ProfileConfig(profile)
 	if err != nil {
-		shared.LogDebugf("Error getting profile %s to update", profile)
+		logger.Debugf("Error getting profile %s to update", profile)
 		return err
 	}
 
@@ -2134,37 +2157,24 @@ func (c *Client) ListProfiles() ([]string, error) {
 		return nil, fmt.Errorf("This function isn't supported by public remotes.")
 	}
 
-	resp, err := c.get("profiles")
+	resp, err := c.get("profiles?recursion=1")
 	if err != nil {
 		return nil, err
 	}
 
-	var result []string
-
-	if err := resp.MetadataAsStruct(&result); err != nil {
+	profiles := []api.Profile{}
+	if err := resp.MetadataAsStruct(&profiles); err != nil {
 		return nil, err
 	}
 
-	names := []string{}
+	if len(profiles) == 0 {
+		return nil, nil
+	}
 
-	for _, url := range result {
-		toScan := strings.Replace(url, "/", " ", -1)
-		urlVersion := ""
-		name := ""
-		count, err := fmt.Sscanf(toScan, " %s profiles %s", &urlVersion, &name)
-		if err != nil {
-			return nil, err
-		}
-
-		if count != 2 {
-			return nil, fmt.Errorf("bad profile url %s", url)
-		}
-
-		if urlVersion != version.APIVersion {
-			return nil, fmt.Errorf("bad version in profile url")
-		}
-
-		names = append(names, name)
+	// spare a few allocation cycles
+	names := make([]string, len(profiles))
+	for i := 0; i < len(profiles); i++ {
+		names[i] = profiles[i].Name
 	}
 
 	return names, nil

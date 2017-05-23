@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -121,13 +122,13 @@ func LogPath(path ...string) string {
 	return filepath.Join(items...)
 }
 
-func ParseLXDFileHeaders(headers http.Header) (uid int, gid int, mode int) {
-	uid, err := strconv.Atoi(headers.Get("X-LXD-uid"))
+func ParseLXDFileHeaders(headers http.Header) (uid int64, gid int64, mode int) {
+	uid, err := strconv.ParseInt(headers.Get("X-LXD-uid"), 10, 64)
 	if err != nil {
 		uid = -1
 	}
 
-	gid, err = strconv.Atoi(headers.Get("X-LXD-gid"))
+	gid, err = strconv.ParseInt(headers.Get("X-LXD-gid"), 10, 64)
 	if err != nil {
 		gid = -1
 	}
@@ -246,11 +247,13 @@ func WriteAllBuf(w io.Writer, buf *bytes.Buffer) error {
 // FileMove tries to move a file by using os.Rename,
 // if that fails it tries to copy the file and remove the source.
 func FileMove(oldPath string, newPath string) error {
-	if err := os.Rename(oldPath, newPath); err == nil {
+	err := os.Rename(oldPath, newPath)
+	if err == nil {
 		return nil
 	}
 
-	if err := FileCopy(oldPath, newPath); err != nil {
+	err = FileCopy(oldPath, newPath)
+	if err != nil {
 		return err
 	}
 
@@ -267,10 +270,15 @@ func FileCopy(source string, dest string) error {
 	}
 	defer s.Close()
 
+	fi, err := s.Stat()
+	if err != nil {
+		return err
+	}
+
 	d, err := os.Create(dest)
 	if err != nil {
 		if os.IsExist(err) {
-			d, err = os.OpenFile(dest, os.O_WRONLY, 0700)
+			d, err = os.OpenFile(dest, os.O_WRONLY, fi.Mode())
 			if err != nil {
 				return err
 			}
@@ -281,7 +289,17 @@ func FileCopy(source string, dest string) error {
 	defer d.Close()
 
 	_, err = io.Copy(d, s)
-	return err
+	if err != nil {
+		return err
+	}
+
+	/* chown not supported on windows */
+	if runtime.GOOS != "windows" {
+		_, uid, gid := GetOwnerMode(fi)
+		return d.Chown(uid, gid)
+	}
+
+	return nil
 }
 
 type BytesReadCloser struct {
@@ -405,42 +423,6 @@ func IsTrue(value string) bool {
 	return false
 }
 
-func IsOnSharedMount(pathName string) (bool, error) {
-	file, err := os.Open("/proc/self/mountinfo")
-	if err != nil {
-		return false, err
-	}
-	defer file.Close()
-
-	absPath, err := filepath.Abs(pathName)
-	if err != nil {
-		return false, err
-	}
-
-	expPath, err := os.Readlink(absPath)
-	if err != nil {
-		expPath = absPath
-	}
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text()
-		rows := strings.Fields(line)
-
-		if rows[4] != expPath {
-			continue
-		}
-
-		if strings.HasPrefix(rows[6], "shared:") {
-			return true, nil
-		} else {
-			return false, nil
-		}
-	}
-
-	return false, nil
-}
-
 func IsBlockdev(fm os.FileMode) bool {
 	return ((fm&os.ModeDevice != 0) && (fm&os.ModeCharDevice == 0))
 }
@@ -456,12 +438,12 @@ func IsBlockdevPath(pathName string) bool {
 }
 
 func BlockFsDetect(dev string) (string, error) {
-	out, err := exec.Command("blkid", "-s", "TYPE", "-o", "value", dev).Output()
+	out, err := RunCommand("blkid", "-s", "TYPE", "-o", "value", dev)
 	if err != nil {
-		return "", fmt.Errorf("Failed to run blkid on: %s", dev)
+		return "", err
 	}
 
-	return strings.TrimSpace(string(out)), nil
+	return strings.TrimSpace(out), nil
 }
 
 // DeepCopy copies src to dest by using encoding/gob so its not that fast.
@@ -531,6 +513,7 @@ func ValidHostname(name string) bool {
 	return true
 }
 
+// Spawn the editor with a temporary YAML file for editing configs
 func TextEditor(inPath string, inContent []byte) ([]byte, error) {
 	var f *os.File
 	var err error
@@ -561,7 +544,8 @@ func TextEditor(inPath string, inContent []byte) ([]byte, error) {
 			return []byte{}, err
 		}
 
-		if err = f.Chmod(0600); err != nil {
+		err = os.Chmod(f.Name(), 0600)
+		if err != nil {
 			f.Close()
 			os.Remove(f.Name())
 			return []byte{}, err
@@ -570,7 +554,8 @@ func TextEditor(inPath string, inContent []byte) ([]byte, error) {
 		f.Write(inContent)
 		f.Close()
 
-		path = f.Name()
+		path = fmt.Sprintf("%s.yaml", f.Name())
+		os.Rename(f.Name(), path)
 		defer os.Remove(path)
 	} else {
 		path = inPath
@@ -746,13 +731,29 @@ func GetByteSizeString(input int64, precision uint) string {
 	return fmt.Sprintf("%.*fEB", precision, value)
 }
 
-func RunCommand(name string, arg ...string) error {
+func RunCommand(name string, arg ...string) (string, error) {
 	output, err := exec.Command(name, arg...).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("Failed to run: %s %s: %s", name, strings.Join(arg, " "), strings.TrimSpace(string(output)))
+		return string(output), fmt.Errorf("Failed to run: %s %s: %s", name, strings.Join(arg, " "), strings.TrimSpace(string(output)))
 	}
 
-	return nil
+	return string(output), nil
+}
+
+func TryRunCommand(name string, arg ...string) (string, error) {
+	var err error
+	var output string
+
+	for i := 0; i < 20; i++ {
+		output, err = RunCommand(name, arg...)
+		if err == nil {
+			break
+		}
+
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	return output, err
 }
 
 func TimeIsSet(ts time.Time) bool {
