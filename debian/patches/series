@@ -1,3 +1,4 @@
 0001-init-Allow-running-dpkg-reconfigure.patch
 0002-shared-cmd-Update-to-match-master.patch
 0003-Don-t-depend-on-testify-in-the-cmd-package.patch
+0004-Fix-for-older-gorilla-websocket-package.patch
