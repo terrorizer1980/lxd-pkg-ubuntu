@@ -8,6 +8,24 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// AssertOutEqual checks that the given text matches the the out stream.
+func AssertOutEqual(t *testing.T, stream *cmd.MemoryStreams, expected string) {
+	assert.Equal(t, expected, stream.Out(), "Unexpected output stream")
+}
+
+// AssertErrEqual checks that the given text matches the the err stream.
+func AssertErrEqual(t *testing.T, stream *cmd.MemoryStreams, expected string) {
+	assert.Equal(t, expected, stream.Err(), "Unexpected error stream")
+}
+
+// Output prints the given message on standard output
+func TestOutput(t *testing.T) {
+	streams := cmd.NewMemoryStreams("")
+	context := cmd.NewMemoryContext(streams)
+	context.Output("Hello %s", "world")
+	AssertOutEqual(t, streams, "Hello world")
+}
+
 // AskBool returns a boolean result depending on the user input.
 func TestAskBool(t *testing.T) {
 	cases := []struct {
@@ -31,8 +49,8 @@ func TestAskBool(t *testing.T) {
 		result := context.AskBool(c.question, c.defaultAnswer)
 
 		assert.Equal(t, c.result, result, "Unexpected answer result")
-		streams.AssertOutEqual(t, c.output)
-		streams.AssertErrEqual(t, c.error)
+		AssertOutEqual(t, streams, c.output)
+		AssertErrEqual(t, streams, c.error)
 	}
 }
 
@@ -57,8 +75,8 @@ func TestAskChoice(t *testing.T) {
 		result := context.AskChoice(c.question, c.choices, c.defaultAnswer)
 
 		assert.Equal(t, c.result, result, "Unexpected answer result")
-		streams.AssertOutEqual(t, c.output)
-		streams.AssertErrEqual(t, c.error)
+		AssertOutEqual(t, streams, c.output)
+		AssertErrEqual(t, streams, c.error)
 	}
 }
 
@@ -87,8 +105,8 @@ func TestAskInt(t *testing.T) {
 		result := context.AskInt(c.question, c.min, c.max, c.defaultAnswer)
 
 		assert.Equal(t, c.result, result, "Unexpected answer result")
-		streams.AssertOutEqual(t, c.output)
-		streams.AssertErrEqual(t, c.error)
+		AssertOutEqual(t, streams, c.output)
+		AssertErrEqual(t, streams, c.error)
 	}
 }
 
@@ -118,8 +136,8 @@ func TestAskString(t *testing.T) {
 		result := context.AskString(c.question, c.defaultAnswer, c.validate)
 
 		assert.Equal(t, c.result, result, "Unexpected answer result")
-		streams.AssertOutEqual(t, c.output)
-		streams.AssertErrEqual(t, c.error)
+		AssertOutEqual(t, streams, c.output)
+		AssertErrEqual(t, streams, c.error)
 	}
 }
 
@@ -142,7 +160,21 @@ func TestAskPassword(t *testing.T) {
 		result := context.AskPassword(c.question, c.reader)
 
 		assert.Equal(t, c.result, result, "Unexpected answer result")
-		streams.AssertOutEqual(t, c.output)
-		streams.AssertErrEqual(t, c.error)
+		AssertOutEqual(t, streams, c.output)
+		AssertErrEqual(t, streams, c.error)
 	}
+}
+
+// InputYAML parses the YAML content passed via stdin.
+func TestInputYAML(t *testing.T) {
+	streams := cmd.NewMemoryStreams("field: foo")
+	context := cmd.NewMemoryContext(streams)
+
+	type Schema struct {
+		Field string
+	}
+	schema := Schema{}
+
+	assert.Nil(t, context.InputYAML(&schema))
+	assert.Equal(t, "foo", schema.Field, "Unexpected field value")
 }
