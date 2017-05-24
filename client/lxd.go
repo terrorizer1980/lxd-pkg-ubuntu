@@ -277,7 +277,6 @@ func (r *ProtocolLXD) rawWebsocket(url string) (*websocket.Conn, error) {
 	dialer := websocket.Dialer{
 		NetDial:         httpTransport.Dial,
 		TLSClientConfig: httpTransport.TLSClientConfig,
-		Proxy:           httpTransport.Proxy,
 	}
 
 	// Set the user agent
