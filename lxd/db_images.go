@@ -105,8 +105,56 @@ func dbImageSourceGet(db *sql.DB, imageId int) (int, api.ImageSource, error) {
 
 }
 
-// dbImageGet gets an ImageBaseInfo object from the database.
-// The argument fingerprint will be queried with a LIKE query, means you can
+// Try to find a source entry of a locally cached image that matches
+// the given remote details (server, protocol and alias). Return the
+// fingerprint linked to the matching entry, if any.
+func dbImageSourceGetCachedFingerprint(db *sql.DB, server string, protocol string, alias string) (string, error) {
+	protocolInt := -1
+	for protoInt, protoString := range dbImageSourceProtocol {
+		if protoString == protocol {
+			protocolInt = protoInt
+		}
+	}
+
+	if protocolInt == -1 {
+		return "", fmt.Errorf("Invalid protocol: %s", protocol)
+	}
+
+	q := `SELECT images.fingerprint
+			FROM images_source
+			INNER JOIN images
+			ON images_source.image_id=images.id
+			WHERE server=? AND protocol=? AND alias=?`
+
+	fingerprint := ""
+
+	arg1 := []interface{}{server, protocolInt, alias}
+	arg2 := []interface{}{&fingerprint}
+	err := dbQueryRowScan(db, q, arg1, arg2)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", NoSuchObjectError
+		}
+
+		return "", err
+	}
+
+	return fingerprint, nil
+}
+
+// Whether an image with the given fingerprint exists.
+func dbImageExists(db *sql.DB, fingerprint string) (bool, error) {
+	var exists bool
+	var err error
+	query := "SELECT COUNT(*) > 0 FROM images WHERE fingerprint=?"
+	inargs := []interface{}{fingerprint}
+	outargs := []interface{}{&exists}
+	err = dbQueryRowScan(db, query, inargs, outargs)
+	return exists, err
+}
+
+// dbImageGet gets an Image object from the database.
+// If strictMatching is false, The fingerprint argument will be queried with a LIKE query, means you can
 // pass a shortform and will get the full fingerprint.
 // There can never be more than one image with a given fingerprint, as it is
 // enforced by a UNIQUE constraint in the schema.
@@ -124,31 +172,22 @@ func dbImageGet(db *sql.DB, fingerprint string, public bool, strictMatching bool
 		&image.Size, &image.Cached, &image.Public, &image.AutoUpdate, &arch,
 		&create, &expire, &used, &upload}
 
-	var query string
-
 	var inargs []interface{}
+	query := `
+        SELECT
+            id, fingerprint, filename, size, cached, public, auto_update, architecture,
+            creation_date, expiry_date, last_use_date, upload_date
+        FROM images`
 	if strictMatching {
 		inargs = []interface{}{fingerprint}
-		query = `
-        SELECT
-            id, fingerprint, filename, size, cached, public, auto_update, architecture,
-            creation_date, expiry_date, last_use_date, upload_date
-        FROM
-            images
-        WHERE fingerprint = ?`
+		query += " WHERE fingerprint = ?"
 	} else {
 		inargs = []interface{}{fingerprint + "%"}
-		query = `
-        SELECT
-            id, fingerprint, filename, size, cached, public, auto_update, architecture,
-            creation_date, expiry_date, last_use_date, upload_date
-        FROM
-            images
-        WHERE fingerprint LIKE ?`
+		query += " WHERE fingerprint LIKE ?"
 	}
 
 	if public {
-		query = query + " AND public=1"
+		query += " AND public=1"
 	}
 
 	err = dbQueryRowScan(db, query, inargs, outfmt)

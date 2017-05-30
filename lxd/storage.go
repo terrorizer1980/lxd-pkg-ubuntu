@@ -9,7 +9,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
-	"time"
 
 	"github.com/gorilla/websocket"
 
@@ -197,7 +196,7 @@ type storage interface {
 	ContainerCanRestore(container container, sourceContainer container) error
 	ContainerDelete(container container) error
 	ContainerCopy(target container, source container, containerOnly bool) error
-	ContainerMount(name string, path string) (bool, error)
+	ContainerMount(c container) (bool, error)
 	ContainerUmount(name string, path string) (bool, error)
 	ContainerRename(container container, newName string) error
 	ContainerRestore(container container, sourceContainer container) error
@@ -598,45 +597,6 @@ func ShiftIfNecessary(container container, srcIdmap *shared.IdmapSet) error {
 		if err != nil {
 			return err
 		}
-	}
-
-	return nil
-}
-
-// Useful functions for unreliable backends
-func tryMount(src string, dst string, fs string, flags uintptr, options string) error {
-	var err error
-
-	for i := 0; i < 20; i++ {
-		err = syscall.Mount(src, dst, fs, flags, options)
-		if err == nil {
-			break
-		}
-
-		time.Sleep(500 * time.Millisecond)
-	}
-
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func tryUnmount(path string, flags int) error {
-	var err error
-
-	for i := 0; i < 20; i++ {
-		err = syscall.Unmount(path, flags)
-		if err == nil {
-			break
-		}
-
-		time.Sleep(500 * time.Millisecond)
-	}
-
-	if err != nil && err == syscall.EBUSY {
-		return err
 	}
 
 	return nil

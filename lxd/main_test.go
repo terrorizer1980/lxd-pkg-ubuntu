@@ -1,9 +1,10 @@
 package main
 
 import (
+	"crypto/tls"
+	"fmt"
 	"io/ioutil"
 	"os"
-	"testing"
 
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -12,8 +13,20 @@ import (
 )
 
 func mockStartDaemon() (*Daemon, error) {
+	certBytes, keyBytes, err := shared.GenerateMemCert(false)
+	if err != nil {
+		return nil, err
+	}
+	cert, err := tls.X509KeyPair(certBytes, keyBytes)
+	if err != nil {
+		return nil, err
+	}
+
 	d := &Daemon{
 		MockMode: true,
+		tlsConfig: &tls.Config{
+			Certificates: []tls.Certificate{cert},
+		},
 	}
 
 	if err := d.Init(); err != nil {
@@ -52,6 +65,20 @@ func (suite *lxdTestSuite) SetupSuite() {
 	if err != nil {
 		os.Exit(1)
 	}
+}
+
+func (suite *lxdTestSuite) TearDownSuite() {
+	suite.d.Stop()
+
+	err := os.RemoveAll(suite.tmpdir)
+	if err != nil {
+		os.Exit(1)
+	}
+}
+
+func (suite *lxdTestSuite) SetupTest() {
+	initializeDbObject(suite.d, shared.VarPath("lxd.db"))
+	daemonConfigInit(suite.d.db)
 
 	// Create default storage pool. Make sure that we don't pass a nil to
 	// the next function.
@@ -59,7 +86,8 @@ func (suite *lxdTestSuite) SetupSuite() {
 
 	mockStorage, _ := storageTypeToString(storageTypeMock)
 	// Create the database entry for the storage pool.
-	_, err = dbStoragePoolCreate(suite.d.db, lxdTestSuiteDefaultStoragePool, mockStorage, poolConfig)
+	poolDescription := fmt.Sprintf("%s storage pool", lxdTestSuiteDefaultStoragePool)
+	_, err := dbStoragePoolCreate(suite.d.db, lxdTestSuiteDefaultStoragePool, poolDescription, mockStorage, poolConfig)
 	if err != nil {
 		os.Exit(1)
 	}
@@ -91,21 +119,13 @@ func (suite *lxdTestSuite) SetupSuite() {
 	if err != nil {
 		os.Exit(1)
 	}
-}
-
-func (suite *lxdTestSuite) TearDownSuite() {
-	suite.d.Stop()
-
-	err := os.RemoveAll(suite.tmpdir)
-	if err != nil {
-		os.Exit(1)
-	}
-}
-
-func (suite *lxdTestSuite) SetupTest() {
 	suite.Req = require.New(suite.T())
 }
 
-func TestLxdTestSuite(t *testing.T) {
-	suite.Run(t, new(lxdTestSuite))
+func (suite *lxdTestSuite) TearDownTest() {
+	suite.d.db.Close()
+	err := os.Remove(shared.VarPath("lxd.db"))
+	if err != nil {
+		os.Exit(1)
+	}
 }

@@ -1,5 +1,3 @@
-#!/bin/sh
-
 test_network() {
   ensure_import_testimage
   ensure_has_localhost_remote "${LXD_ADDR}"
@@ -13,6 +11,12 @@ test_network() {
   lxc network set lxdt$$ ipv4.routing false
   lxc network set lxdt$$ ipv6.routing false
   lxc network set lxdt$$ ipv6.dhcp.stateful true
+  lxc network delete lxdt$$
+
+  # edit network description
+  lxc network create lxdt$$
+  lxc network show lxdt$$ | sed 's/^description:.*/description: foo/' | lxc network edit lxdt$$
+  lxc network show lxdt$$ | grep -q 'description: foo'
   lxc network delete lxdt$$
 
   # Unconfigured bridge

@@ -1,5 +1,3 @@
-#!/bin/sh
-
 safe_pot_hash() {
   sed -e "/Project-Id-Version/,/Content-Transfer-Encoding/d" -e "/^#/d" "po/lxd.pot" | md5sum | cut -f1 -d" "
 }
@@ -18,7 +16,7 @@ test_static_analysis() {
 
     # Shell static analysis
     if which shellcheck >/dev/null 2>&1; then
-      shellcheck test/main.sh test/suites/* test/backends/*
+      shellcheck --shell sh test/main.sh test/suites/* test/backends/*
     else
       echo "shellcheck not found, shell static analysis disabled"
     fi
@@ -46,10 +44,15 @@ test_static_analysis() {
       golint -set_exit_status client/
       golint -set_exit_status lxc/config/
       golint -set_exit_status shared/api/
+      golint -set_exit_status shared/cmd/
       golint -set_exit_status shared/gnuflag/
       golint -set_exit_status shared/i18n/
       golint -set_exit_status shared/ioprogress/
+      golint -set_exit_status shared/logger/
+      golint -set_exit_status shared/logging/
+      golint -set_exit_status shared/termios/
       golint -set_exit_status shared/version/
+      golint -set_exit_status test/deps/
     fi
 
     ## deadcode

@@ -211,22 +211,16 @@ func (c *copyCmd) copyContainer(config *lxd.Config, sourceResource string, destR
 	 */
 	waitchan := make(chan map[int]error, 2)
 	wait := func(cli *lxd.Client, op string, ch chan map[int]error, senderid int) {
-		msg := make(map[int]error, 1)
-		err := cli.WaitForSuccess(op)
-		if err != nil {
-			msg[senderid] = err
-			ch <- msg
-		}
-
-		msg[senderid] = nil
-		ch <- msg
+		ch <- map[int]error{senderid: cli.WaitForSuccess(op)}
 	}
+
+	var migrationErrFromClient error
 	for _, addr := range addresses {
 		var migration *api.Response
 
 		sourceWSUrl := "https://" + addr + sourceWSResponse.Operation
-		migration, err = dest.MigrateFrom(destName, sourceWSUrl, source.Certificate, secrets, status.Architecture, status.Config, status.Devices, status.Profiles, baseImage, ephemeral == 1, false, source, sourceWSResponse.Operation, containerOnly)
-		if err != nil {
+		migration, migrationErrFromClient = dest.MigrateFrom(destName, sourceWSUrl, source.Certificate, secrets, status.Architecture, status.Config, status.Devices, status.Profiles, baseImage, ephemeral == 1, false, source, sourceWSResponse.Operation, containerOnly)
+		if migrationErrFromClient != nil {
 			continue
 		}
 
@@ -238,18 +232,24 @@ func (c *copyCmd) copyContainer(config *lxd.Config, sourceResource string, destR
 		sourceOpId := 1
 		go wait(source, sourceWSResponse.Operation, waitchan, sourceOpId)
 
-		opStatus := make([]map[int]error, 2)
+		var sourceOpErr error
+		var destOpErr error
 		for i := 0; i < cap(waitchan); i++ {
-			opStatus[i] = <-waitchan
+			tmp := <-waitchan
+			err, ok := tmp[sourceOpId]
+			if ok {
+				sourceOpErr = err
+			} else {
+				destOpErr = err
+			}
 		}
 
-		if opStatus[0][destOpId] != nil {
+		if destOpErr != nil {
 			continue
 		}
 
-		err = opStatus[1][sourceOpId]
-		if err != nil {
-			return err
+		if sourceOpErr != nil {
+			return sourceOpErr
 		}
 
 		if destResource == "" {
@@ -277,7 +277,7 @@ func (c *copyCmd) copyContainer(config *lxd.Config, sourceResource string, destR
 	}
 
 	// Return the error from destination
-	return fmt.Errorf(i18n.G("Migration failed on target host: %s"), err)
+	return fmt.Errorf(i18n.G("Migration failed on target host: %s"), migrationErrFromClient)
 }
 
 func (c *copyCmd) run(config *lxd.Config, args []string) error {

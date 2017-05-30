@@ -20,10 +20,21 @@ import (
 	"github.com/lxc/lxd/shared/logger"
 )
 
-var btrfsMntOptions = "user_subvol_rm_allowed"
-
 type storageBtrfs struct {
+	remount uintptr
 	storageShared
+}
+
+func (s *storageBtrfs) getBtrfsMountOptions() string {
+	if s.pool.Config["btrfs.mount_options"] != "" {
+		return s.pool.Config["btrfs.mount_options"]
+	}
+
+	return "user_subvol_rm_allowed"
+}
+
+func (s *storageBtrfs) setBtrfsMountOptions(mountOptions string) {
+	s.pool.Config["btrfs.mount_options"] = mountOptions
 }
 
 // ${LXD_DIR}/storage-pools/<pool>/containers
@@ -181,6 +192,8 @@ func (s *storageBtrfs) StoragePoolCreate() error {
 
 	var err1 error
 	var devUUID string
+	mountFlags, mountOptions := lxdResolveMountoptions(s.getBtrfsMountOptions())
+	mountFlags |= s.remount
 	if isBlockDev && filepath.IsAbs(source) {
 		devUUID, _ = shared.LookupUUIDByBlockDevPath(source)
 		// The symlink might not have been created even with the delay
@@ -201,7 +214,7 @@ func (s *storageBtrfs) StoragePoolCreate() error {
 		// cannot call StoragePoolMount() since it will try to do the
 		// reverse operation. So instead we shamelessly mount using the
 		// block device path at the time of pool creation.
-		err1 = syscall.Mount(source, poolMntPoint, "btrfs", 0, btrfsMntOptions)
+		err1 = syscall.Mount(source, poolMntPoint, "btrfs", mountFlags, mountOptions)
 	} else {
 		_, err1 = s.StoragePoolMount()
 	}
@@ -286,7 +299,6 @@ func (s *storageBtrfs) StoragePoolDelete() error {
 		msg := ""
 		if err == nil {
 			msg = fmt.Sprintf("Removing disk device %s with UUID: %s.", diskPath, source)
-			diskPath = fmt.Sprintf("/dev/%s", strings.Trim(diskPath, "../../"))
 		} else {
 			msg = fmt.Sprintf("Failed to lookup disk device with UUID: %s: %s.", source, err)
 		}
@@ -360,7 +372,7 @@ func (s *storageBtrfs) StoragePoolMount() (bool, error) {
 		}
 	}
 
-	if shared.IsMountPoint(poolMntPoint) {
+	if shared.IsMountPoint(poolMntPoint) && (s.remount&syscall.MS_REMOUNT) == 0 {
 		return false, nil
 	}
 
@@ -410,9 +422,11 @@ func (s *storageBtrfs) StoragePoolMount() (bool, error) {
 
 	}
 
-	// This is a block device.
-	err := syscall.Mount(mountSource, poolMntPoint, "btrfs", mountFlags, btrfsMntOptions)
+	mountFlags, mountOptions := lxdResolveMountoptions(s.getBtrfsMountOptions())
+	mountFlags |= s.remount
+	err := syscall.Mount(mountSource, poolMntPoint, "btrfs", mountFlags, mountOptions)
 	if err != nil {
+		logger.Errorf("failed to mount BTRFS storage pool \"%s\" onto \"%s\" with mountoptions \"%s\": %s", mountSource, poolMntPoint, mountOptions, err)
 		return false, err
 	}
 
@@ -463,11 +477,21 @@ func (s *storageBtrfs) StoragePoolUmount() (bool, error) {
 }
 
 func (s *storageBtrfs) StoragePoolUpdate(writable *api.StoragePoolPut, changedConfig []string) error {
-	if shared.StringInSlice("rsync.bwlimit", changedConfig) {
-		return nil
+	logger.Infof("Updating BTRFS storage pool \"%s\".", s.pool.Name)
+
+	// rsync.bwlimit does not require any on-disk changes
+
+	if shared.StringInSlice("btrfs.mount_options", changedConfig) {
+		s.setBtrfsMountOptions(writable.Config["btrfs.mount_options"])
+		s.remount |= syscall.MS_REMOUNT
+		_, err := s.StoragePoolMount()
+		if err != nil {
+			return err
+		}
 	}
 
-	return fmt.Errorf("storage property cannot be changed")
+	logger.Infof("Updated BTRFS storage pool \"%s\".", s.pool.Name)
+	return nil
 }
 
 func (s *storageBtrfs) GetStoragePoolWritable() api.StoragePoolPut {
@@ -757,8 +781,7 @@ func (s *storageBtrfs) copyContainer(target container, source container) error {
 	targetContainerSubvolumeName := getContainerMountPoint(s.pool.Name, target.Name())
 
 	containersPath := getContainerMountPoint(s.pool.Name, "")
-	// Ensure that the directories immediately preceeding the
-	// subvolume directory exist.
+	// Ensure that the directories immediately preceding the subvolume directory exist.
 	if !shared.PathExists(containersPath) {
 		err := os.MkdirAll(containersPath, 0700)
 		if err != nil {
@@ -796,17 +819,16 @@ func (s *storageBtrfs) copySnapshot(target container, source container) error {
 	sourceContainerSubvolumeName := getSnapshotMountPoint(s.pool.Name, sourceName)
 	targetContainerSubvolumeName := getSnapshotMountPoint(s.pool.Name, targetName)
 
-	fields := strings.SplitN(target.Name(), shared.SnapshotDelimiter, 2)
-	containersPath := getSnapshotMountPoint(s.pool.Name, fields[0])
-	snapshotMntPointSymlinkTarget := shared.VarPath("storage-pools", s.pool.Name, "snapshots", fields[0])
-	snapshotMntPointSymlink := shared.VarPath("snapshots", fields[0])
+	targetParentName, _, _ := containerGetParentAndSnapshotName(target.Name())
+	containersPath := getSnapshotMountPoint(s.pool.Name, targetParentName)
+	snapshotMntPointSymlinkTarget := shared.VarPath("storage-pools", s.pool.Name, "snapshots", targetParentName)
+	snapshotMntPointSymlink := shared.VarPath("snapshots", targetParentName)
 	err := createSnapshotMountpoint(containersPath, snapshotMntPointSymlinkTarget, snapshotMntPointSymlink)
 	if err != nil {
 		return err
 	}
 
-	// Ensure that the directories immediately preceeding the
-	// subvolume directory exist.
+	// Ensure that the directories immediately preceding the subvolume directory exist.
 	if !shared.PathExists(containersPath) {
 		err := os.MkdirAll(containersPath, 0700)
 		if err != nil {
@@ -871,11 +893,10 @@ func (s *storageBtrfs) ContainerCopy(target container, source container, contain
 			return err
 		}
 
-		fields := strings.SplitN(snap.Name(), shared.SnapshotDelimiter, 2)
-		newSnapName := fmt.Sprintf("%s/%s", target.Name(), fields[1])
+		_, snapOnlyName, _ := containerGetParentAndSnapshotName(snap.Name())
+		newSnapName := fmt.Sprintf("%s/%s", target.Name(), snapOnlyName)
 		targetSnapshot, err := containerLoadByName(s.d, newSnapName)
 		if err != nil {
-			logger.Errorf("1111: %s", newSnapName)
 			return err
 		}
 
@@ -889,7 +910,7 @@ func (s *storageBtrfs) ContainerCopy(target container, source container, contain
 	return nil
 }
 
-func (s *storageBtrfs) ContainerMount(name string, path string) (bool, error) {
+func (s *storageBtrfs) ContainerMount(c container) (bool, error) {
 	logger.Debugf("Mounting BTRFS storage volume for container \"%s\" on storage pool \"%s\".", s.volume.Name, s.pool.Name)
 
 	// The storage pool must be mounted.
@@ -1131,8 +1152,7 @@ func (s *storageBtrfs) ContainerSnapshotDelete(snapshotContainer container) erro
 	os.Remove(sourceSnapshotMntPoint)
 	os.Remove(snapshotSubvolumeName)
 
-	sourceFields := strings.SplitN(snapshotContainer.Name(), shared.SnapshotDelimiter, 2)
-	sourceName := sourceFields[0]
+	sourceName, _, _ := containerGetParentAndSnapshotName(snapshotContainer.Name())
 	snapshotSubvolumePath := s.getSnapshotSubvolumePath(s.pool.Name, sourceName)
 	os.Remove(snapshotSubvolumePath)
 	if !shared.PathExists(snapshotSubvolumePath) {
@@ -1237,8 +1257,7 @@ func (s *storageBtrfs) ContainerSnapshotCreateEmpty(snapshotContainer container)
 	}
 
 	// Create the snapshot subvole path on the storage pool.
-	sourceFields := strings.SplitN(snapshotContainer.Name(), shared.SnapshotDelimiter, 2)
-	sourceName := sourceFields[0]
+	sourceName, _, _ := containerGetParentAndSnapshotName(snapshotContainer.Name())
 	snapshotSubvolumePath := s.getSnapshotSubvolumePath(s.pool.Name, sourceName)
 	snapshotSubvolumeName := getSnapshotMountPoint(s.pool.Name, snapshotContainer.Name())
 	if !shared.PathExists(snapshotSubvolumePath) {
@@ -1757,8 +1776,7 @@ func (s *btrfsMigrationSourceDriver) SendWhileRunning(conn *websocket.Conn, op *
 	// Deal with sending a snapshot to create a container on another LXD
 	// instance.
 	if s.container.IsSnapshot() {
-		sourceFields := strings.SplitN(containerName, shared.SnapshotDelimiter, 2)
-		sourceName = sourceFields[0]
+		sourceName, _, _ := containerGetParentAndSnapshotName(containerName)
 		snapshotsPath := getSnapshotMountPoint(containerPool, sourceName)
 		tmpContainerMntPoint, err := ioutil.TempDir(snapshotsPath, sourceName)
 		if err != nil {
@@ -1953,6 +1971,10 @@ func (s *storageBtrfs) MigrationSink(live bool, container container, snapshots [
 		}
 
 		receivedSnapshot := fmt.Sprintf("%s/.migration-send", btrfsPath)
+		// handle older lxd versions
+		if !shared.PathExists(receivedSnapshot) {
+			receivedSnapshot = fmt.Sprintf("%s/.root", btrfsPath)
+		}
 		if isSnapshot {
 			receivedSnapshot = fmt.Sprintf("%s/%s", btrfsPath, snapName)
 			err = s.btrfsPoolVolumesSnapshot(receivedSnapshot, targetPath, true)

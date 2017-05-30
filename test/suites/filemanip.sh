@@ -1,5 +1,3 @@
-#!/bin/sh
-
 test_filemanip() {
   # Workaround for shellcheck getting confused by "cd"
   set -e
@@ -84,7 +82,7 @@ test_filemanip() {
 
   lxc delete filemanip -f
 
-  if [ "${LXD_BACKEND}" != "lvm" ]; then
+  if [ "$(storage_backend "$LXD_DIR")" != "lvm" ]; then
     lxc launch testimage idmap -c "raw.idmap=\"both 0 0\""
     [ "$(stat -c %u "${LXD_DIR}/containers/idmap/rootfs")" = "0" ]
     lxc delete idmap --force

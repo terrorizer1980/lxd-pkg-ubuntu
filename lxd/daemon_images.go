@@ -91,7 +91,7 @@ func imageLoadStreamCache(d *Daemon) error {
 }
 
 // ImageDownload resolves the image fingerprint and if not in the database, downloads it
-func (d *Daemon) ImageDownload(op *operation, server string, protocol string, certificate string, secret string, alias string, forContainer bool, autoUpdate bool, storagePool string) (*api.Image, error) {
+func (d *Daemon) ImageDownload(op *operation, server string, protocol string, certificate string, secret string, alias string, forContainer bool, autoUpdate bool, storagePool string, preferCached bool) (*api.Image, error) {
 	var err error
 	var ctxMap log.Ctx
 
@@ -220,6 +220,19 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 		}
 	}
 
+	// If auto-update is on and we're being given the image by
+	// alias, try to use a locally cached image matching the given
+	// server/protocol/alias, regardless of whether it's stale or
+	// not (we can assume that it will be not *too* stale since
+	// auto-update is on).
+	interval := daemonConfig["images.auto_update_interval"].GetInt64()
+	if preferCached && interval > 0 && alias != fp {
+		cachedFingerprint, err := dbImageSourceGetCachedFingerprint(d.db, server, protocol, alias)
+		if err == nil && cachedFingerprint != fp {
+			fp = cachedFingerprint
+		}
+	}
+
 	// Check if the image already exists (partial hash match)
 	_, imgInfo, err := dbImageGet(d.db, fp, false, true)
 	if err == nil {
@@ -283,9 +296,12 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 			// Other download succeeded, we're done
 			return imgInfo, nil
 		}
+	} else {
+		imagesDownloadingLock.Unlock()
 	}
 
 	// Add the download to the queue
+	imagesDownloadingLock.Lock()
 	imagesDownloading[fp] = make(chan bool)
 	imagesDownloadingLock.Unlock()
 
@@ -460,6 +476,13 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 	// Override visiblity
 	info.Public = false
 
+	// We want to enable auto-update only if we were passed an
+	// alias name, so we can figure when the associated
+	// fingerprint changes in the remote.
+	if alias != fp {
+		info.AutoUpdate = autoUpdate
+	}
+
 	// Create the database entry
 	err = dbImageInsert(d.db, info.Fingerprint, info.Filename, info.Size, info.Public, info.AutoUpdate, info.Architecture, info.CreatedAt, info.ExpiresAt, info.Properties)
 	if err != nil {
@@ -475,12 +498,10 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 			return nil, err
 		}
 
-		err = dbImageSourceInsert(d.db, id, server, protocol, "", alias)
+		err = dbImageSourceInsert(d.db, id, server, protocol, certificate, alias)
 		if err != nil {
 			return nil, err
 		}
-
-		info.AutoUpdate = autoUpdate
 	}
 
 	// Import into the requested storage pool
