@@ -58,7 +58,7 @@ func storagePoolsGet(d *Daemon, r *http.Request) Response {
 // /1.0/storage-pools
 // Create a storage pool.
 func storagePoolsPost(d *Daemon, r *http.Request) Response {
-	req := api.StoragePool{}
+	req := api.StoragePoolsPost{}
 
 	// Parse the request.
 	err := json.NewDecoder(r.Body).Decode(&req)
@@ -75,7 +75,7 @@ func storagePoolsPost(d *Daemon, r *http.Request) Response {
 		return BadRequest(fmt.Errorf("No driver provided"))
 	}
 
-	err = storagePoolCreateInternal(d, req.Name, req.Driver, req.Config)
+	err = storagePoolCreateInternal(d, req.Name, req.Description, req.Driver, req.Config)
 	if err != nil {
 		return InternalError(err)
 	}
@@ -127,18 +127,18 @@ func storagePoolPut(d *Daemon, r *http.Request) Response {
 		return PreconditionFailed(err)
 	}
 
-	req := api.StoragePool{}
+	req := api.StoragePoolPut{}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return BadRequest(err)
 	}
 
 	// Validate the configuration
-	err = storagePoolValidateConfig(poolName, req.Driver, req.Config)
+	err = storagePoolValidateConfig(poolName, dbInfo.Driver, req.Config)
 	if err != nil {
 		return BadRequest(err)
 	}
 
-	err = storagePoolUpdate(d, poolName, req.Config)
+	err = storagePoolUpdate(d, poolName, req.Description, req.Config)
 	if err != nil {
 		return InternalError(err)
 	}
@@ -165,7 +165,7 @@ func storagePoolPatch(d *Daemon, r *http.Request) Response {
 		return PreconditionFailed(err)
 	}
 
-	req := api.StoragePool{}
+	req := api.StoragePoolPut{}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return BadRequest(err)
 	}
@@ -183,12 +183,12 @@ func storagePoolPatch(d *Daemon, r *http.Request) Response {
 	}
 
 	// Validate the configuration
-	err = storagePoolValidateConfig(poolName, req.Driver, req.Config)
+	err = storagePoolValidateConfig(poolName, dbInfo.Driver, req.Config)
 	if err != nil {
 		return BadRequest(err)
 	}
 
-	err = storagePoolUpdate(d, poolName, req.Config)
+	err = storagePoolUpdate(d, poolName, req.Description, req.Config)
 	if err != nil {
 		return InternalError(fmt.Errorf("failed to update the storage pool configuration"))
 	}

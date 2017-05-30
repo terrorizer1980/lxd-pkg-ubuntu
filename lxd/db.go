@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS config (
 CREATE TABLE IF NOT EXISTS containers (
     id INTEGER primary key AUTOINCREMENT NOT NULL,
     name VARCHAR(255) NOT NULL,
+    description TEXT,
     architecture INTEGER NOT NULL,
     type INTEGER NOT NULL,
     ephemeral INTEGER NOT NULL DEFAULT 0,
@@ -104,7 +105,7 @@ CREATE TABLE IF NOT EXISTS images_aliases (
     id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
     name VARCHAR(255) NOT NULL,
     image_id INTEGER NOT NULL,
-    description VARCHAR(255),
+    description TEXT,
     FOREIGN KEY (image_id) REFERENCES images (id) ON DELETE CASCADE,
     UNIQUE (name)
 );
@@ -128,6 +129,7 @@ CREATE TABLE IF NOT EXISTS images_source (
 CREATE TABLE IF NOT EXISTS networks (
     id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
     name VARCHAR(255) NOT NULL,
+    description TEXT,
     UNIQUE (name)
 );
 CREATE TABLE IF NOT EXISTS networks_config (
@@ -183,6 +185,7 @@ CREATE TABLE IF NOT EXISTS schema (
 CREATE TABLE IF NOT EXISTS storage_pools (
     id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
     name VARCHAR(255) NOT NULL,
+    description TEXT,
     driver VARCHAR(255) NOT NULL,
     UNIQUE (name)
 );
@@ -197,6 +200,7 @@ CREATE TABLE IF NOT EXISTS storage_pools_config (
 CREATE TABLE IF NOT EXISTS storage_volumes (
     id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
     name VARCHAR(255) NOT NULL,
+    description TEXT,
     storage_pool_id INTEGER NOT NULL,
     type INTEGER NOT NULL,
     UNIQUE (storage_pool_id, name, type),
@@ -250,7 +254,7 @@ func createDb(db *sql.DB) (err error) {
 		return err
 	}
 
-	return dbProfileCreateDocker(db)
+	return nil
 }
 
 func dbGetSchema(db *sql.DB) (v int) {
@@ -270,42 +274,6 @@ func dbGetLatestSchema() int {
 	}
 
 	return dbUpdates[len(dbUpdates)-1].version
-}
-
-// Create a database connection object and return it.
-func initializeDbObject(d *Daemon, path string) (err error) {
-	var openPath string
-
-	timeout := 5 // TODO - make this command-line configurable?
-
-	// These are used to tune the transaction BEGIN behavior instead of using the
-	// similar "locking_mode" pragma (locking for the whole database connection).
-	openPath = fmt.Sprintf("%s?_busy_timeout=%d&_txlock=exclusive", path, timeout*1000)
-
-	// Open the database. If the file doesn't exist it is created.
-	d.db, err = sql.Open("sqlite3_with_fk", openPath)
-	if err != nil {
-		return err
-	}
-
-	// Create the DB if it doesn't exist.
-	err = createDb(d.db)
-	if err != nil {
-		return fmt.Errorf("Error creating database: %s", err)
-	}
-
-	// Detect LXD downgrades
-	if dbGetSchema(d.db) > dbGetLatestSchema() {
-		return fmt.Errorf("The database schema is more recent than LXD's schema.")
-	}
-
-	// Apply any update
-	err = dbUpdatesApplyAll(d)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 func isDbLockedError(err error) bool {
@@ -345,7 +313,7 @@ func dbBegin(db *sql.DB) (*sql.Tx, error) {
 	}
 
 	logger.Debugf("DbBegin: DB still locked")
-	logger.PrintStack()
+	logger.Debugf(logger.GetStack())
 	return nil, fmt.Errorf("DB is locked")
 }
 
@@ -363,7 +331,7 @@ func txCommit(tx *sql.Tx) error {
 	}
 
 	logger.Debugf("Txcommit: db still locked")
-	logger.PrintStack()
+	logger.Debugf(logger.GetStack())
 	return fmt.Errorf("DB is locked")
 }
 
@@ -383,7 +351,7 @@ func dbQueryRowScan(db *sql.DB, q string, args []interface{}, outargs []interfac
 	}
 
 	logger.Debugf("DbQueryRowScan: query %q args %q, DB still locked", q, args)
-	logger.PrintStack()
+	logger.Debugf(logger.GetStack())
 	return fmt.Errorf("DB is locked")
 }
 
@@ -401,7 +369,7 @@ func dbQuery(db *sql.DB, q string, args ...interface{}) (*sql.Rows, error) {
 	}
 
 	logger.Debugf("DbQuery: query %q args %q, DB still locked", q, args)
-	logger.PrintStack()
+	logger.Debugf(logger.GetStack())
 	return nil, fmt.Errorf("DB is locked")
 }
 
@@ -481,7 +449,7 @@ func dbQueryScan(db *sql.DB, q string, inargs []interface{}, outfmt []interface{
 	}
 
 	logger.Debugf("DbQueryscan: query %q inargs %q, DB still locked", q, inargs)
-	logger.PrintStack()
+	logger.Debugf(logger.GetStack())
 	return nil, fmt.Errorf("DB is locked")
 }
 
@@ -499,6 +467,6 @@ func dbExec(db *sql.DB, q string, args ...interface{}) (sql.Result, error) {
 	}
 
 	logger.Debugf("DbExec: query %q args %q, DB still locked", q, args)
-	logger.PrintStack()
+	logger.Debugf(logger.GetStack())
 	return nil, fmt.Errorf("DB is locked")
 }

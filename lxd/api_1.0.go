@@ -33,6 +33,7 @@ var api10 = []Command{
 	imagesCmd,
 	imagesExportCmd,
 	imagesSecretCmd,
+	imagesRefreshCmd,
 	operationsCmd,
 	operationCmd,
 	operationWait,
@@ -104,6 +105,10 @@ func api10Get(d *Daemon, r *http.Request) Response {
 			"storage_lvm_use_thinpool",
 			"storage_rsync_bwlimit",
 			"network_vxlan_interface",
+			"storage_btrfs_mount_options",
+			"entity_description",
+			"image_force_refresh",
+			"storage_lvm_lv_resizing",
 		},
 		APIStatus:  "stable",
 		APIVersion: version.APIVersion,
@@ -160,8 +165,13 @@ func api10Get(d *Daemon, r *http.Request) Response {
 	}
 
 	var certificate string
+	var certificateFingerprint string
 	if len(d.tlsConfig.Certificates) != 0 {
 		certificate = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: d.tlsConfig.Certificates[0].Certificate[0]}))
+		certificateFingerprint, err = shared.CertFingerprintStr(certificate)
+		if err != nil {
+			return InternalError(err)
+		}
 	}
 
 	architectures := []string{}
@@ -175,17 +185,18 @@ func api10Get(d *Daemon, r *http.Request) Response {
 	}
 
 	env := api.ServerEnvironment{
-		Addresses:          addresses,
-		Architectures:      architectures,
-		Certificate:        certificate,
-		Driver:             "lxc",
-		DriverVersion:      lxc.Version(),
-		Kernel:             kernel,
-		KernelArchitecture: kernelArchitecture,
-		KernelVersion:      kernelVersion,
-		Server:             "lxd",
-		ServerPid:          os.Getpid(),
-		ServerVersion:      version.Version}
+		Addresses:              addresses,
+		Architectures:          architectures,
+		Certificate:            certificate,
+		CertificateFingerprint: certificateFingerprint,
+		Driver:                 "lxc",
+		DriverVersion:          lxc.Version(),
+		Kernel:                 kernel,
+		KernelArchitecture:     kernelArchitecture,
+		KernelVersion:          kernelVersion,
+		Server:                 "lxd",
+		ServerPid:              os.Getpid(),
+		ServerVersion:          version.Version}
 
 	drivers := readStoragePoolDriversCache()
 	for _, driver := range drivers {
@@ -223,7 +234,7 @@ func api10Put(d *Daemon, r *http.Request) Response {
 		return InternalError(err)
 	}
 
-	err = etagCheck(r, oldConfig)
+	err = etagCheck(r, daemonConfigRender())
 	if err != nil {
 		return PreconditionFailed(err)
 	}
@@ -242,7 +253,7 @@ func api10Patch(d *Daemon, r *http.Request) Response {
 		return InternalError(err)
 	}
 
-	err = etagCheck(r, oldConfig)
+	err = etagCheck(r, daemonConfigRender())
 	if err != nil {
 		return PreconditionFailed(err)
 	}

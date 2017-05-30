@@ -48,15 +48,57 @@ local_tcp_port() {
   done
 }
 
-# import all the backends
-for backend in backends/*.sh; do
-  # shellcheck disable=SC1090
-  . "${backend}"
-done
+# return a list of available storage backends
+available_storage_backends() {
+  # shellcheck disable=2039
+  local backend backends
+
+  backends="dir"
+  for backend in btrfs lvm zfs; do
+    if which $backend >/dev/null 2>&1; then
+      backends="$backends $backend"
+    fi
+  done
+  echo "$backends"
+}
+
+# whether a storage backend is available
+storage_backend_available() {
+  # shellcheck disable=2039
+  local backends
+  backends="$(available_storage_backends)"
+  [ "${backends#*$1}" != "$backends" ]
+}
+
+# choose a random available backend, excluding LXD_BACKEND
+random_storage_backend() {
+    # shellcheck disable=2046
+    shuf -e $(available_storage_backends) | head -n 1
+}
+
+# return the storage backend being used by a LXD instance
+storage_backend() {
+    cat "$1/lxd.backend"
+}
+
 
 if [ -z "${LXD_BACKEND:-}" ]; then
   LXD_BACKEND=dir
 fi
+
+echo "==> Available storage backends: $(available_storage_backends | sort)"
+if [ "$LXD_BACKEND" != "random" ] && ! storage_backend_available "$LXD_BACKEND"; then
+  echo "Storage backage \"$LXD_BACKEND\" is not available"
+  exit 1
+fi
+echo "==> Using storage backend ${LXD_BACKEND}"
+
+# import storage backends
+for backend in $(available_storage_backends); do
+  # shellcheck disable=SC1090
+  . "backends/${backend}.sh"
+done
+
 
 spawn_lxd() {
   set +x
@@ -64,7 +106,7 @@ spawn_lxd() {
   # overwrites the environment and we would lose LXD_DIR's value otherwise.
 
   # shellcheck disable=2039
-  local LXD_DIR
+  local LXD_DIR lxddir lxd_backend
 
   lxddir=${1}
   shift
@@ -72,12 +114,19 @@ spawn_lxd() {
   storage=${1}
   shift
 
+  if [ "$LXD_BACKEND" = "random" ]; then
+    lxd_backend="$(random_storage_backend)"
+  else
+    lxd_backend="$LXD_BACKEND"
+  fi
+
   # Copy pre generated Certs
   cp deps/server.crt "${lxddir}"
   cp deps/server.key "${lxddir}"
 
   # setup storage
-  "$LXD_BACKEND"_setup "${lxddir}"
+  "$lxd_backend"_setup "${lxddir}"
+  echo "$lxd_backend" > "${lxddir}/lxd.backend"
 
   echo "==> Spawning lxd in ${lxddir}"
   # shellcheck disable=SC2086
@@ -115,7 +164,7 @@ spawn_lxd() {
 
   if [ "${storage}" = true ]; then
     echo "==> Configuring storage backend"
-    "$LXD_BACKEND"_configure "${lxddir}"
+    "$lxd_backend"_configure "${lxddir}"
   fi
 }
 
@@ -242,12 +291,13 @@ kill_lxd() {
   # overwrites the environment and we would lose LXD_DIR's value otherwise.
 
   # shellcheck disable=2039
-  local LXD_DIR
+  local LXD_DIR daemon_dir daemon_pid check_leftovers lxd_backend
 
   daemon_dir=${1}
   LXD_DIR=${daemon_dir}
   daemon_pid=$(cat "${daemon_dir}/lxd.pid")
   check_leftovers="false"
+  lxd_backend=$(storage_backend "$daemon_dir")
   echo "==> Killing LXD at ${daemon_dir}"
 
   if [ -e "${daemon_dir}/unix.socket" ]; then
@@ -340,7 +390,7 @@ kill_lxd() {
   fi
 
   # teardown storage
-  "$LXD_BACKEND"_teardown "${daemon_dir}"
+  "$lxd_backend"_teardown "${daemon_dir}"
 
   # Wipe the daemon directory
   wipe "${daemon_dir}"
@@ -514,21 +564,12 @@ fi
 LXD_CONF=$(mktemp -d -p "${TEST_DIR}" XXX)
 export LXD_CONF
 
-# Setup the first LXD
 LXD_DIR=$(mktemp -d -p "${TEST_DIR}" XXX)
 export LXD_DIR
 chmod +x "${LXD_DIR}"
 spawn_lxd "${LXD_DIR}" true
 LXD_ADDR=$(cat "${LXD_DIR}/lxd.addr")
 export LXD_ADDR
-
-# Setup the second LXD
-LXD2_DIR=$(mktemp -d -p "${TEST_DIR}" XXX)
-chmod +x "${LXD2_DIR}"
-spawn_lxd "${LXD2_DIR}" true
-LXD2_ADDR=$(cat "${LXD2_DIR}/lxd.addr")
-export LXD2_ADDR
-
 
 run_test() {
   TEST_CURRENT=${1}
@@ -558,11 +599,15 @@ run_test test_remote_usage "remote usage"
 run_test test_basic_usage "basic usage"
 run_test test_security "security features"
 run_test test_image_expiry "image expiry"
+run_test test_image_auto_update "image auto-update"
+run_test test_image_prefer_cached "image prefer cached"
 run_test test_concurrent_exec "concurrent exec"
 run_test test_concurrent "concurrent startup"
 run_test test_snapshots "container snapshots"
 run_test test_snap_restore "snapshot restores"
 run_test test_config_profiles "profiles and configuration"
+run_test test_config_edit "container configuration edit"
+run_test test_config_edit_container_snapshot_pool_config "container and snapshot volume configuration edit"
 run_test test_server_config "server configuration"
 run_test test_filemanip "file manipulations"
 run_test test_network "network management"
@@ -576,7 +621,9 @@ run_test test_fdleak "fd leak"
 run_test test_cpu_profiling "CPU profiling"
 run_test test_mem_profiling "memory profiling"
 run_test test_storage "storage"
-run_test test_lxd_autoinit "lxd init auto"
+run_test test_init_auto "lxd init auto"
+run_test test_init_interactive "lxd init interactive"
+run_test test_init_preseed "lxd init preseed"
 run_test test_storage_profiles "storage profiles"
 run_test test_container_import "container import"
 

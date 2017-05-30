@@ -264,3 +264,18 @@ places an upper limit on the amount of socket I/O allowed.
 This introduces a new tunnel.NAME.interface option for networks.
 
 This key control what host network interface is used for a VXLAN tunnel.
+
+## storage\_btrfs\_mount\_options
+This introduces the btrfs.mount\_options property for btrfs storage pools.
+
+This key controls what mount options will be used for the btrfs storage pool.
+
+## entity\_description
+This adds descriptions to entities like containers, snapshots, networks, storage pools and volumes.
+
+## image\_force\_refresh
+This allows forcing a refresh for an existing image.
+
+## storage\_lvm\_lv\_resizing
+This introduces the ability to resize logical volumes by setting the "size"
+property in the containers root disk device.

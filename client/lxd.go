@@ -10,6 +10,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/logger"
 )
@@ -22,9 +23,34 @@ type ProtocolLXD struct {
 	eventListenersLock sync.Mutex
 
 	http            *http.Client
-	httpHost        string
-	httpUserAgent   string
 	httpCertificate string
+	httpHost        string
+	httpProtocol    string
+	httpUserAgent   string
+}
+
+// GetConnectionInfo returns the basic connection information used to interact with the server
+func (r *ProtocolLXD) GetConnectionInfo() (*ConnectionInfo, error) {
+	info := ConnectionInfo{}
+	info.Certificate = r.httpCertificate
+	info.Protocol = "lxd"
+
+	urls := []string{}
+	if len(r.server.Environment.Addresses) > 0 {
+		if r.httpProtocol == "https" {
+			urls = append(urls, r.httpHost)
+		}
+
+		for _, addr := range r.server.Environment.Addresses {
+			url := fmt.Sprintf("https://%s", addr)
+			if !shared.StringInSlice(url, urls) {
+				urls = append(urls, url)
+			}
+		}
+	}
+	info.Addresses = urls
+
+	return &info, nil
 }
 
 // RawQuery allows directly querying the LXD API
@@ -78,9 +104,7 @@ func (r *ProtocolLXD) rawQuery(method string, url string, data interface{}, ETag
 		req.Header.Set("Content-Type", "application/json")
 
 		// Log the data
-		if data != nil {
-			logger.Debugf(logger.Pretty(data))
-		}
+		logger.Debugf(logger.Pretty(data))
 	} else {
 		// No data to be sent along with the request
 		req, err = http.NewRequest(method, url, nil)

@@ -447,7 +447,7 @@ func (c *networkCmd) doNetworkList(config *lxd.Config, args []string) error {
 		}
 
 		strUsedBy := fmt.Sprintf("%d", len(network.UsedBy))
-		data = append(data, []string{network.Name, network.Type, strManaged, strUsedBy})
+		data = append(data, []string{network.Name, network.Type, strManaged, network.Description, strUsedBy})
 	}
 
 	table := tablewriter.NewWriter(os.Stdout)
@@ -458,6 +458,7 @@ func (c *networkCmd) doNetworkList(config *lxd.Config, args []string) error {
 		i18n.G("NAME"),
 		i18n.G("TYPE"),
 		i18n.G("MANAGED"),
+		i18n.G("DESCRIPTION"),
 		i18n.G("USED BY")})
 	sort.Sort(byName(data))
 	table.AppendBulk(data)
@@ -503,6 +504,10 @@ func (c *networkCmd) doNetworkSet(client *lxd.Client, name string, args []string
 }
 
 func (c *networkCmd) doNetworkShow(client *lxd.Client, name string) error {
+	if name == "" {
+		return errArgs
+	}
+
 	network, err := client.NetworkGet(name)
 	if err != nil {
 		return err

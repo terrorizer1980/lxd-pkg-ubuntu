@@ -147,15 +147,20 @@ func (op *Operation) setupListener() error {
 			return
 		}
 
+		// We don't want concurrency while processing events
+		op.listenerLock.Lock()
+		defer op.listenerLock.Unlock()
+
+		// Check if we're done already (because of another event)
+		if op.listener == nil {
+			return
+		}
+
 		// Update the struct
 		op.Operation = *newOp
 
 		// And check if we're done
 		if op.StatusCode.IsFinal() {
-			// Make sure we're not racing with ourselves
-			op.listenerLock.Lock()
-			defer op.listenerLock.Unlock()
-
 			op.listener.Disconnect()
 			op.listener = nil
 			close(op.chActive)
@@ -218,4 +223,60 @@ func (op *Operation) extractOperation(data interface{}) *api.Operation {
 	}
 
 	return &newOp
+}
+
+// The RemoteOperation type represents an ongoing LXD operation between two servers
+type RemoteOperation struct {
+	targetOp *Operation
+
+	handlers []func(api.Operation)
+
+	chDone chan bool
+	chPost chan bool
+	err    error
+}
+
+// AddHandler adds a function to be called whenever an event is received
+func (op *RemoteOperation) AddHandler(function func(api.Operation)) (*EventTarget, error) {
+	var err error
+	var target *EventTarget
+
+	// Attach to the existing target operation
+	if op.targetOp != nil {
+		target, err = op.targetOp.AddHandler(function)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// Generate a mock EventTarget
+		target = &EventTarget{
+			function: func(interface{}) { function(api.Operation{}) },
+			types:    []string{"operation"},
+		}
+	}
+
+	// Add the handler to our list
+	op.handlers = append(op.handlers, function)
+
+	return target, nil
+}
+
+// GetTarget returns the target operation
+func (op *RemoteOperation) GetTarget() (*api.Operation, error) {
+	if op.targetOp == nil {
+		return nil, fmt.Errorf("No associated target operation")
+	}
+
+	return &op.targetOp.Operation, nil
+}
+
+// Wait lets you wait until the operation reaches a final state
+func (op *RemoteOperation) Wait() error {
+	<-op.chDone
+
+	if op.chPost != nil {
+		<-op.chPost
+	}
+
+	return op.err
 }

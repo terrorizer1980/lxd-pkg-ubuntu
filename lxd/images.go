@@ -339,7 +339,7 @@ func imgPostRemoteInfo(d *Daemon, req api.ImagesPost, op *operation) (*api.Image
 		return nil, fmt.Errorf("must specify one of alias or fingerprint for init from image")
 	}
 
-	info, err := d.ImageDownload(op, req.Source.Server, req.Source.Protocol, req.Source.Certificate, req.Source.Secret, hash, false, req.AutoUpdate, "")
+	info, err := d.ImageDownload(op, req.Source.Server, req.Source.Protocol, req.Source.Certificate, req.Source.Secret, hash, false, req.AutoUpdate, "", false)
 	if err != nil {
 		return nil, err
 	}
@@ -408,7 +408,7 @@ func imgPostURLInfo(d *Daemon, req api.ImagesPost, op *operation) (*api.Image, e
 	}
 
 	// Import the image
-	info, err := d.ImageDownload(op, url, "direct", "", "", hash, false, req.AutoUpdate, "")
+	info, err := d.ImageDownload(op, url, "direct", "", "", hash, false, req.AutoUpdate, "", false)
 	if err != nil {
 		return nil, err
 	}
@@ -620,6 +620,14 @@ func getImgPostInfo(d *Daemon, r *http.Request, builddir string, post *os.File) 
 		}
 	}
 
+	// Check if the image already exists
+	exists, err := dbImageExists(d.db, info.Fingerprint)
+	if err != nil {
+		return nil, err
+	}
+	if exists {
+		return nil, fmt.Errorf("Image with same fingerprint already exists")
+	}
 	// Create the database entry
 	err = dbImageInsert(d.db, info.Fingerprint, info.Filename, info.Size, info.Public, info.AutoUpdate, info.Architecture, info.CreatedAt, info.ExpiresAt, info.Properties)
 	if err != nil {
@@ -872,10 +880,10 @@ func autoUpdateImages(d *Daemon) {
 		return
 	}
 
-	for _, fp := range images {
-		id, info, err := dbImageGet(d.db, fp, false, true)
+	for _, fingerprint := range images {
+		id, info, err := dbImageGet(d.db, fingerprint, false, true)
 		if err != nil {
-			logger.Error("Error loading image", log.Ctx{"err": err, "fp": fp})
+			logger.Error("Error loading image", log.Ctx{"err": err, "fp": fingerprint})
 			continue
 		}
 
@@ -883,100 +891,128 @@ func autoUpdateImages(d *Daemon) {
 			continue
 		}
 
-		_, source, err := dbImageSourceGet(d.db, id)
-		if err != nil {
-			continue
-		}
-
-		// Get the IDs of all storage pools on which a storage volume
-		// for the requested image currently exists.
-		poolIDs, err := dbImageGetPools(d.db, fp)
-		if err != nil {
-			continue
-		}
-
-		// Translate the IDs to poolNames.
-		poolNames, err := dbImageGetPoolNamesFromIDs(d.db, poolIDs)
-		if err != nil {
-			continue
-		}
-
-		// If no optimized pools at least update the base store
-		if len(poolNames) == 0 {
-			poolNames = append(poolNames, "")
-		}
-
-		logger.Debug("Processing image", log.Ctx{"fp": fp, "server": source.Server, "protocol": source.Protocol, "alias": source.Alias})
-
-		// Update the image on each pool where it currently exists.
-		hash := fp
-		for _, poolName := range poolNames {
-			newInfo, err := d.ImageDownload(nil, source.Server, source.Protocol, "", "", source.Alias, false, true, poolName)
-			if err != nil {
-				logger.Error("Failed to update the image", log.Ctx{"err": err, "fp": fp})
-				continue
-			}
-
-			hash = newInfo.Fingerprint
-			if hash == fp {
-				logger.Debug("Already up to date", log.Ctx{"fp": fp})
-				continue
-			}
-
-			newId, _, err := dbImageGet(d.db, hash, false, true)
-			if err != nil {
-				logger.Error("Error loading image", log.Ctx{"err": err, "fp": hash})
-				continue
-			}
-
-			err = dbImageLastAccessUpdate(d.db, hash, info.LastUsedAt)
-			if err != nil {
-				logger.Error("Error setting last use date", log.Ctx{"err": err, "fp": hash})
-				continue
-			}
-
-			err = dbImageAliasesMove(d.db, id, newId)
-			if err != nil {
-				logger.Error("Error moving aliases", log.Ctx{"err": err, "fp": hash})
-				continue
-			}
-
-			err = doDeleteImageFromPool(d, fp, poolName)
-			if err != nil {
-				logger.Error("Error deleting image", log.Ctx{"err": err, "fp": fp})
-			}
-		}
-
-		// Image didn't change, move on
-		if hash == fp {
-			continue
-		}
-
-		// Remove main image file.
-		fname := shared.VarPath("images", fp)
-		if shared.PathExists(fname) {
-			err = os.Remove(fname)
-			if err != nil {
-				logger.Debugf("Error deleting image file %s: %s", fname, err)
-			}
-		}
-
-		// Remove the rootfs file for the image.
-		fname = shared.VarPath("images", fp) + ".rootfs"
-		if shared.PathExists(fname) {
-			err = os.Remove(fname)
-			if err != nil {
-				logger.Debugf("Error deleting image file %s: %s", fname, err)
-			}
-		}
-
-		// Remove the database entry for the image.
-		if err = dbImageDelete(d.db, id); err != nil {
-			logger.Debugf("Error deleting image from database %s: %s", fname, err)
-		}
+		autoUpdateImage(d, nil, fingerprint, id, info)
 	}
 
 	logger.Infof("Done updating images")
+}
+
+// Update a single image.  The operation can be nil, if no progress tracking is needed.
+// Returns whether the image has been updated.
+func autoUpdateImage(d *Daemon, op *operation, fingerprint string, id int, info *api.Image) error {
+	_, source, err := dbImageSourceGet(d.db, id)
+	if err != nil {
+		logger.Error("Error getting source image", log.Ctx{"err": err, "fp": fingerprint})
+		return err
+	}
+
+	// Get the IDs of all storage pools on which a storage volume
+	// for the requested image currently exists.
+	poolIDs, err := dbImageGetPools(d.db, fingerprint)
+	if err != nil {
+		logger.Error("Error getting image pools", log.Ctx{"err": err, "fp": fingerprint})
+		return err
+	}
+
+	// Translate the IDs to poolNames.
+	poolNames, err := dbImageGetPoolNamesFromIDs(d.db, poolIDs)
+	if err != nil {
+		logger.Error("Error getting image pools", log.Ctx{"err": err, "fp": fingerprint})
+		return err
+	}
+
+	// If no optimized pools at least update the base store
+	if len(poolNames) == 0 {
+		poolNames = append(poolNames, "")
+	}
+
+	logger.Debug("Processing image", log.Ctx{"fp": fingerprint, "server": source.Server, "protocol": source.Protocol, "alias": source.Alias})
+
+	// Set operation metadata to indicate whether a refresh happened
+	setRefreshResult := func(result bool) {
+		if op == nil {
+			return
+		}
+
+		metadata := map[string]interface{}{"refreshed": result}
+		op.UpdateMetadata(metadata)
+	}
+
+	// Update the image on each pool where it currently exists.
+	hash := fingerprint
+	for _, poolName := range poolNames {
+		newInfo, err := d.ImageDownload(op, source.Server, source.Protocol, source.Certificate, "", source.Alias, false, true, poolName, false)
+
+		if err != nil {
+			logger.Error("Failed to update the image", log.Ctx{"err": err, "fp": fingerprint})
+			continue
+		}
+
+		hash = newInfo.Fingerprint
+		if hash == fingerprint {
+			logger.Debug("Already up to date", log.Ctx{"fp": fingerprint})
+			continue
+		}
+
+		newId, _, err := dbImageGet(d.db, hash, false, true)
+		if err != nil {
+			logger.Error("Error loading image", log.Ctx{"err": err, "fp": hash})
+			continue
+		}
+
+		err = dbImageLastAccessUpdate(d.db, hash, info.LastUsedAt)
+		if err != nil {
+			logger.Error("Error setting last use date", log.Ctx{"err": err, "fp": hash})
+			continue
+		}
+
+		err = dbImageAliasesMove(d.db, id, newId)
+		if err != nil {
+			logger.Error("Error moving aliases", log.Ctx{"err": err, "fp": hash})
+			continue
+		}
+
+		// If we do have optimized pools, make sure we remove
+		// the volumes associated with the image.
+		if poolName != "" {
+			err = doDeleteImageFromPool(d, fingerprint, poolName)
+			if err != nil {
+				logger.Error("Error deleting image from pool", log.Ctx{"err": err, "fp": fingerprint})
+			}
+		}
+	}
+
+	// Image didn't change, nothing to do.
+	if hash == fingerprint {
+		setRefreshResult(false)
+		return nil
+	}
+
+	// Remove main image file.
+	fname := shared.VarPath("images", fingerprint)
+	if shared.PathExists(fname) {
+		err = os.Remove(fname)
+		if err != nil {
+			logger.Debugf("Error deleting image file %s: %s", fname, err)
+		}
+	}
+
+	// Remove the rootfs file for the image.
+	fname = shared.VarPath("images", fingerprint) + ".rootfs"
+	if shared.PathExists(fname) {
+		err = os.Remove(fname)
+		if err != nil {
+			logger.Debugf("Error deleting image file %s: %s", fname, err)
+		}
+	}
+
+	// Remove the database entry for the image.
+	if err = dbImageDelete(d.db, id); err != nil {
+		logger.Debugf("Error deleting image from database %s: %s", fname, err)
+	}
+
+	setRefreshResult(true)
+	return nil
 }
 
 func pruneExpiredImages(d *Daemon) {
@@ -1565,8 +1601,30 @@ func imageSecret(d *Daemon, r *http.Request) Response {
 	return OperationResponse(op)
 }
 
+func imageRefresh(d *Daemon, r *http.Request) Response {
+	fingerprint := mux.Vars(r)["fingerprint"]
+	imageId, imageInfo, err := dbImageGet(d.db, fingerprint, false, false)
+	if err != nil {
+		return SmartError(err)
+	}
+
+	// Begin background operation
+	run := func(op *operation) error {
+		return autoUpdateImage(d, op, fingerprint, imageId, imageInfo)
+	}
+
+	op, err := operationCreate(operationClassTask, nil, nil, run, nil, nil)
+	if err != nil {
+		return InternalError(err)
+	}
+
+	return OperationResponse(op)
+
+}
+
 var imagesExportCmd = Command{name: "images/{fingerprint}/export", untrustedGet: true, get: imageExport}
 var imagesSecretCmd = Command{name: "images/{fingerprint}/secret", post: imageSecret}
+var imagesRefreshCmd = Command{name: "images/{fingerprint}/refresh", post: imageRefresh}
 
 var aliasesCmd = Command{name: "images/aliases", post: aliasesPost, get: aliasesGet}
 

@@ -187,6 +187,7 @@ func containerLXCCreate(d *Daemon, args containerArgs) (container, error) {
 		daemon:       d,
 		id:           args.Id,
 		name:         args.Name,
+		description:  args.Description,
 		ephemeral:    args.Ephemeral,
 		architecture: args.Architecture,
 		cType:        args.Ctype,
@@ -255,7 +256,7 @@ func containerLXCCreate(d *Daemon, args containerArgs) (container, error) {
 	}
 
 	// Create a new database entry for the container's storage volume
-	_, err = dbStoragePoolVolumeCreate(d.db, args.Name, storagePoolVolumeTypeContainer, poolID, volumeConfig)
+	_, err = dbStoragePoolVolumeCreate(d.db, args.Name, "", storagePoolVolumeTypeContainer, poolID, volumeConfig)
 	if err != nil {
 		c.Delete()
 		return nil, err
@@ -351,6 +352,7 @@ func containerLXCLoad(d *Daemon, args containerArgs) (container, error) {
 		daemon:       d,
 		id:           args.Id,
 		name:         args.Name,
+		description:  args.Description,
 		ephemeral:    args.Ephemeral,
 		architecture: args.Architecture,
 		cType:        args.Ctype,
@@ -381,6 +383,7 @@ type containerLXC struct {
 	ephemeral    bool
 	id           int
 	name         string
+	description  string
 	stateful     bool
 
 	// Config
@@ -1549,6 +1552,34 @@ func (c *containerLXC) startCommon() (string, error) {
 		}
 	}
 
+	var ourStart bool
+	newSize, ok := c.LocalConfig()["volatile.apply_quota"]
+	if ok {
+		err := c.initStorage()
+		if err != nil {
+			return "", err
+		}
+
+		size, err := shared.ParseByteSizeString(newSize)
+		if err != nil {
+			return "", err
+		}
+		err = c.storage.ContainerSetQuota(c, size)
+		if err != nil {
+			return "", err
+		}
+
+		// Remove the volatile key from the DB
+		err = dbContainerConfigRemove(c.daemon.db, c.id, "volatile.apply_quota")
+		if err != nil {
+			return "", err
+		}
+
+		// Remove the volatile key from the in-memory configs
+		delete(c.localConfig, "volatile.apply_quota")
+		delete(c.expandedConfig, "volatile.apply_quota")
+	}
+
 	/* Deal with idmap changes */
 	idmap, err := c.IdmapSet()
 	if err != nil {
@@ -1574,7 +1605,7 @@ func (c *containerLXC) startCommon() (string, error) {
 	if !reflect.DeepEqual(idmap, lastIdmap) {
 		logger.Debugf("Container idmap changed, remapping")
 
-		ourStart, err := c.StorageStart()
+		ourStart, err = c.StorageStart()
 		if err != nil {
 			return "", err
 		}
@@ -1784,6 +1815,9 @@ func (c *containerLXC) startCommon() (string, error) {
 					if err != nil {
 						return "", err
 					}
+
+					// Attempt to disable IPv6 on the host side interface
+					networkSysctl(fmt.Sprintf("ipv6/conf/%s/disable_ipv6", device), "1")
 				}
 			}
 		}
@@ -1813,51 +1847,6 @@ func (c *containerLXC) startCommon() (string, error) {
 		return "", err
 	}
 
-	// Cleanup any leftover volatile entries
-	netNames := []string{}
-	for _, k := range c.expandedDevices.DeviceNames() {
-		v := c.expandedDevices[k]
-		if v["type"] == "nic" {
-			netNames = append(netNames, k)
-		}
-	}
-
-	for k := range c.localConfig {
-		// We only care about volatile
-		if !strings.HasPrefix(k, "volatile.") {
-			continue
-		}
-
-		// Confirm it's a key of format volatile.<device>.<key>
-		fields := strings.SplitN(k, ".", 3)
-		if len(fields) != 3 {
-			continue
-		}
-
-		// The only device keys we care about are name and hwaddr
-		if !shared.StringInSlice(fields[2], []string{"name", "hwaddr"}) {
-			continue
-		}
-
-		// Check if the device still exists
-		if shared.StringInSlice(fields[1], netNames) {
-			// Don't remove the volatile entry if the device doesn't have the matching field set
-			if c.expandedDevices[fields[1]][fields[2]] == "" {
-				continue
-			}
-		}
-
-		// Remove the volatile key from the DB
-		err := dbContainerConfigRemove(c.daemon.db, c.id, k)
-		if err != nil {
-			return "", err
-		}
-
-		// Remove the volatile key from the in-memory configs
-		delete(c.localConfig, k)
-		delete(c.expandedConfig, k)
-	}
-
 	// Rotate the log file
 	logfile := c.LogFilePath()
 	if shared.PathExists(logfile) {
@@ -1869,7 +1858,7 @@ func (c *containerLXC) startCommon() (string, error) {
 	}
 
 	// Storage is guaranteed to be mountable now.
-	ourStart, err := c.StorageStart()
+	ourStart, err = c.StorageStart()
 	if err != nil {
 		return "", err
 	}
@@ -2509,6 +2498,7 @@ func (c *containerLXC) Render() (interface{}, interface{}, error) {
 			StatusCode:      statusCode,
 		}
 
+		ct.Description = c.Description()
 		ct.Architecture = architectureName
 		ct.Config = c.localConfig
 		ct.CreatedAt = c.creationDate
@@ -3121,6 +3111,7 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 	}
 
 	// Get a copy of the old configuration
+	oldDescription := c.Description()
 	oldArchitecture := 0
 	err = shared.DeepCopy(&c.architecture, &oldArchitecture)
 	if err != nil {
@@ -3170,6 +3161,7 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 	undoChanges := true
 	defer func() {
 		if undoChanges {
+			c.description = oldDescription
 			c.architecture = oldArchitecture
 			c.ephemeral = oldEphemeral
 			c.expandedConfig = oldExpandedConfig
@@ -3184,6 +3176,7 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 	}()
 
 	// Apply the various changes
+	c.description = args.Description
 	c.architecture = args.Architecture
 	c.ephemeral = args.Ephemeral
 	c.localConfig = args.Config
@@ -3351,23 +3344,27 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 	oldRootDiskDeviceSize := oldExpandedDevices[oldRootDiskDeviceKey]["size"]
 	newRootDiskDeviceSize := c.expandedDevices[newRootDiskDeviceKey]["size"]
 
+	isRunning := c.IsRunning()
 	// Apply disk quota changes
 	if newRootDiskDeviceSize != oldRootDiskDeviceSize {
-		size, err := shared.ParseByteSizeString(newRootDiskDeviceSize)
-		if err != nil {
-			return err
-		}
-
-		if c.storage.ContainerStorageReady(c.Name()) {
-			err = c.storage.ContainerSetQuota(c, size)
+		storageTypeName := c.storage.GetStorageTypeName()
+		storageIsReady := c.storage.ContainerStorageReady(c.Name())
+		if storageTypeName == "lvm" && isRunning || !storageIsReady {
+			c.localConfig["volatile.apply_quota"] = newRootDiskDeviceSize
+		} else {
+			size, err := shared.ParseByteSizeString(newRootDiskDeviceSize)
 			if err != nil {
 				return err
 			}
+			err = c.storage.ContainerSetQuota(c, size)
+		}
+		if err != nil {
+			return err
 		}
 	}
 
 	// Apply the live changes
-	if c.IsRunning() {
+	if isRunning {
 		// Live update the container config
 		for _, key := range changedConfig {
 			value := c.expandedConfig[key]
@@ -3854,6 +3851,45 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 		}
 	}
 
+	// Cleanup any leftover volatile entries
+	netNames := []string{}
+	for _, k := range c.expandedDevices.DeviceNames() {
+		v := c.expandedDevices[k]
+		if v["type"] == "nic" {
+			netNames = append(netNames, k)
+		}
+	}
+
+	for k := range c.localConfig {
+		// We only care about volatile
+		if !strings.HasPrefix(k, "volatile.") {
+			continue
+		}
+
+		// Confirm it's a key of format volatile.<device>.<key>
+		fields := strings.SplitN(k, ".", 3)
+		if len(fields) != 3 {
+			continue
+		}
+
+		// The only device keys we care about are name and hwaddr
+		if !shared.StringInSlice(fields[2], []string{"name", "hwaddr", "host_name"}) {
+			continue
+		}
+
+		// Check if the device still exists
+		if shared.StringInSlice(fields[1], netNames) {
+			// Don't remove the volatile entry if the device doesn't have the matching field set
+			if c.expandedDevices[fields[1]][fields[2]] == "" {
+				continue
+			}
+		}
+
+		// Remove the volatile key from the in-memory configs
+		delete(c.localConfig, k)
+		delete(c.expandedConfig, k)
+	}
+
 	// Finally, apply the changes to the database
 	tx, err := dbBegin(c.daemon.db)
 	if err != nil {
@@ -3866,25 +3902,25 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 		return err
 	}
 
-	err = dbContainerConfigInsert(tx, c.id, args.Config)
+	err = dbContainerConfigInsert(tx, c.id, c.localConfig)
 	if err != nil {
 		tx.Rollback()
 		return err
 	}
 
-	err = dbContainerProfilesInsert(tx, c.id, args.Profiles)
+	err = dbContainerProfilesInsert(tx, c.id, c.profiles)
 	if err != nil {
 		tx.Rollback()
 		return err
 	}
 
-	err = dbDevicesAdd(tx, "container", int64(c.id), args.Devices)
+	err = dbDevicesAdd(tx, "container", int64(c.id), c.localDevices)
 	if err != nil {
 		tx.Rollback()
 		return err
 	}
 
-	err = dbContainerUpdate(tx, c.id, c.architecture, c.ephemeral)
+	err = dbContainerUpdate(tx, c.id, c.description, c.architecture, c.ephemeral)
 	if err != nil {
 		tx.Rollback()
 		return err
@@ -4000,7 +4036,7 @@ func (c *containerLXC) Export(w io.Writer, properties map[string]string) error {
 		// Get the container's architecture
 		var arch string
 		if c.IsSnapshot() {
-			parentName := strings.SplitN(c.name, shared.SnapshotDelimiter, 2)[0]
+			parentName, _, _ := containerGetParentAndSnapshotName(c.name)
 			parent, err := containerLoadByName(c.daemon, parentName)
 			if err != nil {
 				tw.Close()
@@ -5145,7 +5181,7 @@ func (c *containerLXC) StorageStart() (bool, error) {
 	if c.IsSnapshot() {
 		isOurOperation, err = c.storage.ContainerSnapshotStart(c)
 	} else {
-		isOurOperation, err = c.storage.ContainerMount(c.Name(), c.Path())
+		isOurOperation, err = c.storage.ContainerMount(c)
 	}
 
 	return isOurOperation, err
@@ -5656,9 +5692,7 @@ func (c *containerLXC) createNetworkDevice(name string, m types.Device) (string,
 			}
 
 			// Attempt to disable IPv6 on the host side interface
-			if shared.PathExists(fmt.Sprintf("/proc/sys/net/ipv6/conf/%s/disable_ipv6", n1)) {
-				ioutil.WriteFile(fmt.Sprintf("/proc/sys/net/ipv6/conf/%s/disable_ipv6", n1), []byte("1"), 0644)
-			}
+			networkSysctl(fmt.Sprintf("ipv6/conf/%s/disable_ipv6", n1), "1")
 		}
 
 		dev = n2
@@ -5680,6 +5714,9 @@ func (c *containerLXC) createNetworkDevice(name string, m types.Device) (string,
 				if err != nil {
 					return "", err
 				}
+
+				// Attempt to disable IPv6 on the host side interface
+				networkSysctl(fmt.Sprintf("ipv6/conf/%s/disable_ipv6", device), "1")
 			}
 		}
 
@@ -5917,13 +5954,13 @@ func (c *containerLXC) removeNetworkFilter(hwaddr string, bridge string) error {
 
 func (c *containerLXC) removeNetworkFilters() error {
 	for k, m := range c.expandedDevices {
+		if m["type"] != "nic" || m["nictype"] != "bridged" {
+			continue
+		}
+
 		m, err := c.fillNetworkDevice(k, m)
 		if err != nil {
 			return err
-		}
-
-		if m["type"] != "nic" || m["nictype"] != "bridged" {
-			continue
 		}
 
 		err = c.removeNetworkFilter(m["hwaddr"], m["parent"])
@@ -6739,6 +6776,10 @@ func (c *containerLXC) Daemon() *Daemon {
 
 func (c *containerLXC) Name() string {
 	return c.name
+}
+
+func (c *containerLXC) Description() string {
+	return c.description
 }
 
 func (c *containerLXC) Profiles() []string {

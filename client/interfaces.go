@@ -8,14 +8,22 @@ import (
 	"github.com/lxc/lxd/shared/api"
 )
 
+// The Server type represents a generic read-only server.
+type Server interface {
+	GetConnectionInfo() (info *ConnectionInfo, err error)
+}
+
 // The ImageServer type represents a read-only image server.
 type ImageServer interface {
+	Server
+
 	// Image handling functions
 	GetImages() (images []api.Image, err error)
 	GetImageFingerprints() (fingerprints []string, err error)
 
 	GetImage(fingerprint string) (image *api.Image, ETag string, err error)
 	GetImageFile(fingerprint string, req ImageFileRequest) (resp *ImageFileResponse, err error)
+	GetImageSecret(fingerprint string) (secret string, err error)
 
 	GetPrivateImage(fingerprint string, secret string) (image *api.Image, ETag string, err error)
 	GetPrivateImageFile(fingerprint string, secret string, req ImageFileRequest) (resp *ImageFileResponse, err error)
@@ -24,12 +32,12 @@ type ImageServer interface {
 	GetImageAliasNames() (names []string, err error)
 
 	GetImageAlias(name string) (alias *api.ImageAliasesEntry, ETag string, err error)
-
-	CopyImage(image api.Image, target ContainerServer, args *ImageCopyArgs) (op *Operation, err error)
 }
 
 // The ContainerServer type represents a full featured LXD server.
 type ContainerServer interface {
+	ImageServer
+
 	// Server functions
 	GetServer() (server *api.Server, ETag string, err error)
 	UpdateServer(server api.ServerPut, ETag string) (err error)
@@ -48,6 +56,7 @@ type ContainerServer interface {
 	GetContainers() (containers []api.Container, err error)
 	GetContainer(name string) (container *api.Container, ETag string, err error)
 	CreateContainer(container api.ContainersPost) (op *Operation, err error)
+	CreateContainerFromImage(source ImageServer, image api.Image, imgcontainer api.ContainersPost) (op *RemoteOperation, err error)
 	UpdateContainer(name string, container api.ContainerPut, ETag string) (op *Operation, err error)
 	RenameContainer(name string, container api.ContainerPost) (op *Operation, err error)
 	MigrateContainer(name string, container api.ContainerPost) (op *Operation, err error)
@@ -78,10 +87,11 @@ type ContainerServer interface {
 	GetEvents() (listener *EventListener, err error)
 
 	// Image functions
-	ImageServer
-	CreateImage(image api.ImagesPost) (op *Operation, err error)
+	CreateImage(image api.ImagesPost, args *ImageCreateArgs) (op *Operation, err error)
+	CopyImage(source ImageServer, image api.Image, args *ImageCopyArgs) (op *RemoteOperation, err error)
 	UpdateImage(fingerprint string, image api.ImagePut, ETag string) (err error)
 	DeleteImage(fingerprint string) (op *Operation, err error)
+	RefreshImage(fingerprint string) (op *Operation, err error)
 	CreateImageSecret(fingerprint string) (op *Operation, err error)
 	CreateImageAlias(alias api.ImageAliasesPost) (err error)
 	UpdateImageAlias(name string, alias api.ImageAliasesEntryPut, ETag string) (err error)
@@ -122,14 +132,21 @@ type ContainerServer interface {
 	// Storage volume functions ("storage" API extension)
 	GetStoragePoolVolumeNames(pool string) (names []string, err error)
 	GetStoragePoolVolumes(pool string) (volumes []api.StorageVolume, err error)
-	GetStoragePoolVolume(pool string, name string) (volume *api.StorageVolume, ETag string, err error)
+	GetStoragePoolVolume(pool string, volType string, name string) (volume *api.StorageVolume, ETag string, err error)
 	CreateStoragePoolVolume(pool string, volume api.StorageVolumesPost) (err error)
-	UpdateStoragePoolVolume(pool string, name string, volume api.StorageVolumePut, ETag string) (err error)
-	DeleteStoragePoolVolume(pool string, name string) (err error)
+	UpdateStoragePoolVolume(pool string, volType string, name string, volume api.StorageVolumePut, ETag string) (err error)
+	DeleteStoragePoolVolume(pool string, volType string, name string) (err error)
 
 	// Internal functions (for internal use)
 	RawQuery(method string, path string, data interface{}, queryETag string) (resp *api.Response, ETag string, err error)
 	RawWebsocket(path string) (conn *websocket.Conn, err error)
+}
+
+// The ConnectionInfo struct represents general information for a connection
+type ConnectionInfo struct {
+	Addresses   []string
+	Certificate string
+	Protocol    string
 }
 
 // The ProgressData struct represents new progress information on an operation
@@ -145,6 +162,24 @@ type ProgressData struct {
 
 	// Total number of bytes (for files)
 	TotalBytes int64
+}
+
+// The ImageCreateArgs struct is used for direct image upload
+type ImageCreateArgs struct {
+	// Reader for the meta file
+	MetaFile io.Reader
+
+	// Filename for the meta file
+	MetaName string
+
+	// Reader for the rootfs file
+	RootfsFile io.Reader
+
+	// Filename for the rootfs file
+	RootfsName string
+
+	// Progress handler (called with upload progress)
+	ProgressHandler func(progress ProgressData)
 }
 
 // The ImageFileRequest struct is used for an image download request
