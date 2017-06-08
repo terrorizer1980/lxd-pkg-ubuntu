@@ -1,3 +1,11 @@
+lxd (2.14-0ubuntu2) artful; urgency=medium
+
+  * Cherry-pick upstream fixes:
+    - 0001-storage-insert-driver-correctly.patch
+    - 0002-patches-fix-upgrade.patch
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 07 Jun 2017 23:04:16 -0600
+
 lxd (2.14-0ubuntu1) artful; urgency=medium
 
   * New upstream release (2.14):
