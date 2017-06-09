@@ -1,3 +1,12 @@
+lxd (2.14-0ubuntu3) artful; urgency=medium
+
+  * Cherry-pick upstream fixes (bad snapshot copies):
+    - 0003-zfs-fix-container-copy.patch
+    - 0004-storage-copy-move-bugfixes.patch
+    - 0005-test-add-more-copy-migration-tests.patch
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Fri, 09 Jun 2017 15:18:57 -0600
+
 lxd (2.14-0ubuntu2) artful; urgency=medium
 
   * Cherry-pick upstream fixes:
