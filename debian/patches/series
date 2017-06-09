@@ -1,2 +1,5 @@
 0001-storage-insert-driver-correctly.patch
 0002-patches-fix-upgrade.patch
+0003-zfs-fix-container-copy.patch
+0004-storage-copy-move-bugfixes.patch
+0005-test-add-more-copy-migration-tests.patch
