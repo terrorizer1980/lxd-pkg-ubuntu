@@ -1,3 +1,10 @@
+lxd (2.14-0ubuntu4) artful; urgency=medium
+
+  * Cherry-pick upstream fix (btrfs bind-mount):
+    - 0006-btrfs-Apply-default-flags-BEFORE-detecting-type.patch
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Thu, 15 Jun 2017 01:04:03 -0400
+
 lxd (2.14-0ubuntu3) artful; urgency=medium
 
   * Cherry-pick upstream fixes (bad snapshot copies):
