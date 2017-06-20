@@ -4,3 +4,4 @@
 0004-storage-copy-move-bugfixes.patch
 0005-test-add-more-copy-migration-tests.patch
 0006-btrfs-Apply-default-flags-BEFORE-detecting-type.patch
+0007-lxd-images-Initialize-image-info-in-direct-case.patch
