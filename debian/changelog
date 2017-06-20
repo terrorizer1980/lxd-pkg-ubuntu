@@ -1,3 +1,10 @@
+lxd (2.14-0ubuntu5) artful; urgency=medium
+
+  * Cherry-pick upstream fix (image direct download):
+    - 0007-lxd-images-Initialize-image-info-in-direct-case.patch
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Tue, 20 Jun 2017 13:28:36 -0400
+
 lxd (2.14-0ubuntu4) artful; urgency=medium
 
   * Cherry-pick upstream fix (btrfs bind-mount):
