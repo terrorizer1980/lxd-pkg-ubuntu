@@ -1,3 +1,12 @@
+lxd (2.15-0ubuntu2) artful; urgency=medium
+
+  * Cherry-pick upstream fixes:
+    - 0001-lxc-publish-Fix-fingerprint-printing.patch
+    - 0002-Fix-failure-to-launch-containers-with-random-names.patch
+    - 0003-client-Fix-handling-of-public-LXD-remote.patch
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 28 Jun 2017 17:40:28 -0400
+
 lxd (2.15-0ubuntu1) artful; urgency=medium
 
   * New upstream release (2.15):
