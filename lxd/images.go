@@ -715,40 +715,31 @@ func imagesPost(d *Daemon, r *http.Request) Response {
 
 	// Begin background operation
 	run := func(op *operation) error {
+		var err error
 		var info *api.Image
 
 		// Setup the cleanup function
 		defer cleanup(builddir, post)
 
-		if !imageUpload {
+		if imageUpload {
+			/* Processing image upload */
+			info, err = getImgPostInfo(d, r, builddir, post)
+		} else {
 			if req.Source.Type == "image" {
 				/* Processing image copy from remote */
 				info, err = imgPostRemoteInfo(d, req, op)
-				if err != nil {
-					return err
-				}
 			} else if req.Source.Type == "url" {
 				/* Processing image copy from URL */
 				info, err = imgPostURLInfo(d, req, op)
-				if err != nil {
-					return err
-				}
 			} else {
 				/* Processing image creation from container */
 				imagePublishLock.Lock()
 				info, err = imgPostContInfo(d, r, req, builddir)
-				if err != nil {
-					imagePublishLock.Unlock()
-					return err
-				}
 				imagePublishLock.Unlock()
 			}
-		} else {
-			/* Processing image upload */
-			info, err = getImgPostInfo(d, r, builddir, post)
-			if err != nil {
-				return err
-			}
+		}
+		if err != nil {
+			return err
 		}
 
 		// Apply any provided alias
@@ -1206,13 +1197,13 @@ func imageGet(d *Daemon, r *http.Request) Response {
 	public := !d.isTrustedClient(r)
 	secret := r.FormValue("secret")
 
-	if public == true && imageValidSecret(fingerprint, secret) == true {
-		public = false
-	}
-
-	info, response := doImageGet(d, fingerprint, public)
+	info, response := doImageGet(d, fingerprint, false)
 	if response != nil {
 		return response
+	}
+
+	if !info.Public && public && !imageValidSecret(info.Fingerprint, secret) {
+		return NotFound
 	}
 
 	etag := []interface{}{info.Public, info.AutoUpdate, info.Properties}
@@ -1338,7 +1329,7 @@ func aliasesPost(d *Daemon, r *http.Request) Response {
 
 	err = dbImageAliasAdd(d.db, req.Name, id, req.Description)
 	if err != nil {
-		return InternalError(err)
+		return SmartError(err)
 	}
 
 	return SyncResponseLocation(true, nil, fmt.Sprintf("/%s/images/aliases/%s", version.APIVersion, req.Name))
@@ -1526,13 +1517,13 @@ func imageExport(d *Daemon, r *http.Request) Response {
 	public := !d.isTrustedClient(r)
 	secret := r.FormValue("secret")
 
-	if public == true && imageValidSecret(fingerprint, secret) == true {
-		public = false
-	}
-
-	_, imgInfo, err := dbImageGet(d.db, fingerprint, public, false)
+	_, imgInfo, err := dbImageGet(d.db, fingerprint, false, false)
 	if err != nil {
 		return SmartError(err)
+	}
+
+	if !imgInfo.Public && public && !imageValidSecret(imgInfo.Fingerprint, secret) {
+		return NotFound
 	}
 
 	imagePath := shared.VarPath("images", imgInfo.Fingerprint)
@@ -1576,7 +1567,7 @@ func imageExport(d *Daemon, r *http.Request) Response {
 
 func imageSecret(d *Daemon, r *http.Request) Response {
 	fingerprint := mux.Vars(r)["fingerprint"]
-	_, _, err := dbImageGet(d.db, fingerprint, false, false)
+	_, imgInfo, err := dbImageGet(d.db, fingerprint, false, false)
 	if err != nil {
 		return SmartError(err)
 	}
@@ -1591,7 +1582,7 @@ func imageSecret(d *Daemon, r *http.Request) Response {
 	meta["secret"] = secret
 
 	resources := map[string][]string{}
-	resources["images"] = []string{fingerprint}
+	resources["images"] = []string{imgInfo.Fingerprint}
 
 	op, err := operationCreate(operationClassToken, resources, meta, nil, nil, nil)
 	if err != nil {

@@ -222,16 +222,9 @@ func (s *storageBtrfs) StoragePoolCreate() error {
 		return err1
 	}
 
-	// Enable quotas
-	output, err := shared.RunCommand(
-		"btrfs", "quota", "enable", poolMntPoint)
-	if err != nil && !runningInUserns {
-		return fmt.Errorf("Failed to enable quotas on BTRFS pool: %s", output)
-	}
-
 	// Create default subvolumes.
 	dummyDir := getContainerMountPoint(s.pool.Name, "")
-	err = btrfsSubVolumeCreate(dummyDir)
+	err := btrfsSubVolumeCreate(dummyDir)
 	if err != nil {
 		return fmt.Errorf("Could not create btrfs subvolume: %s", dummyDir)
 	}
@@ -361,7 +354,6 @@ func (s *storageBtrfs) StoragePoolMount() (bool, error) {
 		}
 		lxdStorageMapLock.Unlock()
 	}
-
 	defer removeLockFromMap()
 
 	// Check whether the mount poolMntPoint exits.
@@ -376,7 +368,7 @@ func (s *storageBtrfs) StoragePoolMount() (bool, error) {
 		return false, nil
 	}
 
-	mountFlags := uintptr(0)
+	mountFlags, mountOptions := lxdResolveMountoptions(s.getBtrfsMountOptions())
 	mountSource := source
 	isBlockDev := shared.IsBlockdevPath(source)
 	if filepath.IsAbs(source) {
@@ -398,7 +390,7 @@ func (s *storageBtrfs) StoragePoolMount() (bool, error) {
 			defer loopF.Close()
 		} else if !isBlockDev && cleanSource != poolMntPoint {
 			mountSource = source
-			mountFlags = syscall.MS_BIND
+			mountFlags |= syscall.MS_BIND
 		} else if !isBlockDev && cleanSource == poolMntPoint && s.d.BackingFs == "btrfs" {
 			return false, nil
 		}
@@ -419,14 +411,12 @@ func (s *storageBtrfs) StoragePoolMount() (bool, error) {
 			// detection task.
 			return false, nil
 		}
-
 	}
 
-	mountFlags, mountOptions := lxdResolveMountoptions(s.getBtrfsMountOptions())
 	mountFlags |= s.remount
 	err := syscall.Mount(mountSource, poolMntPoint, "btrfs", mountFlags, mountOptions)
 	if err != nil {
-		logger.Errorf("failed to mount BTRFS storage pool \"%s\" onto \"%s\" with mountoptions \"%s\": %s", mountSource, poolMntPoint, mountOptions, err)
+		logger.Errorf("Failed to mount BTRFS storage pool \"%s\" onto \"%s\" with mountoptions \"%s\": %s", mountSource, poolMntPoint, mountOptions, err)
 		return false, err
 	}
 
@@ -1070,7 +1060,17 @@ func (s *storageBtrfs) ContainerSetQuota(container container, size int64) error 
 
 	_, err := btrfsSubVolumeQGroup(subvol)
 	if err != nil {
-		return err
+		if err != NoSuchObjectError {
+			return err
+		}
+
+		// Enable quotas
+		poolMntPoint := getStoragePoolMountPoint(s.pool.Name)
+		output, err := shared.RunCommand(
+			"btrfs", "quota", "enable", poolMntPoint)
+		if err != nil && !runningInUserns {
+			return fmt.Errorf("Failed to enable quotas on BTRFS pool: %s", output)
+		}
 	}
 
 	output, err := shared.RunCommand(
@@ -1450,7 +1450,7 @@ func btrfsSubVolumeQGroup(subvol string) (string, error) {
 		"-f")
 
 	if err != nil {
-		return "", fmt.Errorf("BTRFS quotas not supported. Try enabling them with \"btrfs quota enable\"")
+		return "", NoSuchObjectError
 	}
 
 	var qgroup string
@@ -1767,7 +1767,7 @@ func (s *btrfsMigrationSourceDriver) send(conn *websocket.Conn, btrfsPath string
 	return err
 }
 
-func (s *btrfsMigrationSourceDriver) SendWhileRunning(conn *websocket.Conn, op *operation, bwlimit string) error {
+func (s *btrfsMigrationSourceDriver) SendWhileRunning(conn *websocket.Conn, op *operation, bwlimit string, containerOnly bool) error {
 	_, containerPool := s.container.Storage().GetContainerPoolInfo()
 	containerName := s.container.Name()
 	containersPath := getContainerMountPoint(containerPool, "")
@@ -1803,16 +1803,18 @@ func (s *btrfsMigrationSourceDriver) SendWhileRunning(conn *websocket.Conn, op *
 		return s.send(conn, migrationSendSnapshot, "", wrapper)
 	}
 
-	for i, snap := range s.snapshots {
-		prev := ""
-		if i > 0 {
-			prev = getSnapshotMountPoint(containerPool, s.snapshots[i-1].Name())
-		}
+	if !containerOnly {
+		for i, snap := range s.snapshots {
+			prev := ""
+			if i > 0 {
+				prev = getSnapshotMountPoint(containerPool, s.snapshots[i-1].Name())
+			}
 
-		snapMntPoint := getSnapshotMountPoint(containerPool, snap.Name())
-		wrapper := StorageProgressReader(op, "fs_progress", snap.Name())
-		if err := s.send(conn, snapMntPoint, prev, wrapper); err != nil {
-			return err
+			snapMntPoint := getSnapshotMountPoint(containerPool, snap.Name())
+			wrapper := StorageProgressReader(op, "fs_progress", snap.Name())
+			if err := s.send(conn, snapMntPoint, prev, wrapper); err != nil {
+				return err
+			}
 		}
 	}
 

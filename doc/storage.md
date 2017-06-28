@@ -5,30 +5,28 @@ Volume keys apply to any volume created in the pool unless the value is
 overridden on a per-volume basis.
 
 ## Storage pool configuration
-
-Key                             | Type      | Condition                         | Default                 | Description
-:--                             | :--       | :--                               | :--                     | :--
-size                            | string    | appropriate driver and source     | 0                       | Size of the storage pool in bytes (suffixes supported). (Currently valid for loop based pools and zfs.)
-source                          | string    | -                                 | -                       | Path to block device or loop file or filesystem entry
-btrfs.mount\_options            | string    | btrfs driver                      | user_subvol_rm_allowed  | Mount options for block devices
-lvm.thinpool\_name              | string    | lvm driver                        | LXDPool                 | Thin pool where images and containers are created.
-lvm.use\_thinpool               | bool      | lvm driver                        | true                    | Whether the storage pool uses a thinpool for logical volumes.
-lvm.vg\_name                    | string    | lvm driver                        | name of the pool        | Name of the volume group to create.
-rsync.bwlimit                   | string    | -                                 | 0 (no limit)            | Specifies the upper limit to be placed on the socket I/O whenever rsync has to be used to transfer storage entities.
-volume.block.filesystem         | string    | block based driver (lvm)          | ext4                    | Filesystem to use for new volumes
-volume.block.mount\_options     | string    | block based driver (lvm)          | discard                 | Mount options for block devices
-volume.size                     | string    | appropriate driver                | 0                       | Default volume size
-volume.zfs.remove\_snapshots    | bool      | zfs driver                        | false                   | Remove snapshots as needed
-volume.zfs.use\_refquota        | bool      | zfs driver                        | false                   | Use refquota instead of quota for space.
-zfs.clone\_copy                 | bool      | zfs driver                        | true                    | Whether to use ZFS lightweight clones rather than full dataset copies.
-zfs.pool\_name                  | string    | zfs driver                        | name of the pool        | Name of the zpool
+Key                             | Type      | Condition                         | Default                    | Description
+:--                             | :--       | :--                               | :--                        | :--
+size                            | string    | appropriate driver and source     | 0                          | Size of the storage pool in bytes (suffixes supported). (Currently valid for loop based pools and zfs.)
+source                          | string    | -                                 | -                          | Path to block device or loop file or filesystem entry
+btrfs.mount\_options            | string    | btrfs driver                      | user\_subvol\_rm\_allowed  | Mount options for block devices
+lvm.thinpool\_name              | string    | lvm driver                        | LXDPool                    | Thin pool where images and containers are created.
+lvm.use\_thinpool               | bool      | lvm driver                        | true                       | Whether the storage pool uses a thinpool for logical volumes.
+lvm.vg\_name                    | string    | lvm driver                        | name of the pool           | Name of the volume group to create.
+rsync.bwlimit                   | string    | -                                 | 0 (no limit)               | Specifies the upper limit to be placed on the socket I/O whenever rsync has to be used to transfer storage entities.
+volume.block.filesystem         | string    | block based driver (lvm)          | ext4                       | Filesystem to use for new volumes
+volume.block.mount\_options     | string    | block based driver (lvm)          | discard                    | Mount options for block devices
+volume.size                     | string    | appropriate driver                | 0                          | Default volume size
+volume.zfs.remove\_snapshots    | bool      | zfs driver                        | false                      | Remove snapshots as needed
+volume.zfs.use\_refquota        | bool      | zfs driver                        | false                      | Use refquota instead of quota for space.
+zfs.clone\_copy                 | bool      | zfs driver                        | true                       | Whether to use ZFS lightweight clones rather than full dataset copies.
+zfs.pool\_name                  | string    | zfs driver                        | name of the pool           | Name of the zpool
 
 Storage pool configuration keys can be set using the lxc tool with:
 
     lxc storage set [<remote>:]<pool> <key> <value>
 
 ## Storage volume configuration
-
 Key                     | Type      | Condition                 | Default                               | Description
 :--                     | :--       | :--                       | :--                                   | :--
 size                    | string    | appropriate driver        | same as volume.size                   | Size of the storage volume
@@ -112,6 +110,22 @@ The same can be done manually against any profile using (for the "default" profi
 lxc profile device add default root disk path=/ pool=default
 ```
 
+## I/O limits
+I/O limits in IOp/s or MB/s can be set on storage devices when attached to a container (see containers.md).
+
+Those are applied through the Linux "blkio" cgroup controller which makes it possible  
+to restrict I/O at the disk level (but nothing finer grained than that).
+
+Because those apply to a whole physical disk rather than a partition or path, the following restrictions apply:
+ - Limits will not apply to filesystems that are backed by virtual devices (e.g. device mapper).
+ - If a fileystem is backed by multiple block devices, each device will get the same limit.
+ - If the container is passed two disk devices that are each backed by the same disk,  
+   the limits of the two devices will be averaged.
+
+It's also worth noting that all I/O limits only apply to actual block device access,  
+so you will need to consider the filesystem's own overhead when setting limits.  
+This also means that access to cached data will not be affected by the limit.
+
 ## Notes and examples
 ### Directory
 
@@ -170,7 +184,7 @@ lxc storage create pool1 btrfs source=/dev/sdX
  - The filesystem used for the LVs is ext4 (can be configured to use xfs instead).
  - By default, all LVM storage pools use an LVM thinpool in which logical
    volumes for all LXD storage entities (images, containers, etc.) are created.
-   This behavior can be changed by setting "lvm.use_thinpool" to "false". In
+   This behavior can be changed by setting "lvm.use\_thinpool" to "false". In
    this case, LXD will use normal logical volumes for all non-container
    snapshot storage entities (images, containers etc.). This means most storage
    operations will need to fallback to rsyncing since non-thinpool logical
@@ -202,7 +216,7 @@ lxc storage create pool1 lvm source=/dev/sdX
  - Create a new pool called "pool1" using "/dev/sdX" with the LVM Volume Group called "my-pool".
 
 ```
-lxc storage create pool1 lvm source=/dev/sdX lvm.vg_name=my-pool
+lxc storage create pool1 lvm source=/dev/sdX lvm.vg\_name=my-pool
 ```
 
 ### ZFS
@@ -232,10 +246,14 @@ lxc storage create pool1 lvm source=/dev/sdX lvm.vg_name=my-pool
    a LXD zfs pool or dataset since LXD might delete them.
  - When quotas are used on a ZFS dataset LXD will set the ZFS "quota" property.
    In order to have LXD set the ZFS "refquota" property, either set
-   "zfs.use_refquota" to "true" for the given dataset or set
-   "volume.zfs.use_refquota" to true on the storage pool. The former option
+   "zfs.use\_refquota" to "true" for the given dataset or set
+   "volume.zfs.use\_refquota" to true on the storage pool. The former option
    will make LXD use refquota only for the given storage volume the latter will
    make LXD use refquota for all storage volumes in the storage pool.
+ - I/O quotas (IOps/MBs) are unlikely to affect ZFS filesystems very
+   much. That's because of ZFS being a port of a Solaris module (using SPL)
+   and not a native Linux filesystem using the Linux VFS API which is where
+   I/O limits are applied.
 
 #### The following commands can be used to create ZFS storage pools
 

@@ -462,7 +462,7 @@ func (s *storageZfs) ContainerMount(c container) (bool, error) {
 			// tracking. So ignore them for now, report back that
 			// the mount isn't ours and proceed.
 			logger.Warnf("ZFS returned EBUSY while \"%s\" is actually not a mountpoint.", containerPoolVolumeMntPoint)
-			return false, nil
+			return false, mounterr
 		}
 		ourMount = true
 	}
@@ -958,7 +958,7 @@ func (s *storageZfs) copyWithSnapshots(target container, source container, paren
 
 	zfsSendCmd := exec.Command("zfs", args...)
 	targetSnapshotDataset := fmt.Sprintf("%s/containers/%s@snapshot-%s", poolName, targetParentName, targetSnapOnlyName)
-	zfsRecvCmd := exec.Command("zfs", "receive", targetSnapshotDataset)
+	zfsRecvCmd := exec.Command("zfs", "receive", "-F", targetSnapshotDataset)
 
 	zfsRecvCmd.Stdin, _ = zfsSendCmd.StdoutPipe()
 	zfsRecvCmd.Stdout = os.Stdout
@@ -1019,8 +1019,9 @@ func (s *storageZfs) ContainerCopy(target container, source container, container
 			return err
 		}
 
+		prev := ""
+		prevSnapOnlyName := ""
 		for i, snap := range snapshots {
-			prev := ""
 			if i > 0 {
 				prev = snapshots[i-1].Name()
 			}
@@ -1031,6 +1032,7 @@ func (s *storageZfs) ContainerCopy(target container, source container, container
 			}
 
 			_, snapOnlyName, _ := containerGetParentAndSnapshotName(snap.Name())
+			prevSnapOnlyName = snapOnlyName
 			newSnapName := fmt.Sprintf("%s/%s", target.Name(), snapOnlyName)
 			targetSnapshot, err := containerLoadByName(s.d, newSnapName)
 			if err != nil {
@@ -1042,6 +1044,47 @@ func (s *storageZfs) ContainerCopy(target container, source container, container
 				return err
 			}
 		}
+
+		// send actual container
+		tmpSnapshotName := fmt.Sprintf("copy-send-%s", uuid.NewRandom().String())
+		err = s.zfsPoolVolumeSnapshotCreate(fmt.Sprintf("containers/%s", source.Name()), tmpSnapshotName)
+		if err != nil {
+			return err
+		}
+
+		poolName := s.getOnDiskPoolName()
+		currentSnapshotDataset := fmt.Sprintf("%s/containers/%s@%s", poolName, source.Name(), tmpSnapshotName)
+		args := []string{"send", currentSnapshotDataset}
+		if prevSnapOnlyName != "" {
+			parentSnapshotDataset := fmt.Sprintf("%s/containers/%s@snapshot-%s", poolName, source.Name(), prevSnapOnlyName)
+			args = append(args, "-i", parentSnapshotDataset)
+		}
+
+		zfsSendCmd := exec.Command("zfs", args...)
+		targetSnapshotDataset := fmt.Sprintf("%s/containers/%s@%s", poolName, target.Name(), tmpSnapshotName)
+		zfsRecvCmd := exec.Command("zfs", "receive", "-F", targetSnapshotDataset)
+
+		zfsRecvCmd.Stdin, _ = zfsSendCmd.StdoutPipe()
+		zfsRecvCmd.Stdout = os.Stdout
+		zfsRecvCmd.Stderr = os.Stderr
+
+		err = zfsRecvCmd.Start()
+		if err != nil {
+			return err
+		}
+
+		err = zfsSendCmd.Run()
+		if err != nil {
+			return err
+		}
+
+		err = zfsRecvCmd.Wait()
+		if err != nil {
+			return err
+		}
+
+		s.zfsPoolVolumeSnapshotDestroy(fmt.Sprintf("containers/%s", source.Name()), tmpSnapshotName)
+		s.zfsPoolVolumeSnapshotDestroy(fmt.Sprintf("containers/%s", target.Name()), tmpSnapshotName)
 
 		fs := fmt.Sprintf("containers/%s", target.Name())
 		err = s.zfsPoolVolumeSet(fs, "mountpoint", targetContainerMountPoint)
@@ -1778,6 +1821,12 @@ func (s *storageZfs) zfsPoolCreate() error {
 						logger.Errorf("zfs create failed: %s.", output)
 						return fmt.Errorf("Failed to create ZFS filesystem: %s", output)
 					}
+				} else {
+					msg, err := zfsPoolVolumeSet(vdev, "mountpoint", "none")
+					if err != nil {
+						logger.Errorf("zfs set failed to unset dataset mountpoint %s", msg)
+						return err
+					}
 				}
 			} else {
 				err := s.zfsPoolCheck(vdev)
@@ -1793,81 +1842,90 @@ func (s *storageZfs) zfsPoolCreate() error {
 				if len(subvols) > 0 {
 					return fmt.Errorf("Provided ZFS pool (or dataset) isn't empty")
 				}
+
+				msg, err := zfsPoolVolumeSet(vdev, "mountpoint", "none")
+				if err != nil {
+					logger.Errorf("zfs set failed to unset dataset mountpoint %s", msg)
+					return err
+				}
 			}
 		}
 	}
 
 	// Create default dummy datasets to avoid zfs races during container
 	// creation.
-	err := s.zfsPoolVolumeCreate("containers")
+	poolName := s.getOnDiskPoolName()
+	dataset := fmt.Sprintf("%s/containers", poolName)
+	msg, err := zfsPoolVolumeCreate(dataset, "mountpoint=none")
 	if err != nil {
-		return err
-	}
-
-	err = s.zfsPoolVolumeSet("containers", "mountpoint", "none")
-	if err != nil {
+		logger.Errorf("failed to create containers dataset: %s", msg)
 		return err
 	}
 
 	fixperms := shared.VarPath("storage-pools", s.pool.Name, "containers")
+	err = os.MkdirAll(fixperms, containersDirMode)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
 	err = os.Chmod(fixperms, containersDirMode)
 	if err != nil {
 		logger.Warnf("failed to chmod \"%s\" to \"0%s\": %s", fixperms, strconv.FormatInt(int64(containersDirMode), 8), err)
 	}
 
-	err = s.zfsPoolVolumeCreate("images")
+	dataset = fmt.Sprintf("%s/images", poolName)
+	msg, err = zfsPoolVolumeCreate(dataset, "mountpoint=none")
 	if err != nil {
-		return err
-	}
-
-	err = s.zfsPoolVolumeSet("images", "mountpoint", "none")
-	if err != nil {
+		logger.Errorf("failed to create images dataset: %s", msg)
 		return err
 	}
 
 	fixperms = shared.VarPath("storage-pools", s.pool.Name, "images")
+	err = os.MkdirAll(fixperms, imagesDirMode)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	err = os.Chmod(fixperms, imagesDirMode)
 	if err != nil {
 		logger.Warnf("failed to chmod \"%s\" to \"0%s\": %s", fixperms, strconv.FormatInt(int64(imagesDirMode), 8), err)
 	}
 
-	err = s.zfsPoolVolumeCreate("custom")
+	dataset = fmt.Sprintf("%s/custom", poolName)
+	msg, err = zfsPoolVolumeCreate(dataset, "mountpoint=none")
 	if err != nil {
-		return err
-	}
-
-	err = s.zfsPoolVolumeSet("custom", "mountpoint", "none")
-	if err != nil {
+		logger.Errorf("failed to create custom dataset: %s", msg)
 		return err
 	}
 
 	fixperms = shared.VarPath("storage-pools", s.pool.Name, "custom")
+	err = os.MkdirAll(fixperms, customDirMode)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	err = os.Chmod(fixperms, customDirMode)
 	if err != nil {
 		logger.Warnf("failed to chmod \"%s\" to \"0%s\": %s", fixperms, strconv.FormatInt(int64(customDirMode), 8), err)
 	}
 
-	err = s.zfsPoolVolumeCreate("deleted")
+	dataset = fmt.Sprintf("%s/deleted", poolName)
+	msg, err = zfsPoolVolumeCreate(dataset, "mountpoint=none")
 	if err != nil {
+		logger.Errorf("failed to create deleted dataset: %s", msg)
 		return err
 	}
 
-	err = s.zfsPoolVolumeSet("deleted", "mountpoint", "none")
+	dataset = fmt.Sprintf("%s/snapshots", poolName)
+	msg, err = zfsPoolVolumeCreate(dataset, "mountpoint=none")
 	if err != nil {
-		return err
-	}
-
-	err = s.zfsPoolVolumeCreate("snapshots")
-	if err != nil {
-		return err
-	}
-
-	err = s.zfsPoolVolumeSet("snapshots", "mountpoint", "none")
-	if err != nil {
+		logger.Errorf("failed to create snapshots dataset: %s", msg)
 		return err
 	}
 
 	fixperms = shared.VarPath("storage-pools", s.pool.Name, "snapshots")
+	err = os.MkdirAll(fixperms, snapshotsDirMode)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	err = os.Chmod(fixperms, snapshotsDirMode)
 	if err != nil {
 		logger.Warnf("failed to chmod \"%s\" to \"0%s\": %s", fixperms, strconv.FormatInt(int64(snapshotsDirMode), 8), err)
@@ -2467,7 +2525,7 @@ func (s *zfsMigrationSourceDriver) send(conn *websocket.Conn, zfsName string, zf
 	return err
 }
 
-func (s *zfsMigrationSourceDriver) SendWhileRunning(conn *websocket.Conn, op *operation, bwlimit string) error {
+func (s *zfsMigrationSourceDriver) SendWhileRunning(conn *websocket.Conn, op *operation, bwlimit string, containerOnly bool) error {
 	if s.container.IsSnapshot() {
 		_, snapOnlyName, _ := containerGetParentAndSnapshotName(s.container.Name())
 		snapshotName := fmt.Sprintf("snapshot-%s", snapOnlyName)
@@ -2476,18 +2534,19 @@ func (s *zfsMigrationSourceDriver) SendWhileRunning(conn *websocket.Conn, op *op
 	}
 
 	lastSnap := ""
+	if !containerOnly {
+		for i, snap := range s.zfsSnapshotNames {
+			prev := ""
+			if i > 0 {
+				prev = s.zfsSnapshotNames[i-1]
+			}
 
-	for i, snap := range s.zfsSnapshotNames {
-		prev := ""
-		if i > 0 {
-			prev = s.zfsSnapshotNames[i-1]
-		}
+			lastSnap = snap
 
-		lastSnap = snap
-
-		wrapper := StorageProgressReader(op, "fs_progress", snap)
-		if err := s.send(conn, snap, prev, wrapper); err != nil {
-			return err
+			wrapper := StorageProgressReader(op, "fs_progress", snap)
+			if err := s.send(conn, snap, prev, wrapper); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -2548,6 +2607,10 @@ func (s *storageZfs) MigrationSource(ct container, containerOnly bool) (Migratio
 		snapshots:        []container{},
 		zfsSnapshotNames: []string{},
 		zfs:              s,
+	}
+
+	if containerOnly {
+		return &driver, nil
 	}
 
 	/* List all the snapshots in order of reverse creation. The idea here

@@ -607,17 +607,17 @@ func (s *storageDir) ContainerSnapshotCreate(snapshotContainer container, source
 		err := sourceContainer.Freeze()
 		if err != nil {
 			logger.Errorf("Trying to freeze and rsync again failed.")
-			return nil
+			goto onSuccess
 		}
+		defer sourceContainer.Unfreeze()
 
 		err = rsync(snapshotContainer, sourceContainerMntPoint, targetContainerMntPoint, bwlimit)
 		if err != nil {
 			return err
 		}
-
-		defer sourceContainer.Unfreeze()
 	}
 
+onSuccess:
 	// Check if the symlink
 	// ${LXD_DIR}/snapshots/<source_container_name> -> ${POOL_PATH}/snapshots/<source_container_name>
 	// exists and if not create it.
