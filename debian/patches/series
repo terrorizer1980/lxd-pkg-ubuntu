@@ -1,0 +1,3 @@
+0001-lxc-publish-Fix-fingerprint-printing.patch
+0002-Fix-failure-to-launch-containers-with-random-names.patch
+0003-client-Fix-handling-of-public-LXD-remote.patch
