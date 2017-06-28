@@ -149,7 +149,12 @@ func lxcValidConfig(rawLxc string) error {
 			return fmt.Errorf("Setting lxc.ephemeral is not allowed")
 		}
 
-		if strings.HasPrefix(key, "lxc.network.") {
+		networkKeyPrefix := "lxc.net."
+		if !lxc.VersionAtLeast(2, 1, 0) {
+			networkKeyPrefix = "lxc.network."
+		}
+
+		if strings.HasPrefix(key, networkKeyPrefix) {
 			fields := strings.Split(key, ".")
 			if len(fields) == 4 && shared.StringInSlice(fields[3], []string{"ipv4", "ipv6"}) {
 				continue
@@ -159,7 +164,7 @@ func lxcValidConfig(rawLxc string) error {
 				continue
 			}
 
-			return fmt.Errorf("Only interface-specific ipv4/ipv6 lxc.network keys are allowed")
+			return fmt.Errorf("Only interface-specific ipv4/ipv6 %s keys are allowed", networkKeyPrefix)
 		}
 	}
 
@@ -1187,6 +1192,7 @@ func (c *containerLXC) initLXC() error {
 	}
 
 	// Setup devices
+	networkidx := 0
 	for _, k := range c.expandedDevices.DeviceNames() {
 		m := c.expandedDevices[k]
 		if shared.StringInSlice(m["type"], []string{"unix-char", "unix-block"}) {
@@ -1216,41 +1222,46 @@ func (c *containerLXC) initLXC() error {
 				return err
 			}
 
+			networkKeyPrefix := "lxc.net"
+			if !lxc.VersionAtLeast(2, 1, 0) {
+				networkKeyPrefix = "lxc.network"
+			}
+
 			// Interface type specific configuration
 			if shared.StringInSlice(m["nictype"], []string{"bridged", "p2p"}) {
-				err = lxcSetConfigItem(cc, "lxc.network.type", "veth")
+				err = lxcSetConfigItem(cc, fmt.Sprintf("%s.%d.type", networkKeyPrefix, networkidx), "veth")
 				if err != nil {
 					return err
 				}
 			} else if m["nictype"] == "physical" {
-				err = lxcSetConfigItem(cc, "lxc.network.type", "phys")
+				err = lxcSetConfigItem(cc, fmt.Sprintf("%s.%d.type", networkKeyPrefix, networkidx), "phys")
 				if err != nil {
 					return err
 				}
 			} else if m["nictype"] == "macvlan" {
-				err = lxcSetConfigItem(cc, "lxc.network.type", "macvlan")
+				err = lxcSetConfigItem(cc, fmt.Sprintf("%s.%d.type", networkKeyPrefix, networkidx), "macvlan")
 				if err != nil {
 					return err
 				}
 
-				err = lxcSetConfigItem(cc, "lxc.network.macvlan.mode", "bridge")
+				err = lxcSetConfigItem(cc, fmt.Sprintf("%s.%d.macvlan.mode", networkKeyPrefix, networkidx), "bridge")
 				if err != nil {
 					return err
 				}
 			}
 
-			err = lxcSetConfigItem(cc, "lxc.network.flags", "up")
+			err = lxcSetConfigItem(cc, fmt.Sprintf("%s.%d.flags", networkKeyPrefix, networkidx), "up")
 			if err != nil {
 				return err
 			}
 
 			if shared.StringInSlice(m["nictype"], []string{"bridged", "physical"}) {
-				err = lxcSetConfigItem(cc, "lxc.network.link", m["parent"])
+				err = lxcSetConfigItem(cc, fmt.Sprintf("%s.%d.link", networkKeyPrefix, networkidx), m["parent"])
 				if err != nil {
 					return err
 				}
 			} else if m["nictype"] == "macvlan" {
-				err = lxcSetConfigItem(cc, "lxc.network.link", networkGetHostDevice(m["parent"], m["vlan"]))
+				err = lxcSetConfigItem(cc, fmt.Sprintf("%s.%d.link", networkKeyPrefix, networkidx), networkGetHostDevice(m["parent"], m["vlan"]))
 				if err != nil {
 					return err
 				}
@@ -1266,7 +1277,7 @@ func (c *containerLXC) initLXC() error {
 			}
 
 			if vethName != "" {
-				err = lxcSetConfigItem(cc, "lxc.network.veth.pair", vethName)
+				err = lxcSetConfigItem(cc, fmt.Sprintf("%s.%d.veth.pair", networkKeyPrefix, networkidx), vethName)
 				if err != nil {
 					return err
 				}
@@ -1274,7 +1285,7 @@ func (c *containerLXC) initLXC() error {
 
 			// MAC address
 			if m["hwaddr"] != "" {
-				err = lxcSetConfigItem(cc, "lxc.network.hwaddr", m["hwaddr"])
+				err = lxcSetConfigItem(cc, fmt.Sprintf("%s.%d.hwaddr", networkKeyPrefix, networkidx), m["hwaddr"])
 				if err != nil {
 					return err
 				}
@@ -1282,7 +1293,7 @@ func (c *containerLXC) initLXC() error {
 
 			// MTU
 			if m["mtu"] != "" {
-				err = lxcSetConfigItem(cc, "lxc.network.mtu", m["mtu"])
+				err = lxcSetConfigItem(cc, fmt.Sprintf("%s.%d.mtu", networkKeyPrefix, networkidx), m["mtu"])
 				if err != nil {
 					return err
 				}
@@ -1290,11 +1301,13 @@ func (c *containerLXC) initLXC() error {
 
 			// Name
 			if m["name"] != "" {
-				err = lxcSetConfigItem(cc, "lxc.network.name", m["name"])
+				err = lxcSetConfigItem(cc, fmt.Sprintf("%s.%d.name", networkKeyPrefix, networkidx), m["name"])
 				if err != nil {
 					return err
 				}
 			}
+			// bump network index
+			networkidx++
 		} else if m["type"] == "disk" {
 			// Prepare all the paths
 			srcPath := m["source"]
@@ -1775,20 +1788,25 @@ func (c *containerLXC) startCommon() (string, error) {
 					return "", err
 				}
 
+				networkKeyPrefix := "lxc.net"
+				if !lxc.VersionAtLeast(2, 1, 0) {
+					networkKeyPrefix = "lxc.network"
+				}
+
 				// Read device name from config
 				vethName := ""
-				for i := 0; i < len(c.c.ConfigItem("lxc.network")); i++ {
-					val := c.c.ConfigItem(fmt.Sprintf("lxc.network.%d.hwaddr", i))
+				for i := 0; i < len(c.c.ConfigItem(networkKeyPrefix)); i++ {
+					val := c.c.ConfigItem(fmt.Sprintf("%s.%d.hwaddr", networkKeyPrefix, i))
 					if len(val) == 0 || val[0] != m["hwaddr"] {
 						continue
 					}
 
-					val = c.c.ConfigItem(fmt.Sprintf("lxc.network.%d.link", i))
+					val = c.c.ConfigItem(fmt.Sprintf("%s.%d.link", networkKeyPrefix, i))
 					if len(val) == 0 || val[0] != m["parent"] {
 						continue
 					}
 
-					val = c.c.ConfigItem(fmt.Sprintf("lxc.network.%d.veth.pair", i))
+					val = c.c.ConfigItem(fmt.Sprintf("%s.%d.veth.pair", networkKeyPrefix, i))
 					if len(val) == 0 {
 						continue
 					}
@@ -2026,7 +2044,7 @@ func (c *containerLXC) OnStart() error {
 	c.fromHook = true
 
 	// Start the storage for this container
-	ourStart, err := c.StorageStart()
+	ourStart, err := c.StorageStartSensitive()
 	if err != nil {
 		return err
 	}
@@ -5177,6 +5195,23 @@ func (c *containerLXC) StorageStart() (bool, error) {
 		return false, err
 	}
 
+	isOurOperation, err := c.StorageStartSensitive()
+	// Remove this as soon as zfs is fixed
+	if c.storage.GetStorageType() == storageTypeZfs && err == syscall.EBUSY {
+		return isOurOperation, nil
+	}
+
+	return isOurOperation, err
+}
+
+// Kill this function as soon as zfs is fixed.
+func (c *containerLXC) StorageStartSensitive() (bool, error) {
+	// Initialize storage interface for the container.
+	err := c.initStorage()
+	if err != nil {
+		return false, err
+	}
+
 	isOurOperation := false
 	if c.IsSnapshot() {
 		isOurOperation, err = c.storage.ContainerSnapshotStart(c)
@@ -6121,7 +6156,7 @@ func (c *containerLXC) createDiskDevice(name string, m types.Device) (string, er
 		// Initialize a new storage interface and check if the
 		// pool/volume is mounted. If it is not, mount it.
 		volumeType, _ := storagePoolVolumeTypeNameToType(volumeTypeName)
-		s, err := storagePoolVolumeInit(c.daemon, m["pool"], volumeName, volumeType)
+		s, err := storagePoolVolumeAttachInit(c.daemon, m["pool"], volumeName, volumeType, c)
 		if err != nil && !isOptional {
 			return "", fmt.Errorf("Failed to initialize storage volume \"%s\" of type \"%s\" on storage pool \"%s\": %s.",
 				volumeName,
@@ -6263,6 +6298,11 @@ func (c *containerLXC) removeDiskDevice(name string, m types.Device) error {
 	tgtPath := strings.TrimPrefix(m["path"], "/")
 	devName := fmt.Sprintf("disk.%s", strings.Replace(tgtPath, "/", "-", -1))
 	devPath := filepath.Join(c.DevicesPath(), devName)
+
+	// The dsk device doesn't exist and cannot be mounted.
+	if !shared.PathExists(devPath) {
+		return nil
+	}
 
 	// Remove the bind-mount from the container
 	if c.FileExists(tgtPath) == nil {
@@ -6519,13 +6559,18 @@ func (c *containerLXC) setNetworkPriority() error {
 
 func (c *containerLXC) getHostInterface(name string) string {
 	if c.IsRunning() {
-		for i := 0; i < len(c.c.ConfigItem("lxc.network")); i++ {
-			nicName := c.c.RunningConfigItem(fmt.Sprintf("lxc.network.%d.name", i))[0]
+		networkKeyPrefix := "lxc.net"
+		if !lxc.VersionAtLeast(2, 1, 0) {
+			networkKeyPrefix = "lxc.network"
+		}
+
+		for i := 0; i < len(c.c.ConfigItem(networkKeyPrefix)); i++ {
+			nicName := c.c.RunningConfigItem(fmt.Sprintf("%s.%d.name", networkKeyPrefix, i))[0]
 			if nicName != name {
 				continue
 			}
 
-			veth := c.c.RunningConfigItem(fmt.Sprintf("lxc.network.%d.veth.pair", i))[0]
+			veth := c.c.RunningConfigItem(fmt.Sprintf("%s.%d.veth.pair", networkKeyPrefix, i))[0]
 			if veth != "" {
 				return veth
 			}
@@ -6740,17 +6785,7 @@ func (c *containerLXC) idmapsetFromConfig(k string) (*shared.IdmapSet, error) {
 		return c.IdmapSet()
 	}
 
-	lastIdmap := new(shared.IdmapSet)
-	err := json.Unmarshal([]byte(lastJsonIdmap), &lastIdmap.Idmap)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(lastIdmap.Idmap) == 0 {
-		return nil, nil
-	}
-
-	return lastIdmap, nil
+	return idmapsetFromString(lastJsonIdmap)
 }
 
 func (c *containerLXC) NextIdmapSet() (*shared.IdmapSet, error) {

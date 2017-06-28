@@ -12,8 +12,9 @@ import (
 	"sync"
 
 	"github.com/olekukonko/tablewriter"
+	"gopkg.in/yaml.v2"
 
-	"github.com/lxc/lxd"
+	"github.com/lxc/lxd/lxc/config"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/gnuflag"
@@ -29,12 +30,6 @@ type column struct {
 
 type columnData func(api.Container, *api.ContainerState, []api.ContainerSnapshot) string
 
-const (
-	listFormatTable = "table"
-	listFormatJSON  = "json"
-	listFormatCSV   = "csv"
-)
-
 type listCmd struct {
 	columnsRaw string
 	fast       bool
@@ -47,7 +42,7 @@ func (c *listCmd) showByDefault() bool {
 
 func (c *listCmd) usage() string {
 	return i18n.G(
-		`Usage: lxc list [<remote>:] [filters] [--format table|json|csv] [-c <columns>] [--fast]
+		`Usage: lxc list [<remote>:] [filters] [--format csv|json|table|yaml] [-c <columns>] [--fast]
 
 List the existing containers.
 
@@ -132,7 +127,7 @@ lxc list -c ns,user.comment:comment
 func (c *listCmd) flags() {
 	gnuflag.StringVar(&c.columnsRaw, "c", "ns46tS", i18n.G("Columns"))
 	gnuflag.StringVar(&c.columnsRaw, "columns", "ns46tS", i18n.G("Columns"))
-	gnuflag.StringVar(&c.format, "format", "table", i18n.G("Format (table|json|csv)"))
+	gnuflag.StringVar(&c.format, "format", "table", i18n.G("Format (csv|json|table|yaml)"))
 	gnuflag.BoolVar(&c.fast, "fast", false, i18n.G("Fast mode (same as --columns=nsacPt)"))
 }
 
@@ -219,7 +214,7 @@ func (c *listCmd) shouldShow(filters []string, state *api.Container) bool {
 	return true
 }
 
-func (c *listCmd) listContainers(d *lxd.Client, cinfos []api.Container, filters []string, columns []column) error {
+func (c *listCmd) listContainers(conf *config.Config, remote string, cinfos []api.Container, filters []string, columns []column) error {
 	headers := []string{}
 	for _, column := range columns {
 		headers = append(headers, column.Name)
@@ -243,7 +238,7 @@ func (c *listCmd) listContainers(d *lxd.Client, cinfos []api.Container, filters 
 	for i := 0; i < threads; i++ {
 		cStatesWg.Add(1)
 		go func() {
-			d, err := lxd.NewClient(&d.Config, d.Name)
+			d, err := conf.GetContainerServer(remote)
 			if err != nil {
 				cStatesWg.Done()
 				return
@@ -255,7 +250,7 @@ func (c *listCmd) listContainers(d *lxd.Client, cinfos []api.Container, filters 
 					break
 				}
 
-				state, err := d.ContainerState(cName)
+				state, _, err := d.GetContainerState(cName)
 				if err != nil {
 					continue
 				}
@@ -269,7 +264,7 @@ func (c *listCmd) listContainers(d *lxd.Client, cinfos []api.Container, filters 
 
 		cSnapshotsWg.Add(1)
 		go func() {
-			d, err := lxd.NewClient(&d.Config, d.Name)
+			d, err := conf.GetContainerServer(remote)
 			if err != nil {
 				cSnapshotsWg.Done()
 				return
@@ -281,7 +276,7 @@ func (c *listCmd) listContainers(d *lxd.Client, cinfos []api.Container, filters 
 					break
 				}
 
-				snaps, err := d.ListSnapshots(cName)
+				snaps, err := d.GetContainerSnapshots(cName)
 				if err != nil {
 					continue
 				}
@@ -378,6 +373,19 @@ func (c *listCmd) listContainers(d *lxd.Client, cinfos []api.Container, filters 
 		if err != nil {
 			return err
 		}
+	case listFormatYAML:
+		data := make([]listContainerItem, len(cinfos))
+		for i := range cinfos {
+			data[i].Container = &cinfos[i]
+			data[i].State = cStates[cinfos[i].Name]
+			data[i].Snapshots = cSnapshots[cinfos[i].Name]
+		}
+
+		out, err := yaml.Marshal(data)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%s", out)
 	default:
 		return fmt.Errorf("invalid format %q", c.format)
 	}
@@ -392,7 +400,7 @@ type listContainerItem struct {
 	Snapshots []api.ContainerSnapshot `json:"snapshots" yaml:"snapshots"`
 }
 
-func (c *listCmd) run(config *lxd.Config, args []string) error {
+func (c *listCmd) run(conf *config.Config, args []string) error {
 	var remote string
 	name := ""
 
@@ -401,26 +409,31 @@ func (c *listCmd) run(config *lxd.Config, args []string) error {
 	if len(args) != 0 {
 		filters = args
 		if strings.Contains(args[0], ":") && !strings.Contains(args[0], "=") {
-			remote, name = config.ParseRemoteAndContainer(args[0])
+			var err error
+			remote, name, err = conf.ParseRemote(args[0])
+			if err != nil {
+				return err
+			}
+
 			filters = args[1:]
 		} else if !strings.Contains(args[0], "=") {
-			remote = config.DefaultRemote
+			remote = conf.DefaultRemote
 			name = args[0]
 		}
 	}
 	filters = append(filters, name)
 
 	if remote == "" {
-		remote = config.DefaultRemote
+		remote = conf.DefaultRemote
 	}
 
-	d, err := lxd.NewClient(config, remote)
+	d, err := conf.GetContainerServer(remote)
 	if err != nil {
 		return err
 	}
 
 	var cts []api.Container
-	ctslist, err := d.ListContainers()
+	ctslist, err := d.GetContainers()
 	if err != nil {
 		return err
 	}
@@ -438,7 +451,7 @@ func (c *listCmd) run(config *lxd.Config, args []string) error {
 		return err
 	}
 
-	return c.listContainers(d, cts, filters, columns)
+	return c.listContainers(conf, remote, cts, filters, columns)
 }
 
 func (c *listCmd) parseColumns() ([]column, error) {

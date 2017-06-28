@@ -113,6 +113,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unsafe"
 
@@ -157,6 +158,7 @@ type SQLiteDriver struct {
 
 // SQLiteConn implement sql.Conn.
 type SQLiteConn struct {
+	dbMu        sync.Mutex
 	db          *C.sqlite3
 	loc         *time.Location
 	txlock      string
@@ -679,9 +681,20 @@ func (c *SQLiteConn) Close() error {
 		return c.lastError()
 	}
 	deleteHandles(c)
+	c.dbMu.Lock()
 	c.db = nil
+	c.dbMu.Unlock()
 	runtime.SetFinalizer(c, nil)
 	return nil
+}
+
+func (c *SQLiteConn) dbConnOpen() bool {
+	if c == nil {
+		return false
+	}
+	c.dbMu.Lock()
+	defer c.dbMu.Unlock()
+	return c.db != nil
 }
 
 // Prepare the query string. Return a new statement.
@@ -713,7 +726,7 @@ func (s *SQLiteStmt) Close() error {
 		return nil
 	}
 	s.closed = true
-	if s.c == nil || s.c.db == nil {
+	if !s.c.dbConnOpen() {
 		return errors.New("sqlite statement with already closed database connection")
 	}
 	rv := C.sqlite3_finalize(s.s)
@@ -733,6 +746,8 @@ type bindArg struct {
 	n int
 	v driver.Value
 }
+
+var placeHolder = []byte{0}
 
 func (s *SQLiteStmt) bind(args []namedValue) error {
 	rv := C.sqlite3_reset(s.s)
@@ -755,8 +770,7 @@ func (s *SQLiteStmt) bind(args []namedValue) error {
 			rv = C.sqlite3_bind_null(s.s, n)
 		case string:
 			if len(v) == 0 {
-				b := []byte{0}
-				rv = C._sqlite3_bind_text(s.s, n, (*C.char)(unsafe.Pointer(&b[0])), C.int(0))
+				rv = C._sqlite3_bind_text(s.s, n, (*C.char)(unsafe.Pointer(&placeHolder[0])), C.int(0))
 			} else {
 				b := []byte(v)
 				rv = C._sqlite3_bind_text(s.s, n, (*C.char)(unsafe.Pointer(&b[0])), C.int(len(b)))
@@ -773,10 +787,9 @@ func (s *SQLiteStmt) bind(args []namedValue) error {
 			rv = C.sqlite3_bind_double(s.s, n, C.double(v))
 		case []byte:
 			if len(v) == 0 {
-				rv = C._sqlite3_bind_blob(s.s, n, nil, 0)
-			} else {
-				rv = C._sqlite3_bind_blob(s.s, n, unsafe.Pointer(&v[0]), C.int(len(v)))
+				v = placeHolder
 			}
+			rv = C._sqlite3_bind_blob(s.s, n, unsafe.Pointer(&v[0]), C.int(len(v)))
 		case time.Time:
 			b := []byte(v.Format(SQLiteTimestampFormats[0]))
 			rv = C._sqlite3_bind_text(s.s, n, (*C.char)(unsafe.Pointer(&b[0])), C.int(len(b)))

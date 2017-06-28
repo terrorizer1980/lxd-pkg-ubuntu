@@ -1794,7 +1794,6 @@ func updatePoolPropertyForAllObjects(d *Daemon, poolName string, allcontainers [
 		k, _, _ = containerGetRootDiskDevice(localDevices)
 		if k != "" {
 			localDevices[k]["pool"] = poolName
-			args.Devices = localDevices
 		} else {
 			rootDev := map[string]string{}
 			rootDev["type"] = "disk"
@@ -1815,6 +1814,7 @@ func updatePoolPropertyForAllObjects(d *Daemon, poolName string, allcontainers [
 
 			localDevices[rootDevName] = rootDev
 		}
+		args.Devices = localDevices
 
 		err = c.Update(args, false)
 		if err != nil {

@@ -6,6 +6,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/lxc/lxd/shared/api"
+	"github.com/lxc/lxd/shared/cancel"
 )
 
 // The Server type represents a generic read-only server.
@@ -57,6 +58,7 @@ type ContainerServer interface {
 	GetContainer(name string) (container *api.Container, ETag string, err error)
 	CreateContainer(container api.ContainersPost) (op *Operation, err error)
 	CreateContainerFromImage(source ImageServer, image api.Image, imgcontainer api.ContainersPost) (op *RemoteOperation, err error)
+	CopyContainer(source ContainerServer, container api.Container, args *ContainerCopyArgs) (op *RemoteOperation, err error)
 	UpdateContainer(name string, container api.ContainerPut, ETag string) (op *Operation, err error)
 	RenameContainer(name string, container api.ContainerPost) (op *Operation, err error)
 	MigrateContainer(name string, container api.ContainerPost) (op *Operation, err error)
@@ -72,6 +74,7 @@ type ContainerServer interface {
 	GetContainerSnapshots(containerName string) (snapshots []api.ContainerSnapshot, err error)
 	GetContainerSnapshot(containerName string, name string) (snapshot *api.ContainerSnapshot, ETag string, err error)
 	CreateContainerSnapshot(containerName string, snapshot api.ContainerSnapshotsPost) (op *Operation, err error)
+	CopyContainerSnapshot(source ContainerServer, snapshot api.ContainerSnapshot, args *ContainerSnapshotCopyArgs) (op *RemoteOperation, err error)
 	RenameContainerSnapshot(containerName string, name string, container api.ContainerSnapshotPost) (op *Operation, err error)
 	MigrateContainerSnapshot(containerName string, name string, container api.ContainerSnapshotPost) (op *Operation, err error)
 	DeleteContainerSnapshot(containerName string, name string) (op *Operation, err error)
@@ -192,6 +195,9 @@ type ImageFileRequest struct {
 
 	// Progress handler (called whenever some progress is made)
 	ProgressHandler func(progress ProgressData)
+
+	// A canceler that can be used to interrupt some part of the image download request
+	Canceler *cancel.Canceler
 }
 
 // The ImageFileResponse struct is used as the response for image downloads
@@ -224,6 +230,24 @@ type ImageCopyArgs struct {
 	Public bool
 }
 
+// The ContainerCopyArgs struct is used to pass additional options during container copy
+type ContainerCopyArgs struct {
+	// If set, the container will be renamed on copy
+	Name string
+
+	// If set, the container running state will be transferred (live migration)
+	Live bool
+
+	// If set, only the container will copied, its snapshots won't
+	ContainerOnly bool
+}
+
+// The ContainerSnapshotCopyArgs struct is used to pass additional options during container copy
+type ContainerSnapshotCopyArgs struct {
+	// If set, the container will be renamed on copy
+	Name string
+}
+
 // The ContainerExecArgs struct is used to pass additional options during container exec
 type ContainerExecArgs struct {
 	// Standard input
@@ -237,6 +261,9 @@ type ContainerExecArgs struct {
 
 	// Control message handler (window resize, signals, ...)
 	Control func(conn *websocket.Conn)
+
+	// Channel that will be closed when all data operations are done
+	DataDone chan bool
 }
 
 // The ContainerFileArgs struct is used to pass the various options for a container file upload
