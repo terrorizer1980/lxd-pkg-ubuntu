@@ -1,0 +1,26 @@
+From bf183e7b510b80883d629fec6c3d743688b3e4a8 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Thu, 29 Jun 2017 13:00:41 -0400
+Subject: cancel: Fix crash if no canceler is setup
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ shared/cancel/canceler.go | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/shared/cancel/canceler.go b/shared/cancel/canceler.go
+index 7e868519..79f60dbf 100644
+--- a/shared/cancel/canceler.go
++++ b/shared/cancel/canceler.go
+@@ -34,7 +34,7 @@ func CancelableDownload(c *Canceler, client *http.Client, req *http.Request) (*h
+ 		}
+ 
+ 		select {
+-		case <-c.chCancel:
++		case <-chCancel:
+ 			if transport, ok := client.Transport.(*http.Transport); ok {
+ 				transport.CancelRequest(req)
+ 			}
