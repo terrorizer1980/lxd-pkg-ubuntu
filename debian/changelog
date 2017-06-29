@@ -1,3 +1,10 @@
+lxd (2.15-0ubuntu3) artful; urgency=medium
+
+  * Cherry-pick upstream fixes:
+    - 0004-cancel-Fix-crash-if-no-canceler-is-setup.patch
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Thu, 29 Jun 2017 14:22:51 -0400
+
 lxd (2.15-0ubuntu2) artful; urgency=medium
 
   * Cherry-pick upstream fixes:
