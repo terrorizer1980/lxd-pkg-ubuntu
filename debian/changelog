@@ -1,3 +1,10 @@
+lxd (2.15-0ubuntu4) artful; urgency=medium
+
+  * Cherry-pick upstream fixes:
+    - 0005-client-Commonize-error-handling.patch
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Fri, 30 Jun 2017 18:13:02 -0400
+
 lxd (2.15-0ubuntu3) artful; urgency=medium
 
   * Cherry-pick upstream fixes:
