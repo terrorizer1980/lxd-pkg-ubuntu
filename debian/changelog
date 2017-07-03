@@ -1,3 +1,18 @@
+lxd (2.15-0ubuntu5) artful; urgency=medium
+
+  * Cherry-pick upstream fixes:
+    - 0006-lxc-config-Removal-of-multiple-devices-at-once.patch (LP: #1690299)
+    - 0007-network-Don-t-fail-on-non-process-PIDs.patch (LP: #1698712)
+    - 0008-config-Try-to-be-clever-about-in-snapshots.patch (LP: #1694855)
+    - 0009-Fix-readonly-mode-for-directory-mount.patch
+    - 0010-client-Fix-race-condition-in-operation-handling.patch
+    - 0011-import-keep-volatile-keys.patch
+    - 0012-import-remove-last-dependency-on-symlink.patch
+    - 0013-Better-handle-errors-in-memory-reporting.patch
+    - 0014-client-Don-t-live-migrate-stopped-containers.patch
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Mon, 03 Jul 2017 18:19:16 -0400
+
 lxd (2.15-0ubuntu4) artful; urgency=medium
 
   * Cherry-pick upstream fixes:
