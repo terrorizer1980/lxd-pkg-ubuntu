@@ -1,0 +1,31 @@
+From a620f239bb72452a3d9470e0939b44cfe78a737e Mon Sep 17 00:00:00 2001
+From: Denis Pynkin <denis.pynkin@collabora.com>
+Date: Sat, 1 Jul 2017 20:32:06 +0300
+Subject: Fix readonly mode for directory mount
+
+Added remount of binded mounts with readonly mode if flag "readonly" is "true".
+
+Signed-off-by: Denis Pynkin <denis.pynkin@collabora.com>
+---
+ lxd/devices.go | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/lxd/devices.go b/lxd/devices.go
+index b15eedef..7d65bfa1 100644
+--- a/lxd/devices.go
++++ b/lxd/devices.go
+@@ -909,6 +909,14 @@ func deviceMountDisk(srcPath string, dstPath string, readonly bool, recursive bo
+ 		return fmt.Errorf("Unable to mount %s at %s: %s", srcPath, dstPath, err)
+ 	}
+ 
++	// Remount bind mounts in readonly mode if requested
++	if readonly == true && flags&syscall.MS_BIND == syscall.MS_BIND {
++		flags = syscall.MS_RDONLY | syscall.MS_BIND | syscall.MS_REMOUNT
++		if err = syscall.Mount("", dstPath, fstype, uintptr(flags), ""); err != nil {
++			return fmt.Errorf("Unable to mount %s in readonly mode: %s", dstPath, err)
++		}
++	}
++
+ 	flags = syscall.MS_REC | syscall.MS_SLAVE
+ 	if err = syscall.Mount("", dstPath, "", uintptr(flags), ""); err != nil {
+ 		return fmt.Errorf("unable to make mount %s private: %s", dstPath, err)

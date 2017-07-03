@@ -1,0 +1,51 @@
+From d3858167d11b09d8c7ffb5511f0feec373adf05a Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Sun, 2 Jul 2017 02:23:09 -0400
+Subject: client: Fix race condition in operation handling
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ client/operations.go | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/client/operations.go b/client/operations.go
+index 7bf1cbd6..59ece5fd 100644
+--- a/client/operations.go
++++ b/client/operations.go
+@@ -175,6 +175,10 @@ func (op *Operation) setupListener() error {
+ 	})
+ 	if err != nil {
+ 		op.listener.Disconnect()
++		op.listener = nil
++		close(op.chActive)
++		close(chReady)
++
+ 		return err
+ 	}
+ 
+@@ -182,14 +186,22 @@ func (op *Operation) setupListener() error {
+ 	err = op.Refresh()
+ 	if err != nil {
+ 		op.listener.Disconnect()
++		op.listener = nil
++		close(op.chActive)
++		close(chReady)
++
+ 		return err
+ 	}
+ 
+ 	// Check if not done already
+ 	if op.StatusCode.IsFinal() {
+ 		op.listener.Disconnect()
++		op.listener = nil
+ 		close(op.chActive)
+ 
++		op.handlerReady = true
++		close(chReady)
++
+ 		if op.Err != "" {
+ 			return fmt.Errorf(op.Err)
+ 		}
