@@ -1,3 +1,10 @@
+lxd (2.15-0ubuntu6) artful; urgency=medium
+
+  * Cherry-pick upstream fixes:
+    - 0015-Fix-file-push-pull-with-names-containing-spaces.patch
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 05 Jul 2017 14:51:44 -0400
+
 lxd (2.15-0ubuntu5) artful; urgency=medium
 
   * Cherry-pick upstream fixes:
