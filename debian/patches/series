@@ -12,3 +12,4 @@
 0012-import-remove-last-dependency-on-symlink.patch
 0013-Better-handle-errors-in-memory-reporting.patch
 0014-client-Don-t-live-migrate-stopped-containers.patch
+0015-Fix-file-push-pull-with-names-containing-spaces.patch
