@@ -36,11 +36,11 @@ func (r *ProtocolLXD) GetConnectionInfo() (*ConnectionInfo, error) {
 	info.Protocol = "lxd"
 
 	urls := []string{}
-	if len(r.server.Environment.Addresses) > 0 {
-		if r.httpProtocol == "https" {
-			urls = append(urls, r.httpHost)
-		}
+	if r.httpProtocol == "https" {
+		urls = append(urls, r.httpHost)
+	}
 
+	if len(r.server.Environment.Addresses) > 0 {
 		for _, addr := range r.server.Environment.Addresses {
 			url := fmt.Sprintf("https://%s", addr)
 			if !shared.StringInSlice(url, urls) {
@@ -51,6 +51,15 @@ func (r *ProtocolLXD) GetConnectionInfo() (*ConnectionInfo, error) {
 	info.Addresses = urls
 
 	return &info, nil
+}
+
+// GetHTTPClient returns the http client used for the connection. This can be used to set custom http options.
+func (r *ProtocolLXD) GetHTTPClient() (*http.Client, error) {
+	if r.http == nil {
+		return nil, fmt.Errorf("HTTP client isn't set, bad connection")
+	}
+
+	return r.http, nil
 }
 
 // RawQuery allows directly querying the LXD API
@@ -74,6 +83,32 @@ func (r *ProtocolLXD) RawWebsocket(path string) (*websocket.Conn, error) {
 }
 
 // Internal functions
+func (r *ProtocolLXD) parseResponse(resp *http.Response) (*api.Response, string, error) {
+	// Get the ETag
+	etag := resp.Header.Get("ETag")
+
+	// Decode the response
+	decoder := json.NewDecoder(resp.Body)
+	response := api.Response{}
+
+	err := decoder.Decode(&response)
+	if err != nil {
+		// Check the return value for a cleaner error
+		if resp.StatusCode != http.StatusOK {
+			return nil, "", fmt.Errorf("Failed to fetch %s: %s", resp.Request.URL.String(), resp.Status)
+		}
+
+		return nil, "", err
+	}
+
+	// Handle errors
+	if response.Type == api.ErrorResponse {
+		return nil, "", fmt.Errorf(response.Error)
+	}
+
+	return &response, etag, nil
+}
+
 func (r *ProtocolLXD) rawQuery(method string, url string, data interface{}, ETag string) (*api.Response, string, error) {
 	var req *http.Request
 	var err error
@@ -130,29 +165,7 @@ func (r *ProtocolLXD) rawQuery(method string, url string, data interface{}, ETag
 	}
 	defer resp.Body.Close()
 
-	// Get the ETag
-	etag := resp.Header.Get("ETag")
-
-	// Decode the response
-	decoder := json.NewDecoder(resp.Body)
-	response := api.Response{}
-
-	err = decoder.Decode(&response)
-	if err != nil {
-		// Check the return value for a cleaner error
-		if resp.StatusCode != http.StatusOK {
-			return nil, "", fmt.Errorf("Failed to fetch %s: %s", url, resp.Status)
-		}
-
-		return nil, "", err
-	}
-
-	// Handle errors
-	if response.Type == api.ErrorResponse {
-		return nil, "", fmt.Errorf(response.Error)
-	}
-
-	return &response, etag, nil
+	return r.parseResponse(resp)
 }
 
 func (r *ProtocolLXD) query(method string, path string, data interface{}, ETag string) (*api.Response, string, error) {

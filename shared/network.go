@@ -230,6 +230,51 @@ func WebsocketRecvStream(w io.Writer, conn *websocket.Conn) chan bool {
 	return ch
 }
 
+func WebsocketProxy(source *websocket.Conn, target *websocket.Conn) chan bool {
+	forward := func(in *websocket.Conn, out *websocket.Conn, ch chan bool) {
+		for {
+			mt, r, err := in.NextReader()
+			if err != nil {
+				break
+			}
+
+			w, err := out.NextWriter(mt)
+			if err != nil {
+				break
+			}
+
+			_, err = io.Copy(w, r)
+			w.Close()
+			if err != nil {
+				break
+			}
+		}
+
+		ch <- true
+	}
+
+	chSend := make(chan bool)
+	go forward(source, target, chSend)
+
+	chRecv := make(chan bool)
+	go forward(target, source, chRecv)
+
+	ch := make(chan bool)
+	go func() {
+		select {
+		case <-chSend:
+		case <-chRecv:
+		}
+
+		source.Close()
+		target.Close()
+
+		ch <- true
+	}()
+
+	return ch
+}
+
 func defaultReader(conn *websocket.Conn, r io.ReadCloser, readDone chan<- bool) {
 	/* For now, we don't need to adjust buffer sizes in
 	* WebsocketMirror, since it's used for interactive things like

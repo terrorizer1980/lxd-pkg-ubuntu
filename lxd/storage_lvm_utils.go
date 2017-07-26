@@ -11,7 +11,7 @@ import (
 	"github.com/lxc/lxd/shared/logger"
 )
 
-func (s *storageLvm) lvExtend(c container, lvPath string, lvSize int64, fsType string, fsMntPoint string) error {
+func (s *storageLvm) lvExtend(lvPath string, lvSize int64, fsType string, fsMntPoint string, volumeType int, data interface{}) error {
 	lvSizeString := shared.GetByteSizeString(lvSize, 0)
 	msg, err := shared.TryRunCommand(
 		"lvextend",
@@ -23,12 +23,24 @@ func (s *storageLvm) lvExtend(c container, lvPath string, lvSize int64, fsType s
 		return fmt.Errorf("could not extend LV \"%s\": %s", lvPath, msg)
 	}
 
-	ourMount, err := c.StorageStart()
-	if err != nil {
-		return err
-	}
-	if ourMount {
-		defer c.StorageStop()
+	switch volumeType {
+	case storagePoolVolumeTypeContainer:
+		c := data.(container)
+		ourMount, err := c.StorageStart()
+		if err != nil {
+			return err
+		}
+		if ourMount {
+			defer c.StorageStop()
+		}
+	case storagePoolVolumeTypeCustom:
+		ourMount, err := s.StoragePoolVolumeMount()
+		if err != nil {
+			return err
+		}
+		if ourMount {
+			defer s.StoragePoolVolumeUmount()
+		}
 	}
 
 	switch fsType {
@@ -47,7 +59,7 @@ func (s *storageLvm) lvExtend(c container, lvPath string, lvSize int64, fsType s
 	return nil
 }
 
-func (s *storageLvm) lvReduce(c container, lvPath string, lvSize int64, fsType string, fsMntPoint string) error {
+func (s *storageLvm) lvReduce(lvPath string, lvSize int64, fsType string, fsMntPoint string, volumeType int, data interface{}) error {
 	var err error
 	var msg string
 
@@ -58,12 +70,24 @@ func (s *storageLvm) lvReduce(c container, lvPath string, lvSize int64, fsType s
 		return fmt.Errorf("xfs filesystems cannot be shrunk: dump, mkfs, and restore are required")
 	default:
 		// default = ext4
-		ourUmount, err := c.StorageStop()
-		if err != nil {
-			return err
-		}
-		if !ourUmount {
-			defer c.StorageStart()
+		switch volumeType {
+		case storagePoolVolumeTypeContainer:
+			c := data.(container)
+			ourMount, err := c.StorageStop()
+			if err != nil {
+				return err
+			}
+			if !ourMount {
+				defer c.StorageStart()
+			}
+		case storagePoolVolumeTypeCustom:
+			ourMount, err := s.StoragePoolVolumeUmount()
+			if err != nil {
+				return err
+			}
+			if !ourMount {
+				defer s.StoragePoolVolumeMount()
+			}
 		}
 
 		msg, err = shared.TryRunCommand("e2fsck", "-f", "-y", lvPath)
@@ -77,10 +101,10 @@ func (s *storageLvm) lvReduce(c container, lvPath string, lvSize int64, fsType s
 		ext4LvSizeString := strconv.FormatInt(kbSize, 10)
 		ext4LvSizeString += "K"
 		msg, err = shared.TryRunCommand("resize2fs", lvPath, ext4LvSizeString)
-	}
-	if err != nil {
-		logger.Errorf("could not reduce underlying %s filesystem for LV \"%s\": %s", fsType, lvPath, msg)
-		return fmt.Errorf("could not reduce underlying %s filesystem for LV \"%s\": %s", fsType, lvPath, msg)
+		if err != nil {
+			logger.Errorf("could not reduce underlying %s filesystem for LV \"%s\": %s", fsType, lvPath, msg)
+			return fmt.Errorf("could not reduce underlying %s filesystem for LV \"%s\": %s", fsType, lvPath, msg)
+		}
 	}
 
 	msg, err = shared.TryRunCommand(
@@ -414,25 +438,42 @@ func (s *storageLvm) copyContainer(target container, source container) error {
 }
 
 func (s *storageLvm) containerCreateFromImageLv(c container, fp string) error {
+	containerName := c.Name()
+
 	err := s.ContainerCreate(c)
 	if err != nil {
+		logger.Errorf(`Failed to create non-thinpool LVM storage `+
+			`volume for container "%s" on storage pool "%s": %s`,
+			containerName, s.pool.Name, err)
 		return err
 	}
+	logger.Debugf(`Created non-thinpool LVM storage volume for container `+
+		`"%s" on storage pool "%s"`, containerName, s.pool.Name)
 
-	containerName := c.Name()
 	containerPath := c.Path()
 	_, err = s.ContainerMount(c)
 	if err != nil {
+		logger.Errorf(`Failed to mount non-thinpool LVM storage `+
+			`volume for container "%s" on storage pool "%s": %s`,
+			containerName, s.pool.Name, err)
 		return err
 	}
+	logger.Debugf(`Mounted non-thinpool LVM storage volume for container `+
+		`"%s" on storage pool "%s"`, containerName, s.pool.Name)
 
 	imagePath := shared.VarPath("images", fp)
-	poolName := s.getOnDiskPoolName()
-	containerMntPoint := getContainerMountPoint(poolName, containerName)
+	containerMntPoint := getContainerMountPoint(s.pool.Name, containerName)
 	err = unpackImage(s.d, imagePath, containerMntPoint, storageTypeLvm)
 	if err != nil {
+		logger.Errorf(`Failed to unpack image "%s" into non-thinpool `+
+			`LVM storage volume "%s" for container "%s" on `+
+			`storage pool "%s": %s`, imagePath, containerMntPoint,
+			containerName, s.pool.Name, err)
 		return err
 	}
+	logger.Debugf(`Unpacked image "%s" into non-thinpool LVM storage `+
+		`volume "%s" for container "%s" on storage pool "%s"`,
+		imagePath, containerMntPoint, containerName, s.pool.Name)
 
 	s.ContainerUmount(containerName, containerPath)
 
@@ -522,13 +563,17 @@ func storageLVActivate(lvmVolumePath string) error {
 }
 
 func storagePVExists(pvName string) (bool, error) {
-	err := exec.Command("pvs", "--noheadings", "-o", "lv_attr", pvName).Run()
+	_, err := shared.RunCommand("pvs", "--noheadings", "-o", "lv_attr", pvName)
 	if err != nil {
-		if exitError, ok := err.(*exec.ExitError); ok {
-			waitStatus := exitError.Sys().(syscall.WaitStatus)
-			if waitStatus.ExitStatus() == 5 {
-				// physical volume not found
-				return false, nil
+		runErr, ok := err.(shared.RunError)
+		if ok {
+			exitError, ok := runErr.Err.(*exec.ExitError)
+			if ok {
+				waitStatus := exitError.Sys().(syscall.WaitStatus)
+				if waitStatus.ExitStatus() == 5 {
+					// physical volume not found
+					return false, nil
+				}
 			}
 		}
 		return false, fmt.Errorf("error checking for physical volume \"%s\"", pvName)
@@ -538,15 +583,20 @@ func storagePVExists(pvName string) (bool, error) {
 }
 
 func storageVGExists(vgName string) (bool, error) {
-	err := exec.Command("vgs", "--noheadings", "-o", "lv_attr", vgName).Run()
+	_, err := shared.RunCommand("vgs", "--noheadings", "-o", "lv_attr", vgName)
 	if err != nil {
-		if exitError, ok := err.(*exec.ExitError); ok {
-			waitStatus := exitError.Sys().(syscall.WaitStatus)
-			if waitStatus.ExitStatus() == 5 {
-				// volume group not found
-				return false, nil
+		runErr, ok := err.(shared.RunError)
+		if ok {
+			exitError, ok := runErr.Err.(*exec.ExitError)
+			if ok {
+				waitStatus := exitError.Sys().(syscall.WaitStatus)
+				if waitStatus.ExitStatus() == 5 {
+					// volume group not found
+					return false, nil
+				}
 			}
 		}
+
 		return false, fmt.Errorf("error checking for volume group \"%s\"", vgName)
 	}
 
@@ -554,15 +604,20 @@ func storageVGExists(vgName string) (bool, error) {
 }
 
 func storageLVExists(lvName string) (bool, error) {
-	err := exec.Command("lvs", "--noheadings", "-o", "lv_attr", lvName).Run()
+	_, err := shared.RunCommand("lvs", "--noheadings", "-o", "lv_attr", lvName)
 	if err != nil {
-		if exitError, ok := err.(*exec.ExitError); ok {
-			waitStatus := exitError.Sys().(syscall.WaitStatus)
-			if waitStatus.ExitStatus() == 5 {
-				// logical volume not found
-				return false, nil
+		runErr, ok := err.(shared.RunError)
+		if ok {
+			exitError, ok := runErr.Err.(*exec.ExitError)
+			if ok {
+				waitStatus := exitError.Sys().(syscall.WaitStatus)
+				if waitStatus.ExitStatus() == 5 {
+					// logical volume not found
+					return false, nil
+				}
 			}
 		}
+
 		return false, fmt.Errorf("error checking for logical volume \"%s\"", lvName)
 	}
 
@@ -588,15 +643,20 @@ func lvmGetLVSize(lvPath string) (string, error) {
 }
 
 func storageLVMThinpoolExists(vgName string, poolName string) (bool, error) {
-	output, err := exec.Command("vgs", "--noheadings", "-o", "lv_attr", fmt.Sprintf("%s/%s", vgName, poolName)).Output()
+	output, err := shared.RunCommand("vgs", "--noheadings", "-o", "lv_attr", fmt.Sprintf("%s/%s", vgName, poolName))
 	if err != nil {
-		if exitError, ok := err.(*exec.ExitError); ok {
-			waitStatus := exitError.Sys().(syscall.WaitStatus)
-			if waitStatus.ExitStatus() == 5 {
-				// pool LV was not found
-				return false, nil
+		runErr, ok := err.(shared.RunError)
+		if ok {
+			exitError, ok := runErr.Err.(*exec.ExitError)
+			if ok {
+				waitStatus := exitError.Sys().(syscall.WaitStatus)
+				if waitStatus.ExitStatus() == 5 {
+					// pool LV was not found
+					return false, nil
+				}
 			}
 		}
+
 		return false, fmt.Errorf("error checking for pool \"%s\"", poolName)
 	}
 	// Found LV named poolname, check type:

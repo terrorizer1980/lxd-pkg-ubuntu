@@ -42,6 +42,7 @@ raw.apparmor                         | blob      | -             | yes          
 raw.lxc                              | blob      | -             | no            | -                                    | Raw LXC configuration to be appended to the generated one
 raw.seccomp                          | blob      | -             | no            | container\_syscall\_filtering        | Raw Seccomp configuration
 raw.idmap                            | blob      | -             | no            | id\_map                              | Raw idmap configuration (e.g. "both 1000 1000")
+security.idmap.base                  | integer   | -             | no            | id\_map\_base                        | The base host ID to use for the allocation (overrides auto-detection)
 security.idmap.isolated              | boolean   | false         | no            | id\_map                              | Use an idmap for this container that is unique among containers with isolated set.
 security.idmap.size                  | integer   | -             | no            | id\_map                              | The size of the idmap to use
 security.nesting                     | boolean   | false         | yes           | -                                    | Support running lxd (nested) inside the container
@@ -135,13 +136,15 @@ or to a profile with:
 ## Device types
 LXD supports the following device types:
 
-ID (database)   | Name          | Description
-:--             | :--           | :--
-0               | none          | Inheritance blocker
-1               | nic           | Network interface
-2               | disk          | Mountpoint inside the container
-3               | unix-char     | Unix character device
-4               | unix-block    | Unix block device
+ID (database)   | Name                              | Description
+:--             | :--                               | :--
+0               | [none](#type-none)                | Inheritance blocker
+1               | [nic](#type-nic)                  | Network interface
+2               | [disk](#type-disk)                | Mountpoint inside the container
+3               | [unix-char](#type-unix-char)      | Unix character device
+4               | [unix-block](#type-unix-block)    | Unix block device
+5               | [usb](#type-usb)                  | USB device
+6               | [gpu](#type-gpu)                  | GPU device
 
 ### Type: none
 A none type device doesn't have any property and doesn't create anything inside the container.
@@ -160,21 +163,21 @@ LXD supports different kind of network devices:
 
 Different network interface types have different additional properties, the current list is:
 
-Key                     | Type      | Default           | Required  | Used by                       | API extension | Description
-:--                     | :--       | :--               | :--       | :--                           | :--           | :--
-nictype                 | string    | -                 | yes       | all                           | -             | The device type, one of "physical", "bridged", "macvlan" or "p2p"
-limits.ingress          | string    | -                 | no        | bridged, p2p                  | -             | I/O limit in bit/s (supports kbit, Mbit, Gbit suffixes)
-limits.egress           | string    | -                 | no        | bridged, p2p                  | -             | I/O limit in bit/s (supports kbit, Mbit, Gbit suffixes)
-limits.max              | string    | -                 | no        | bridged, p2p                  | -             | Same as modifying both limits.read and limits.write
-name                    | string    | kernel assigned   | no        | all                           | -             | The name of the interface inside the container
-host\_name              | string    | randomly assigned | no        | bridged, p2p, macvlan         | -             | The name of the interface inside the host
-hwaddr                  | string    | randomly assigned | no        | all                           | -             | The MAC address of the new interface
-mtu                     | integer   | parent MTU        | no        | all                           | -             | The MTU of the new interface
-parent                  | string    | -                 | yes       | physical, bridged, macvlan    | -             | The name of the host device or bridge
-vlan                    | integer   | -                 | no        | macvlan                       | network\_vlan | The VLAN ID to attach to
-ipv4.address            | string    | -                 | no        | bridged                       | network       | An IPv4 address to assign to the container through DHCP
-ipv6.address            | string    | -                 | no        | bridged                       | network       | An IPv6 address to assign to the container through DHCP
-security.mac\_filtering | boolean   | false             | no        | bridged                       | network       | Prevent the container from spoofing another's MAC address
+Key                     | Type      | Default           | Required  | Used by                       | API extension                          | Description
+:--                     | :--       | :--               | :--       | :--                           | :--                                    | :--
+nictype                 | string    | -                 | yes       | all                           | -                                      | The device type, one of "physical", "bridged", "macvlan" or "p2p"
+limits.ingress          | string    | -                 | no        | bridged, p2p                  | -                                      | I/O limit in bit/s (supports kbit, Mbit, Gbit suffixes)
+limits.egress           | string    | -                 | no        | bridged, p2p                  | -                                      | I/O limit in bit/s (supports kbit, Mbit, Gbit suffixes)
+limits.max              | string    | -                 | no        | bridged, p2p                  | -                                      | Same as modifying both limits.read and limits.write
+name                    | string    | kernel assigned   | no        | all                           | -                                      | The name of the interface inside the container
+host\_name              | string    | randomly assigned | no        | bridged, p2p, macvlan         | -                                      | The name of the interface inside the host
+hwaddr                  | string    | randomly assigned | no        | all                           | -                                      | The MAC address of the new interface
+mtu                     | integer   | parent MTU        | no        | all                           | -                                      | The MTU of the new interface
+parent                  | string    | -                 | yes       | physical, bridged, macvlan    | -                                      | The name of the host device or bridge
+vlan                    | integer   | -                 | no        | macvlan, physical             | network\_vlan, network\_vlan\_physical | The VLAN ID to attach to
+ipv4.address            | string    | -                 | no        | bridged                       | network                                | An IPv4 address to assign to the container through DHCP
+ipv6.address            | string    | -                 | no        | bridged                       | network                                | An IPv6 address to assign to the container through DHCP
+security.mac\_filtering | boolean   | false             | no        | bridged                       | network                                | Prevent the container from spoofing another's MAC address
 
 #### bridged or macvlan for connection to physical network
 The "bridged" and "macvlan" interface types can both be used to connect

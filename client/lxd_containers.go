@@ -203,13 +203,32 @@ func (r *ProtocolLXD) CopyContainer(source ContainerServer, container api.Contai
 		ContainerPut: container.Writable(),
 	}
 	req.Source.BaseImage = container.Config["volatile.base_image"]
-	req.Source.Live = container.StatusCode == api.Running
 
 	// Process the copy arguments
 	if args != nil {
 		// Sanity checks
-		if args.ContainerOnly && !r.HasExtension("container_only_migration") {
-			return nil, fmt.Errorf("The server is missing the required \"container_only_migration\" API extension")
+		if args.ContainerOnly {
+			if !r.HasExtension("container_only_migration") {
+				return nil, fmt.Errorf("The target server is missing the required \"container_only_migration\" API extension")
+			}
+
+			if !source.HasExtension("container_only_migration") {
+				return nil, fmt.Errorf("The source server is missing the required \"container_only_migration\" API extension")
+			}
+		}
+
+		if shared.StringInSlice(args.Mode, []string{"push", "relay"}) {
+			if !r.HasExtension("container_push") {
+				return nil, fmt.Errorf("The target server is missing the required \"container_push\" API extension")
+			}
+
+			if !source.HasExtension("container_push") {
+				return nil, fmt.Errorf("The source server is missing the required \"container_push\" API extension")
+			}
+		}
+
+		if args.Mode == "push" && !source.HasExtension("container_push_target") {
+			return nil, fmt.Errorf("The source server is missing the required \"container_push_target\" API extension")
 		}
 
 		// Allow overriding the target name
@@ -219,6 +238,10 @@ func (r *ProtocolLXD) CopyContainer(source ContainerServer, container api.Contai
 
 		req.Source.Live = args.Live
 		req.Source.ContainerOnly = args.ContainerOnly
+	}
+
+	if req.Source.Live {
+		req.Source.Live = container.StatusCode == api.Running
 	}
 
 	// Optimization for the local copy case
@@ -247,17 +270,49 @@ func (r *ProtocolLXD) CopyContainer(source ContainerServer, container api.Contai
 		return &rop, nil
 	}
 
-	// Get source server connection information
-	info, err := source.GetConnectionInfo()
-	if err != nil {
-		return nil, err
-	}
-
-	// Get a source operation
+	// Source request
 	sourceReq := api.ContainerPost{
 		Migration:     true,
 		Live:          req.Source.Live,
 		ContainerOnly: req.Source.ContainerOnly,
+	}
+
+	// Push mode migration
+	if args != nil && args.Mode == "push" {
+		// Get target server connection information
+		info, err := r.GetConnectionInfo()
+		if err != nil {
+			return nil, err
+		}
+
+		// Create the container
+		req.Source.Type = "migration"
+		req.Source.Mode = "push"
+
+		op, err := r.CreateContainer(req)
+		if err != nil {
+			return nil, err
+		}
+
+		targetSecrets := map[string]string{}
+		for k, v := range op.Metadata {
+			targetSecrets[k] = v.(string)
+		}
+
+		// Prepare the source request
+		target := api.ContainerPostTarget{}
+		target.Operation = op.ID
+		target.Websockets = targetSecrets
+		target.Certificate = info.Certificate
+		sourceReq.Target = &target
+
+		return r.tryMigrateContainer(source, container.Name, sourceReq, info.Addresses)
+	}
+
+	// Get source server connection information
+	info, err := source.GetConnectionInfo()
+	if err != nil {
+		return nil, err
 	}
 
 	op, err := source.MigrateContainer(container.Name, sourceReq)
@@ -270,7 +325,46 @@ func (r *ProtocolLXD) CopyContainer(source ContainerServer, container api.Contai
 		sourceSecrets[k] = v.(string)
 	}
 
-	// Migration source fields
+	// Relay mode migration
+	if args != nil && args.Mode == "relay" {
+		// Push copy source fields
+		req.Source.Type = "migration"
+		req.Source.Mode = "push"
+
+		// Start the process
+		targetOp, err := r.CreateContainer(req)
+		if err != nil {
+			return nil, err
+		}
+
+		// Extract the websockets
+		targetSecrets := map[string]string{}
+		for k, v := range targetOp.Metadata {
+			targetSecrets[k] = v.(string)
+		}
+
+		// Launch the relay
+		err = r.proxyMigration(targetOp, targetSecrets, source, op, sourceSecrets)
+		if err != nil {
+			return nil, err
+		}
+
+		// Prepare a tracking operation
+		rop := RemoteOperation{
+			targetOp: targetOp,
+			chDone:   make(chan bool),
+		}
+
+		// Forward targetOp to remote op
+		go func() {
+			rop.err = rop.targetOp.Wait()
+			close(rop.chDone)
+		}()
+
+		return &rop, nil
+	}
+
+	// Pull mode migration
 	req.Source.Type = "migration"
 	req.Source.Mode = "pull"
 	req.Source.Operation = op.ID
@@ -278,6 +372,91 @@ func (r *ProtocolLXD) CopyContainer(source ContainerServer, container api.Contai
 	req.Source.Certificate = info.Certificate
 
 	return r.tryCreateContainer(req, info.Addresses)
+}
+
+func (r *ProtocolLXD) proxyMigration(targetOp *Operation, targetSecrets map[string]string, source ContainerServer, sourceOp *Operation, sourceSecrets map[string]string) error {
+	// Sanity checks
+	for n := range targetSecrets {
+		_, ok := sourceSecrets[n]
+		if !ok {
+			return fmt.Errorf("Migration target expects the \"%s\" socket but source isn't providing it", n)
+		}
+	}
+
+	if targetSecrets["control"] == "" {
+		return fmt.Errorf("Migration target didn't setup the required \"control\" socket")
+	}
+
+	// Struct used to hold everything together
+	type proxy struct {
+		done       chan bool
+		sourceConn *websocket.Conn
+		targetConn *websocket.Conn
+	}
+
+	proxies := map[string]*proxy{}
+
+	// Connect the control socket
+	sourceConn, err := source.GetOperationWebsocket(sourceOp.ID, sourceSecrets["control"])
+	if err != nil {
+		return err
+	}
+
+	targetConn, err := r.GetOperationWebsocket(targetOp.ID, targetSecrets["control"])
+	if err != nil {
+		return err
+	}
+
+	proxies["control"] = &proxy{
+		done:       shared.WebsocketProxy(sourceConn, targetConn),
+		sourceConn: sourceConn,
+		targetConn: targetConn,
+	}
+
+	// Connect the data sockets
+	for name := range sourceSecrets {
+		if name == "control" {
+			continue
+		}
+
+		// Handle resets (used for multiple objects)
+		sourceConn, err := source.GetOperationWebsocket(sourceOp.ID, sourceSecrets[name])
+		if err != nil {
+			break
+		}
+
+		targetConn, err := r.GetOperationWebsocket(targetOp.ID, targetSecrets[name])
+		if err != nil {
+			break
+		}
+
+		proxies[name] = &proxy{
+			sourceConn: sourceConn,
+			targetConn: targetConn,
+			done:       shared.WebsocketProxy(sourceConn, targetConn),
+		}
+	}
+
+	// Cleanup once everything is done
+	go func() {
+		// Wait for control socket
+		<-proxies["control"].done
+		proxies["control"].sourceConn.Close()
+		proxies["control"].targetConn.Close()
+
+		// Then deal with the others
+		for name, proxy := range proxies {
+			if name == "control" {
+				continue
+			}
+
+			<-proxy.done
+			proxy.sourceConn.Close()
+			proxy.targetConn.Close()
+		}
+	}()
+
+	return nil
 }
 
 // UpdateContainer updates the container definition
@@ -305,6 +484,56 @@ func (r *ProtocolLXD) RenameContainer(name string, container api.ContainerPost) 
 	}
 
 	return op, nil
+}
+
+func (r *ProtocolLXD) tryMigrateContainer(source ContainerServer, name string, req api.ContainerPost, urls []string) (*RemoteOperation, error) {
+	if len(urls) == 0 {
+		return nil, fmt.Errorf("The target server isn't listening on the network")
+	}
+
+	rop := RemoteOperation{
+		chDone: make(chan bool),
+	}
+
+	operation := req.Target.Operation
+
+	// Forward targetOp to remote op
+	go func() {
+		success := false
+		errors := []string{}
+		for _, serverURL := range urls {
+			req.Target.Operation = fmt.Sprintf("%s/1.0/operations/%s", serverURL, operation)
+
+			op, err := source.MigrateContainer(name, req)
+			if err != nil {
+				errors = append(errors, fmt.Sprintf("%s: %v", serverURL, err))
+				continue
+			}
+
+			rop.targetOp = op
+
+			for _, handler := range rop.handlers {
+				rop.targetOp.AddHandler(handler)
+			}
+
+			err = rop.targetOp.Wait()
+			if err != nil {
+				errors = append(errors, fmt.Sprintf("%s: %v", serverURL, err))
+				continue
+			}
+
+			success = true
+			break
+		}
+
+		if !success {
+			rop.err = fmt.Errorf("Failed container migration:\n - %s", strings.Join(errors, "\n - "))
+		}
+
+		close(rop.chDone)
+	}()
+
+	return &rop, nil
 }
 
 // MigrateContainer requests that LXD prepares for a container migration
@@ -471,8 +700,14 @@ func (r *ProtocolLXD) ExecContainer(containerName string, exec api.ContainerExec
 // GetContainerFile retrieves the provided path from the container
 func (r *ProtocolLXD) GetContainerFile(containerName string, path string) (io.ReadCloser, *ContainerFileResponse, error) {
 	// Prepare the HTTP request
-	url := fmt.Sprintf("%s/1.0/containers/%s/files?path=%s", r.httpHost, containerName, path)
-	req, err := http.NewRequest("GET", url, nil)
+	requestURL, err := shared.URLEncode(
+		fmt.Sprintf("%s/1.0/containers/%s/files", r.httpHost, containerName),
+		map[string]string{"path": path})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	req, err := http.NewRequest("GET", requestURL, nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -490,7 +725,10 @@ func (r *ProtocolLXD) GetContainerFile(containerName string, path string) (io.Re
 
 	// Check the return value for a cleaner error
 	if resp.StatusCode != http.StatusOK {
-		return nil, nil, fmt.Errorf("Failed to fetch %s: %s", url, resp.Status)
+		_, _, err := r.parseResponse(resp)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
 	// Parse the headers
@@ -535,6 +773,12 @@ func (r *ProtocolLXD) CreateContainerFile(containerName string, path string, arg
 		}
 	}
 
+	if args.Type == "symlink" {
+		if !r.HasExtension("file_symlinks") {
+			return fmt.Errorf("The server is missing the required \"file_symlinks\" API extension")
+		}
+	}
+
 	if args.WriteMode == "append" {
 		if !r.HasExtension("file_append") {
 			return fmt.Errorf("The server is missing the required \"file_append\" API extension")
@@ -542,8 +786,13 @@ func (r *ProtocolLXD) CreateContainerFile(containerName string, path string, arg
 	}
 
 	// Prepare the HTTP request
-	url := fmt.Sprintf("%s/1.0/containers/%s/files?path=%s", r.httpHost, containerName, path)
-	req, err := http.NewRequest("POST", url, args.Content)
+	requestURL, err := shared.URLEncode(
+		fmt.Sprintf("%s/1.0/containers/%s/files", r.httpHost, containerName),
+		map[string]string{"path": path})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest("POST", requestURL, args.Content)
 	if err != nil {
 		return err
 	}
@@ -581,8 +830,9 @@ func (r *ProtocolLXD) CreateContainerFile(containerName string, path string, arg
 	}
 
 	// Check the return value for a cleaner error
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("Failed to upload to %s: %s", url, resp.Status)
+	_, _, err = r.parseResponse(resp)
+	if err != nil {
+		return err
 	}
 
 	return nil
@@ -675,13 +925,35 @@ func (r *ProtocolLXD) CopyContainerSnapshot(source ContainerServer, snapshot api
 			Devices:      snapshot.Devices,
 			Ephemeral:    snapshot.Ephemeral,
 			Profiles:     snapshot.Profiles,
-			Stateful:     snapshot.Stateful,
 		},
+	}
+
+	if snapshot.Stateful && args.Live {
+		if !r.HasExtension("container_snapshot_stateful_migration") {
+			return nil, fmt.Errorf("The server is missing the required \"container_snapshot_stateful_migration\" API extension")
+		}
+		req.ContainerPut.Stateful = snapshot.Stateful
+		req.Source.Live = args.Live
 	}
 	req.Source.BaseImage = snapshot.Config["volatile.base_image"]
 
 	// Process the copy arguments
 	if args != nil {
+		// Sanity checks
+		if shared.StringInSlice(args.Mode, []string{"push", "relay"}) {
+			if !r.HasExtension("container_push") {
+				return nil, fmt.Errorf("The target server is missing the required \"container_push\" API extension")
+			}
+
+			if !source.HasExtension("container_push") {
+				return nil, fmt.Errorf("The source server is missing the required \"container_push\" API extension")
+			}
+		}
+
+		if args.Mode == "push" && !source.HasExtension("container_push_target") {
+			return nil, fmt.Errorf("The source server is missing the required \"container_push_target\" API extension")
+		}
+
 		// Allow overriding the target name
 		if args.Name != "" {
 			req.Name = args.Name
@@ -714,15 +986,51 @@ func (r *ProtocolLXD) CopyContainerSnapshot(source ContainerServer, snapshot api
 		return &rop, nil
 	}
 
+	// Source request
+	sourceReq := api.ContainerSnapshotPost{
+		Migration: true,
+		Name:      args.Name,
+	}
+	if snapshot.Stateful && args.Live {
+		sourceReq.Live = args.Live
+	}
+
+	// Push mode migration
+	if args != nil && args.Mode == "push" {
+		// Get target server connection information
+		info, err := r.GetConnectionInfo()
+		if err != nil {
+			return nil, err
+		}
+
+		// Create the container
+		req.Source.Type = "migration"
+		req.Source.Mode = "push"
+
+		op, err := r.CreateContainer(req)
+		if err != nil {
+			return nil, err
+		}
+
+		targetSecrets := map[string]string{}
+		for k, v := range op.Metadata {
+			targetSecrets[k] = v.(string)
+		}
+
+		// Prepare the source request
+		target := api.ContainerPostTarget{}
+		target.Operation = op.ID
+		target.Websockets = targetSecrets
+		target.Certificate = info.Certificate
+		sourceReq.Target = &target
+
+		return r.tryMigrateContainerSnapshot(source, cName, sName, sourceReq, info.Addresses)
+	}
+
 	// Get source server connection information
 	info, err := source.GetConnectionInfo()
 	if err != nil {
 		return nil, err
-	}
-
-	// Get a source operation
-	sourceReq := api.ContainerSnapshotPost{
-		Migration: true,
 	}
 
 	op, err := source.MigrateContainerSnapshot(cName, sName, sourceReq)
@@ -735,7 +1043,46 @@ func (r *ProtocolLXD) CopyContainerSnapshot(source ContainerServer, snapshot api
 		sourceSecrets[k] = v.(string)
 	}
 
-	// Migration source fields
+	// Relay mode migration
+	if args != nil && args.Mode == "relay" {
+		// Push copy source fields
+		req.Source.Type = "migration"
+		req.Source.Mode = "push"
+
+		// Start the process
+		targetOp, err := r.CreateContainer(req)
+		if err != nil {
+			return nil, err
+		}
+
+		// Extract the websockets
+		targetSecrets := map[string]string{}
+		for k, v := range targetOp.Metadata {
+			targetSecrets[k] = v.(string)
+		}
+
+		// Launch the relay
+		err = r.proxyMigration(targetOp, targetSecrets, source, op, sourceSecrets)
+		if err != nil {
+			return nil, err
+		}
+
+		// Prepare a tracking operation
+		rop := RemoteOperation{
+			targetOp: targetOp,
+			chDone:   make(chan bool),
+		}
+
+		// Forward targetOp to remote op
+		go func() {
+			rop.err = rop.targetOp.Wait()
+			close(rop.chDone)
+		}()
+
+		return &rop, nil
+	}
+
+	// Pull mode migration
 	req.Source.Type = "migration"
 	req.Source.Mode = "pull"
 	req.Source.Operation = op.ID
@@ -759,6 +1106,56 @@ func (r *ProtocolLXD) RenameContainerSnapshot(containerName string, name string,
 	}
 
 	return op, nil
+}
+
+func (r *ProtocolLXD) tryMigrateContainerSnapshot(source ContainerServer, containerName string, name string, req api.ContainerSnapshotPost, urls []string) (*RemoteOperation, error) {
+	if len(urls) == 0 {
+		return nil, fmt.Errorf("The target server isn't listening on the network")
+	}
+
+	rop := RemoteOperation{
+		chDone: make(chan bool),
+	}
+
+	operation := req.Target.Operation
+
+	// Forward targetOp to remote op
+	go func() {
+		success := false
+		errors := []string{}
+		for _, serverURL := range urls {
+			req.Target.Operation = fmt.Sprintf("%s/1.0/operations/%s", serverURL, operation)
+
+			op, err := source.MigrateContainerSnapshot(containerName, name, req)
+			if err != nil {
+				errors = append(errors, fmt.Sprintf("%s: %v", serverURL, err))
+				continue
+			}
+
+			rop.targetOp = op
+
+			for _, handler := range rop.handlers {
+				rop.targetOp.AddHandler(handler)
+			}
+
+			err = rop.targetOp.Wait()
+			if err != nil {
+				errors = append(errors, fmt.Sprintf("%s: %v", serverURL, err))
+				continue
+			}
+
+			success = true
+			break
+		}
+
+		if !success {
+			rop.err = fmt.Errorf("Failed container migration:\n - %s", strings.Join(errors, "\n - "))
+		}
+
+		close(rop.chDone)
+	}()
+
+	return &rop, nil
 }
 
 // MigrateContainerSnapshot requests that LXD prepares for a snapshot migration
@@ -856,7 +1253,10 @@ func (r *ProtocolLXD) GetContainerLogfile(name string, filename string) (io.Read
 
 	// Check the return value for a cleaner error
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Failed to fetch %s: %s", url, resp.Status)
+		_, _, err := r.parseResponse(resp)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return resp.Body, err
@@ -871,4 +1271,135 @@ func (r *ProtocolLXD) DeleteContainerLogfile(name string, filename string) error
 	}
 
 	return nil
+}
+
+// GetContainerMetadata returns container metadata.
+func (r *ProtocolLXD) GetContainerMetadata(name string) (*api.ImageMetadata, string, error) {
+	if !r.HasExtension("container_edit_metadata") {
+		return nil, "", fmt.Errorf("The server is missing the required \"container_edit_metadata\" API extension")
+	}
+
+	metadata := api.ImageMetadata{}
+
+	url := fmt.Sprintf("/containers/%s/metadata", name)
+	etag, err := r.queryStruct("GET", url, nil, "", &metadata)
+	if err != nil {
+		return nil, "", err
+	}
+
+	return &metadata, etag, err
+}
+
+// SetContainerMetadata sets the content of the container metadata file.
+func (r *ProtocolLXD) SetContainerMetadata(name string, metadata api.ImageMetadata, ETag string) error {
+	if !r.HasExtension("container_edit_metadata") {
+		return fmt.Errorf("The server is missing the required \"container_edit_metadata\" API extension")
+	}
+
+	url := fmt.Sprintf("/containers/%s/metadata", name)
+	_, _, err := r.query("PUT", url, metadata, ETag)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// GetContainerTemplateFiles returns the list of names of template files for a container.
+func (r *ProtocolLXD) GetContainerTemplateFiles(containerName string) ([]string, error) {
+	if !r.HasExtension("container_edit_metadata") {
+		return nil, fmt.Errorf("The server is missing the required \"container_edit_metadata\" API extension")
+	}
+
+	templates := []string{}
+
+	url := fmt.Sprintf("/containers/%s/metadata/templates", containerName)
+	_, err := r.queryStruct("GET", url, nil, "", &templates)
+	if err != nil {
+		return nil, err
+	}
+
+	return templates, nil
+}
+
+// GetContainerTemplateFile returns the content of a template file for a container.
+func (r *ProtocolLXD) GetContainerTemplateFile(containerName string, templateName string) (io.ReadCloser, error) {
+	if !r.HasExtension("container_edit_metadata") {
+		return nil, fmt.Errorf("The server is missing the required \"container_edit_metadata\" API extension")
+	}
+
+	url := fmt.Sprintf("%s/1.0/containers/%s/metadata/templates?path=%s", r.httpHost, containerName, templateName)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Set the user agent
+	if r.httpUserAgent != "" {
+		req.Header.Set("User-Agent", r.httpUserAgent)
+	}
+
+	// Send the request
+	resp, err := r.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check the return value for a cleaner error
+	if resp.StatusCode != http.StatusOK {
+		_, _, err := r.parseResponse(resp)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return resp.Body, err
+}
+
+// CreateContainerTemplateFile creates an a template for a container.
+func (r *ProtocolLXD) CreateContainerTemplateFile(containerName string, templateName string, content io.ReadSeeker) error {
+	return r.setContainerTemplateFile(containerName, templateName, content, "POST")
+}
+
+// UpdateContainerTemplateFile updates the content for a container template file.
+func (r *ProtocolLXD) UpdateContainerTemplateFile(containerName string, templateName string, content io.ReadSeeker) error {
+	return r.setContainerTemplateFile(containerName, templateName, content, "PUT")
+}
+
+func (r *ProtocolLXD) setContainerTemplateFile(containerName string, templateName string, content io.ReadSeeker, httpMethod string) error {
+	if !r.HasExtension("container_edit_metadata") {
+		return fmt.Errorf("The server is missing the required \"container_edit_metadata\" API extension")
+	}
+
+	url := fmt.Sprintf("%s/1.0/containers/%s/metadata/templates?path=%s", r.httpHost, containerName, templateName)
+	req, err := http.NewRequest(httpMethod, url, content)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+
+	// Set the user agent
+	if r.httpUserAgent != "" {
+		req.Header.Set("User-Agent", r.httpUserAgent)
+	}
+
+	// Send the request
+	resp, err := r.http.Do(req)
+	// Check the return value for a cleaner error
+	if resp.StatusCode != http.StatusOK {
+		_, _, err := r.parseResponse(resp)
+		if err != nil {
+			return err
+		}
+	}
+	return err
+}
+
+// DeleteContainerTemplateFile deletes a template file for a container.
+func (r *ProtocolLXD) DeleteContainerTemplateFile(name string, templateName string) error {
+	if !r.HasExtension("container_edit_metadata") {
+		return fmt.Errorf("The server is missing the required \"container_edit_metadata\" API extension")
+	}
+	_, _, err := r.query("DELETE", fmt.Sprintf("/containers/%s/metadata/templates?path=%s", name, templateName), nil, "")
+	return err
 }

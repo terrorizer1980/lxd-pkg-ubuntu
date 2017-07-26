@@ -91,6 +91,9 @@ test_basic_usage() {
   # Test list json format
   lxc list --format json | jq '.[]|select(.name="foo")' | grep '"name": "foo"'
 
+  # Test list with --columns and --fast
+  ! lxc list --columns=nsp --fast
+
   # Test container rename
   lxc move foo bar
   lxc list | grep -v foo
@@ -111,6 +114,17 @@ test_basic_usage() {
   lxc image show foo-image | grep val1
   curl -k -s --cert "${LXD_CONF}/client3.crt" --key "${LXD_CONF}/client3.key" -X GET "https://${LXD_ADDR}/1.0/images" | grep "/1.0/images/" && false
   lxc image delete foo-image
+
+  # Test container publish with existing alias
+  lxc publish bar --alias=foo-image --alias=foo-image2
+  lxc launch testimage baz
+  # change the container filesystem so the resulting image is different
+  lxc exec baz touch /somefile
+  lxc stop baz
+  # publishing another image with same alias doesn't fail
+  lxc publish baz --alias=foo-image
+  lxc delete baz
+  lxc image delete foo-image foo-image2
 
   # Test image compression on publish
   lxc publish bar --alias=foo-image-compressed --compression=bzip2 prop=val1
@@ -201,9 +215,9 @@ test_basic_usage() {
   [ ! -d "${LXD_DIR}/snapshots/bar" ]
 
   # Test randomly named container creation
-  lxc init testimage
+  lxc launch testimage
   RDNAME=$(lxc list | tail -n2 | grep ^\| | awk '{print $2}')
-  lxc delete "${RDNAME}"
+  lxc delete -f "${RDNAME}"
 
   # Test "nonetype" container creation
   wait_for "${LXD_ADDR}" my_curl -X POST "https://${LXD_ADDR}/1.0/containers" \
@@ -330,29 +344,33 @@ test_basic_usage() {
   # cleanup
   lxc delete foo -f
 
-  # check that an apparmor profile is created for this container, that it is
-  # unloaded on stop, and that it is deleted when the container is deleted
-  lxc launch testimage lxd-apparmor-test
+  if [ -e /sys/module/apparmor/ ]; then
+    # check that an apparmor profile is created for this container, that it is
+    # unloaded on stop, and that it is deleted when the container is deleted
+    lxc launch testimage lxd-apparmor-test
 
-  MAJOR=0
-  MINOR=0
-  if [ -f /sys/kernel/security/apparmor/features/domain/version ]; then
-    MAJOR=$(awk -F. '{print $1}' < /sys/kernel/security/apparmor/features/domain/version)
-    MINOR=$(awk -F. '{print $2}' < /sys/kernel/security/apparmor/features/domain/version)
-  fi
+    MAJOR=0
+    MINOR=0
+    if [ -f /sys/kernel/security/apparmor/features/domain/version ]; then
+      MAJOR=$(awk -F. '{print $1}' < /sys/kernel/security/apparmor/features/domain/version)
+      MINOR=$(awk -F. '{print $2}' < /sys/kernel/security/apparmor/features/domain/version)
+    fi
 
-  if [ "${MAJOR}" -gt "1" ] || ([ "${MAJOR}" = "1" ] && [ "${MINOR}" -ge "2" ]); then
-    aa_namespace="lxd-lxd-apparmor-test_<$(echo "${LXD_DIR}" | sed -e 's/\//-/g' -e 's/^.//')>"
-    aa-status | grep ":${aa_namespace}://unconfined"
-    lxc stop lxd-apparmor-test --force
-    ! aa-status | grep -q ":${aa_namespace}:"
+    if [ "${MAJOR}" -gt "1" ] || ([ "${MAJOR}" = "1" ] && [ "${MINOR}" -ge "2" ]); then
+      aa_namespace="lxd-lxd-apparmor-test_<$(echo "${LXD_DIR}" | sed -e 's/\//-/g' -e 's/^.//')>"
+      aa-status | grep ":${aa_namespace}://unconfined"
+      lxc stop lxd-apparmor-test --force
+      ! aa-status | grep -q ":${aa_namespace}:"
+    else
+      aa-status | grep "lxd-lxd-apparmor-test_<${LXD_DIR}>"
+      lxc stop lxd-apparmor-test --force
+      ! aa-status | grep -q "lxd-lxd-apparmor-test_<${LXD_DIR}>"
+    fi
+    lxc delete lxd-apparmor-test
+    [ ! -f "${LXD_DIR}/security/apparmor/profiles/lxd-lxd-apparmor-test" ]
   else
-    aa-status | grep "lxd-lxd-apparmor-test_<${LXD_DIR}>"
-    lxc stop lxd-apparmor-test --force
-    ! aa-status | grep -q "lxd-lxd-apparmor-test_<${LXD_DIR}>"
+    echo "==> SKIP: apparmor tests (missing kernel support)"
   fi
-  lxc delete lxd-apparmor-test
-  [ ! -f "${LXD_DIR}/security/apparmor/profiles/lxd-lxd-apparmor-test" ]
 
   lxc launch testimage lxd-seccomp-test
   init=$(lxc info lxd-seccomp-test | grep Pid | cut -f2 -d" ")

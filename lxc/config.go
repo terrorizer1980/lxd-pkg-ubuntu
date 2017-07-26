@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
@@ -56,6 +57,30 @@ func (c *configCmd) configEditHelp() string {
 ### Note that the name is shown but cannot be changed`)
 }
 
+func (c *configCmd) metadataEditHelp() string {
+	return i18n.G(
+		`### This is a yaml representation of the container metadata.
+### Any line starting with a '# will be ignored.
+###
+### A sample configuration looks like:
+###
+### architecture: x86_64
+### creation_date: 1477146654
+### expiry_date: 0
+### properties:
+###   architecture: x86_64
+###   description: Busybox x86_64
+###   name: busybox-x86_64
+###   os: Busybox
+### templates:
+###   /template:
+###     when:
+###     - ""
+###     create_only: false
+###     template: template.tpl
+###     properties: {}`)
+}
+
 func (c *configCmd) usage() string {
 	return i18n.G(
 		`Usage: lxc config <subcommand> [options]
@@ -79,6 +104,32 @@ lxc config show [<remote>:][container] [--expanded]
 lxc config edit [<remote>:][container]
     Edit configuration, either by launching external editor or reading STDIN.
 
+*Container metadata*
+
+lxc config metadata show [<remote>:][container]
+    Show the container metadata.yaml content.
+
+lxc config metadata edit [<remote>:][container]
+    Edit the container metadata.yaml, either by launching external editor or reading STDIN.
+
+*Container templates*
+
+lxc config template list [<remote>:][container]
+    List the names of template files for a container.
+
+lxc config template show [<remote>:][container] [template]
+    Show the content of a template file for a container.
+
+lxc config template create [<remote>:][container] [template]
+    Add an empty template file for a container.
+
+lxc config template edit [<remote>:][container] [template]
+    Edit the content of a template file for a container, either by launching external editor or reading STDIN.
+
+lxc config template delete [<remote>:][container] [template]
+    Delete a template file for a container.
+
+
 *Device management*
 
 lxc config device add [<remote>:]<container> <device> <type> [key=value...]
@@ -99,7 +150,7 @@ lxc config device list [<remote>:]<container>
 lxc config device show [<remote>:]<container>
     Show full device details for container.
 
-lxc config device remove [<remote>:]<container> <name>
+lxc config device remove [<remote>:]<container> <name>...
     Remove device from container.
 
 *Client trust store management*
@@ -583,11 +634,129 @@ func (c *configCmd) run(conf *config.Config, args []string) error {
 
 		return c.doContainerConfigEdit(d, container)
 
+	case "metadata":
+		if len(args) < 3 {
+			return errArgs
+		}
+
+		remote, container, err := conf.ParseRemote(args[2])
+		if err != nil {
+			return err
+		}
+
+		d, err := conf.GetContainerServer(remote)
+		if err != nil {
+			return err
+		}
+
+		switch args[1] {
+		case "show":
+			metadata, _, err := d.GetContainerMetadata(container)
+			if err != nil {
+				return err
+			}
+			content, err := yaml.Marshal(metadata)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%s", content)
+			return nil
+
+		case "edit":
+			return c.doContainerMetadataEdit(d, container)
+
+		default:
+			return errArgs
+		}
+
+	case "template":
+		if len(args) < 3 {
+			return errArgs
+		}
+
+		remote, container, err := conf.ParseRemote(args[2])
+		if err != nil {
+			return err
+		}
+
+		d, err := conf.GetContainerServer(remote)
+		if err != nil {
+			return err
+		}
+
+		switch args[1] {
+		case "list":
+			templates, err := d.GetContainerTemplateFiles(container)
+			if err != nil {
+				return err
+			}
+
+			c.listTemplateFiles(templates)
+			return nil
+
+		case "show":
+			if len(args) != 4 {
+				return errArgs
+			}
+			templateName := args[3]
+
+			template, err := d.GetContainerTemplateFile(container, templateName)
+			if err != nil {
+				return err
+			}
+			content, err := ioutil.ReadAll(template)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%s", content)
+			return nil
+
+		case "create":
+			if len(args) != 4 {
+				return errArgs
+			}
+			templateName := args[3]
+			return c.doContainerTemplateFileCreate(d, container, templateName)
+
+		case "edit":
+			if len(args) != 4 {
+				return errArgs
+			}
+			templateName := args[3]
+			return c.doContainerTemplateFileEdit(d, container, templateName)
+
+		case "delete":
+			if len(args) != 4 {
+				return errArgs
+			}
+			templateName := args[3]
+			return d.DeleteContainerTemplateFile(container, templateName)
+
+		default:
+			return errArgs
+		}
+
 	default:
 		return errArgs
 	}
 
 	return errArgs
+}
+
+func (c *configCmd) listTemplateFiles(templates []string) {
+	data := [][]string{}
+	for _, template := range templates {
+		data = append(data, []string{template})
+	}
+
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetAutoWrapText(false)
+	table.SetAlignment(tablewriter.ALIGN_LEFT)
+	table.SetRowLine(true)
+	table.SetHeader([]string{i18n.G("FILENAME")})
+	sort.Sort(byName(data))
+	table.AppendBulk(data)
+	table.Render()
 }
 
 func (c *configCmd) doContainerConfigEdit(client lxd.ContainerServer, cont string) error {
@@ -993,19 +1162,19 @@ func (c *configCmd) deviceRm(conf *config.Config, which string, args []string) e
 		return err
 	}
 
-	devname := args[3]
-
 	if which == "profile" {
 		profile, etag, err := client.GetProfile(name)
 		if err != nil {
 			return err
 		}
 
-		_, ok := profile.Devices[devname]
-		if !ok {
-			return fmt.Errorf(i18n.G("The device doesn't exist"))
+		for _, devname := range args[3:] {
+			_, ok := profile.Devices[devname]
+			if !ok {
+				return fmt.Errorf(i18n.G("The device doesn't exist"))
+			}
+			delete(profile.Devices, devname)
 		}
-		delete(profile.Devices, devname)
 
 		err = client.UpdateProfile(name, profile.Writable(), etag)
 		if err != nil {
@@ -1017,11 +1186,13 @@ func (c *configCmd) deviceRm(conf *config.Config, which string, args []string) e
 			return err
 		}
 
-		_, ok := container.Devices[devname]
-		if !ok {
-			return fmt.Errorf(i18n.G("The device doesn't exist"))
+		for _, devname := range args[3:] {
+			_, ok := container.Devices[devname]
+			if !ok {
+				return fmt.Errorf(i18n.G("The device doesn't exist"))
+			}
+			delete(container.Devices, devname)
 		}
-		delete(container.Devices, devname)
 
 		op, err := client.UpdateContainer(name, container.Writable(), etag)
 		if err != nil {
@@ -1034,7 +1205,7 @@ func (c *configCmd) deviceRm(conf *config.Config, which string, args []string) e
 		}
 	}
 
-	fmt.Printf(i18n.G("Device %s removed from %s")+"\n", devname, name)
+	fmt.Printf(i18n.G("Device %s removed from %s")+"\n", strings.Join(args[3:], ", "), name)
 	return nil
 }
 
@@ -1116,5 +1287,114 @@ func (c *configCmd) deviceShow(conf *config.Config, which string, args []string)
 	}
 
 	fmt.Printf(string(data))
+	return nil
+}
+
+func (c *configCmd) doContainerMetadataEdit(client lxd.ContainerServer, name string) error {
+	if !termios.IsTerminal(int(syscall.Stdin)) {
+		metadata := api.ImageMetadata{}
+		content, err := ioutil.ReadAll(os.Stdin)
+		if err != nil {
+			return err
+		}
+
+		err = yaml.Unmarshal(content, &metadata)
+		if err != nil {
+			return err
+		}
+		return client.SetContainerMetadata(name, metadata, "")
+	}
+
+	metadata, etag, err := client.GetContainerMetadata(name)
+	if err != nil {
+		return err
+	}
+	origContent, err := yaml.Marshal(metadata)
+	if err != nil {
+		return err
+	}
+
+	// Spawn the editor
+	content, err := shared.TextEditor("", []byte(c.metadataEditHelp()+"\n\n"+string(origContent)))
+	if err != nil {
+		return err
+	}
+
+	for {
+		err = yaml.Unmarshal(content, &metadata)
+		if err == nil {
+			err = client.SetContainerMetadata(name, *metadata, etag)
+		}
+
+		// Respawn the editor
+		if err != nil {
+			fmt.Fprintf(os.Stderr, i18n.G("Config parsing error: %s")+"\n", err)
+			fmt.Println(i18n.G("Press enter to start the editor again"))
+
+			_, err := os.Stdin.Read(make([]byte, 1))
+			if err != nil {
+				return err
+			}
+
+			content, err = shared.TextEditor("", content)
+			if err != nil {
+				return err
+			}
+			continue
+		}
+
+		break
+	}
+
+	return nil
+}
+
+func (c *configCmd) doContainerTemplateFileCreate(client lxd.ContainerServer, containerName string, templateName string) error {
+	return client.CreateContainerTemplateFile(containerName, templateName, nil)
+}
+
+func (c *configCmd) doContainerTemplateFileEdit(client lxd.ContainerServer, containerName string, templateName string) error {
+	if !termios.IsTerminal(int(syscall.Stdin)) {
+		return client.UpdateContainerTemplateFile(containerName, templateName, os.Stdin)
+	}
+
+	reader, err := client.GetContainerTemplateFile(containerName, templateName)
+	if err != nil {
+		return err
+	}
+	content, err := ioutil.ReadAll(reader)
+	if err != nil {
+		return err
+	}
+
+	// Spawn the editor
+	content, err = shared.TextEditor("", content)
+	if err != nil {
+		return err
+	}
+
+	for {
+		reader := bytes.NewReader(content)
+		err := client.UpdateContainerTemplateFile(containerName, templateName, reader)
+		// Respawn the editor
+		if err != nil {
+			fmt.Fprintf(os.Stderr, i18n.G("Error updating template file: %s")+"\n", err)
+			fmt.Println(i18n.G("Press enter to start the editor again"))
+
+			_, err := os.Stdin.Read(make([]byte, 1))
+			if err != nil {
+				return err
+			}
+
+			content, err = shared.TextEditor("", content)
+			if err != nil {
+				return err
+			}
+			continue
+		}
+
+		break
+	}
+
 	return nil
 }

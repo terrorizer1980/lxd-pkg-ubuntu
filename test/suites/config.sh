@@ -145,7 +145,7 @@ test_config_profiles() {
   mkdir -p "${TEST_DIR}/mnt1"
   lxc config device add foo mnt1 disk source="${TEST_DIR}/mnt1" path=/mnt1 readonly=true
   lxc profile create onenic
-  lxc profile device add onenic eth0 nic nictype=bridged parent=lxdbr0
+  lxc profile device add onenic eth0 nic nictype=p2p
   lxc profile assign foo onenic
   lxc profile create unconfined
   lxc profile set unconfined raw.lxc "lxc.aa_profile=unconfined"
@@ -156,15 +156,16 @@ test_config_profiles() {
   lxc config show foo | grep "onenic" -A1 | grep "unconfined"
   lxc profile list | grep onenic
   lxc profile device list onenic | grep eth0
-  lxc profile device show onenic | grep lxdbr0
+  lxc profile device show onenic | grep p2p
 
   # test live-adding a nic
   lxc start foo
+  lxc exec foo -- cat /proc/self/mountinfo | grep -q "/mnt1.*ro,"
   ! lxc config show foo | grep -q "raw.lxc"
   lxc config show foo --expanded | grep -q "raw.lxc"
   ! lxc config show foo | grep -v "volatile.eth0" | grep -q "eth0"
   lxc config show foo --expanded | grep -v "volatile.eth0" | grep -q "eth0"
-  lxc config device add foo eth2 nic nictype=bridged parent=lxdbr0 name=eth10
+  lxc config device add foo eth2 nic nictype=p2p name=eth10
   lxc exec foo -- /sbin/ifconfig -a | grep eth0
   lxc exec foo -- /sbin/ifconfig -a | grep eth10
   lxc config device list foo | grep eth2
@@ -174,6 +175,7 @@ test_config_profiles() {
   mkdir "${TEST_DIR}/mnt2"
   touch "${TEST_DIR}/mnt2/hosts"
   lxc config device add foo mnt2 disk source="${TEST_DIR}/mnt2" path=/mnt2 readonly=true
+  lxc exec foo -- cat /proc/self/mountinfo | grep -q "/mnt2.*ro,"
   lxc exec foo -- ls /mnt2/hosts
   lxc stop foo --force
   lxc start foo
@@ -219,7 +221,9 @@ test_config_profiles() {
   lxc profile assign foo onenic,unconfined
   lxc start foo
 
-  lxc exec foo -- cat /proc/self/attr/current | grep unconfined
+  if [ -e /sys/module/apparmor ]; then
+    lxc exec foo -- cat /proc/self/attr/current | grep unconfined
+  fi
   lxc exec foo -- ls /sys/class/net | grep eth0
 
   lxc stop foo --force
@@ -255,4 +259,36 @@ test_config_edit_container_snapshot_pool_config() {
         lxc storage volume edit "$storage_pool" container/c1/s1
     lxc storage volume show "$storage_pool" container/c1/s1 | grep -q 'description: baz'
     lxc delete c1
+}
+
+test_container_metadata() {
+    ensure_import_testimage
+    lxc init testimage c
+
+    # metadata for the container are printed
+    lxc config metadata show c | grep -q Busybox
+
+    # metadata can be edited
+    lxc config metadata show c | sed 's/Busybox/BB/' | lxc config metadata edit c
+    lxc config metadata show c | grep -q BB
+
+    # templates can be listed
+    lxc config template list c | grep -q template.tpl
+
+    # template content can be returned
+    lxc config template show c template.tpl | grep -q "name:"
+
+    # templates can be added
+    lxc config template create c my.tpl
+    lxc config template list c | grep -q my.tpl
+
+    # template content can be updated
+    echo "some content" | lxc config template edit c my.tpl
+    lxc config template show c my.tpl | grep -q "some content"
+    
+    # templates can be removed
+    lxc config template delete c my.tpl
+    ! (lxc config template list c | grep -q my.tpl)
+
+    lxc delete c
 }

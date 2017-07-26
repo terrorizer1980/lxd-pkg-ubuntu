@@ -14,10 +14,10 @@ import (
 )
 
 type publishCmd struct {
-	pAliases              aliasList // aliasList defined in lxc/image.go
-	compression_algorithm string
-	makePublic            bool
-	Force                 bool
+	pAliases             aliasList // aliasList defined in lxc/image.go
+	compressionAlgorithm string
+	makePublic           bool
+	Force                bool
 }
 
 func (c *publishCmd) showByDefault() bool {
@@ -36,7 +36,7 @@ func (c *publishCmd) flags() {
 	gnuflag.Var(&c.pAliases, "alias", i18n.G("New alias to define at target"))
 	gnuflag.BoolVar(&c.Force, "force", false, i18n.G("Stop the container if currently running"))
 	gnuflag.BoolVar(&c.Force, "f", false, i18n.G("Stop the container if currently running"))
-	gnuflag.StringVar(&c.compression_algorithm, "compression", "", i18n.G("Define a compression algorithm: for image or none"))
+	gnuflag.StringVar(&c.compressionAlgorithm, "compression", "", i18n.G("Define a compression algorithm: for image or none"))
 }
 
 func (c *publishCmd) run(conf *config.Config, args []string) error {
@@ -169,8 +169,6 @@ func (c *publishCmd) run(conf *config.Config, args []string) error {
 		properties[entry[0]] = entry[1]
 	}
 
-	var fp string
-
 	// We should only set the properties field if there actually are any.
 	// Otherwise we will only delete any existing properties on publish.
 	// This is something which only direct callers of the API are allowed to
@@ -193,7 +191,7 @@ func (c *publishCmd) run(conf *config.Config, args []string) error {
 			Type: "container",
 			Name: cName,
 		},
-		CompressionAlgorithm: c.compression_algorithm,
+		CompressionAlgorithm: c.compressionAlgorithm,
 	}
 	req.Properties = properties
 
@@ -202,7 +200,6 @@ func (c *publishCmd) run(conf *config.Config, args []string) error {
 	}
 
 	if cRemote == iRemote {
-		req.Aliases = aliases
 		req.Public = c.makePublic
 	}
 
@@ -231,8 +228,7 @@ func (c *publishCmd) run(conf *config.Config, args []string) error {
 
 		// Image copy arguments
 		args := lxd.ImageCopyArgs{
-			Aliases: aliases,
-			Public:  c.makePublic,
+			Public: c.makePublic,
 		}
 
 		// Copy the image to the destination host
@@ -247,7 +243,11 @@ func (c *publishCmd) run(conf *config.Config, args []string) error {
 		}
 	}
 
-	fmt.Printf(i18n.G("Container published with fingerprint: %s")+"\n", fp)
+	err = ensureImageAliases(d, aliases, fingerprint)
+	if err != nil {
+		return err
+	}
+	fmt.Printf(i18n.G("Container published with fingerprint: %s")+"\n", fingerprint)
 
 	return nil
 }

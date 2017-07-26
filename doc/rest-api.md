@@ -190,6 +190,8 @@ won't work and PUT needs to be used instead.
          * /1.0/containers/\<name\>/state
          * /1.0/containers/\<name\>/logs
          * /1.0/containers/\<name\>/logs/\<logfile\>
+         * /1.0/containers/\<name\>/metadata
+         * /1.0/containers/\<name\>/metadata/templates
      * /1.0/events
      * /1.0/images
        * /1.0/images/\<fingerprint\>
@@ -545,10 +547,11 @@ Input (using a remote container, sent over the migration websocket):
                    "operation": "https://10.0.2.3:8443/1.0/operations/<UUID>",          # Full URL to the remote operation (pull mode only)
                    "certificate": "PEM certificate",                                    # Optional PEM certificate. If not mentioned, system CA is used.
                    "base-image": "<fingerprint>",                                       # Optional, the base image the container was created from
-                   "container_only": "true",                                            # Whether to migrate only the container without snapshots. Can be "true" or "false".
+                   "container_only": true,                                              # Whether to migrate only the container without snapshots. Can be "true" or "false".
                    "secrets": {"control": "my-secret-string",                           # Secrets to use when talking to the migration source
                                "criu":    "my-other-secret",
-                               "fs":      "my third secret"},
+                               "fs":      "my third secret"}
+        }
     }
 
 Input (using a local container):
@@ -565,7 +568,7 @@ Input (using a local container):
             },
         },
         "source": {"type": "copy",                                                      # Can be: "image", "migration", "copy" or "none"
-                   "container_only": "true",                                            # Whether to copy only the container without snapshots. Can be "true" or "false".
+                   "container_only": true,                                              # Whether to copy only the container without snapshots. Can be "true" or "false".
                    "source": "my-old-container"}                                        # Name of the source container
     }
 
@@ -586,8 +589,8 @@ Input (using a remote container, in push mode sent over the migration websocket 
         "source": {"type": "migration",                                                 # Can be: "image", "migration", "copy" or "none"
                    "mode": "push",                                                      # "pull" and "push" are supported
                    "base-image": "<fingerprint>",                                       # Optional, the base image the container was created from
-                   "live": true                                                         # Whether migration is performed live
-                   "container_only": "true",                                            # Whether to migrate only the container without snapshots. Can be "true" or "false".
+                   "live": true,                                                        # Whether migration is performed live
+                   "container_only": true}                                              # Whether to migrate only the container without snapshots. Can be "true" or "false".
     }
 
 ## /1.0/containers/\<name\>
@@ -714,8 +717,11 @@ Input (simple rename):
     }
 
 Input (migration across lxd instances):
+
     {
+        "name": "new-name"
         "migration": true
+        "live": "true"
     }
 
 The migration does not actually start until someone (i.e. another lxd instance)
@@ -781,6 +787,27 @@ Depending on the state of the interactive flag, one or three different
 websocket/secret pairs will be returned, which are valid for connecting to this
 operations /websocket endpoint.
 
+
+The control websocket can be used to send out-of-band messages during an exec session.
+This is currently used for window size changes and for forwarding of signals.
+
+Control (window size change):
+
+    {
+        "command": "window-resize",
+        "args": {
+            "width": "80",
+            "height": "50"
+        }
+    }
+
+Control (SIGUSR1 signal):
+
+    {
+        "command": "signal",
+        "signal": 10
+    }
+
 Return (with wait-for-websocket=true and interactive=false):
 
     {
@@ -839,7 +866,7 @@ The following headers may be set by the client:
  * X-LXD-uid: 0
  * X-LXD-gid: 0
  * X-LXD-mode: 0700
- * X-LXD-type: one of "directory" or "file"
+ * X-LXD-type: one of "directory", "file" or "symlink"
  * X-LXD-write: overwrite (or append, introduced with API extension "file\_append")
 
 This is designed to be easily usable from the command line or even a web
@@ -954,7 +981,9 @@ Input (rename the snapshot):
 Input (setup the migration source):
 
     {
-        "migration": true,
+        "name": "new-name"
+        "migration": true
+        "live": "true"
     }
 
 Return (with migration=true):
@@ -1174,6 +1203,118 @@ Return:
 * Authentication: trusted
 * Operation: Sync
 * Return: empty response or standard error
+
+## /1.0/containers/\<name\>/metadata
+### GET
+* Description: Container metadata
+* Introduced: with API extension "container\_edit\_metadata"
+* Authentication: trusted
+* Operation: Sync
+* Return: dict representing container metadata
+
+Return:
+
+    {
+        "architecture": "x86_64",
+        "creation_date": 1477146654,
+        "expiry_date": 0,
+        "properties": {
+            "architecture": "x86_64",
+            "description": "Busybox x86_64",
+            "name": "busybox-x86_64",
+            "os": "Busybox"
+        },
+        "templates": {
+            "/template": {
+                "when": [
+                    ""
+                ],
+                "create_only": false,
+                "template": "template.tpl",
+                "properties": {}
+            }
+        }
+    }
+
+### PUT (ETag supported)
+* Description: Replaces container metadata
+* Introduced: with API extension "container\_edit\_metadata"
+* Authentication: trusted
+* Operation: sync
+* Return: standard return value or standard error
+
+Input:
+
+    {
+        "architecture": "x86_64",
+        "creation_date": 1477146654,
+        "expiry_date": 0,
+        "properties": {
+            "architecture": "x86_64",
+            "description": "Busybox x86_64",
+            "name": "busybox-x86_64",
+            "os": "Busybox"
+        },
+        "templates": {
+            "/template": {
+                "when": [
+                    ""
+                ],
+                "create_only": false,
+                "template": "template.tpl",
+                "properties": {}
+            }
+        }
+    }
+
+## /1.0/containers/\<name\>/metadata/templates
+### GET
+* Description: List container templates
+* Introduced: with API extension "container\_edit\_metadata"
+* Authentication: trusted
+* Operation: Sync
+* Return: a list with container template names
+
+Return:
+
+    [
+        "template.tpl",
+        "hosts.tpl"
+    ]
+
+### GET (?path=\<template\>)
+* Description: Content of a container template
+* Introduced: with API extension "container\_edit\_metadata"
+* Authentication: trusted
+* Operation: Sync
+* Return: the content of the template
+
+### POST (?path=\<template\>)
+* Description: Add a continer template
+* Introduced: with API extension "container\_edit\_metadata"
+* Authentication: trusted
+* Operation: Sync
+* Return: standard return value or standard error
+
+Input:
+ * Standard http file upload.
+
+### PUT (?path=\<template\>)
+* Description: Replace content of a template
+* Introduced: with API extension "container\_edit\_metadata"
+* Authentication: trusted
+* Operation: Sync
+* Return: standard return value or standard error
+
+Input:
+ * Standard http file upload.
+
+### DELETE (?path=\<template\>)
+* Description: Delete a container template
+* Introduced: with API extension "container\_edit\_metadata"
+* Authentication: trusted
+* Operation: Sync
+* Return: standard return value or standard error
 
 ## /1.0/events
 This URL isn't a real REST API endpoint, instead doing a GET query on it

@@ -54,11 +54,18 @@ available_storage_backends() {
   local backend backends
 
   backends="dir"
+
+  storage_backends="btrfs lvm zfs"
+  if [ -n "${LXD_CEPH_CLUSTER:-}" ]; then
+    storage_backends="${storage_backends} ceph"
+  fi
+
   for backend in btrfs lvm zfs; do
     if which $backend >/dev/null 2>&1; then
       backends="$backends $backend"
     fi
   done
+
   echo "$backends"
 }
 
@@ -88,7 +95,11 @@ fi
 
 echo "==> Available storage backends: $(available_storage_backends | sort)"
 if [ "$LXD_BACKEND" != "random" ] && ! storage_backend_available "$LXD_BACKEND"; then
-  echo "Storage backage \"$LXD_BACKEND\" is not available"
+  if [ "${LXD_BACKEND}" = "ceph" ] && [ -z "${LXD_CEPH_CLUSTER:-}" ]; then
+    echo "Ceph storage backend requires that \"LXD_CEPH_CLUSTER\" be set."
+    exit 1
+  fi
+  echo "Storage backend \"$LXD_BACKEND\" is not available"
   exit 1
 fi
 echo "==> Using storage backend ${LXD_BACKEND}"
@@ -118,6 +129,11 @@ spawn_lxd() {
     lxd_backend="$(random_storage_backend)"
   else
     lxd_backend="$LXD_BACKEND"
+  fi
+
+  if [ "${LXD_BACKEND}" = "ceph" ] && [ -z "${LXD_CEPH_CLUSTER:-}" ]; then
+    echo "A cluster name must be specified when using the CEPH driver." >&2
+    exit 1
   fi
 
   # Copy pre generated Certs
@@ -156,11 +172,7 @@ spawn_lxd() {
   fi
 
   echo "==> Setting up networking"
-  bad=0
-  ip link show lxdbr0 || bad=1
-  if [ "${bad}" -eq 0 ]; then
-    LXD_DIR="${lxddir}" lxc network attach-profile lxdbr0 default eth0
-  fi
+  LXD_DIR="${lxddir}" lxc profile device add default eth0 nic nictype=p2p name=eth0
 
   if [ "${storage}" = true ]; then
     echo "==> Configuring storage backend"
@@ -265,6 +277,16 @@ ensure_import_testimage() {
     if [ -e "${LXD_TEST_IMAGE:-}" ]; then
       lxc image import "${LXD_TEST_IMAGE}" --alias testimage
     else
+      if [ ! -e "/bin/busybox" ]; then
+        echo "Please install busybox (busybox-static) or set LXD_TEST_IMAGE"
+        exit 1
+      fi
+
+      if ldd /bin/busybox >/dev/null 2>&1; then
+        echo "The testsuite requires /bin/busybox to be a static binary"
+        exit 1
+      fi
+
       deps/import-busybox --alias testimage
     fi
   fi
@@ -602,6 +624,7 @@ run_test test_image_expiry "image expiry"
 run_test test_image_list_all_aliases "image list all aliases"
 run_test test_image_auto_update "image auto-update"
 run_test test_image_prefer_cached "image prefer cached"
+run_test test_image_import_dir "import image from directory"
 run_test test_concurrent_exec "concurrent exec"
 run_test test_concurrent "concurrent startup"
 run_test test_snapshots "container snapshots"
@@ -609,6 +632,7 @@ run_test test_snap_restore "snapshot restores"
 run_test test_config_profiles "profiles and configuration"
 run_test test_config_edit "container configuration edit"
 run_test test_config_edit_container_snapshot_pool_config "container and snapshot volume configuration edit"
+run_test test_container_metadata "manage container metadata and templates"
 run_test test_server_config "server configuration"
 run_test test_filemanip "file manipulations"
 run_test test_network "network management"
@@ -628,5 +652,6 @@ run_test test_init_preseed "lxd init preseed"
 run_test test_storage_profiles "storage profiles"
 run_test test_container_import "container import"
 run_test test_storage_volume_attach "attaching storage volumes"
+run_test test_storage_driver_ceph "ceph storage driver"
 
 TEST_RESULT=success

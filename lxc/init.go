@@ -290,7 +290,7 @@ func (c *initCmd) create(conf *config.Config, args []string) (lxd.ContainerServe
 		return nil, "", err
 	}
 
-	err = op.Wait()
+	err = cancelableWait(op, &progress)
 	if err != nil {
 		progress.Done("")
 		return nil, "", err
@@ -310,7 +310,8 @@ func (c *initCmd) create(conf *config.Config, args []string) (lxd.ContainerServe
 
 	if len(containers) == 1 && name == "" {
 		fields := strings.Split(containers[0], "/")
-		fmt.Printf(i18n.G("Container name is: %s")+"\n", fields[len(fields)-1])
+		name = fields[len(fields)-1]
+		fmt.Printf(i18n.G("Container name is: %s")+"\n", name)
 	}
 
 	// Validate the network setup

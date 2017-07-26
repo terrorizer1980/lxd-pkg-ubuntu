@@ -74,15 +74,23 @@ func storageVolumeValidateConfig(name string, config map[string]string, parentPo
 }
 
 func storageVolumeFillDefault(name string, config map[string]string, parentPool *api.StoragePool) error {
-	if parentPool.Driver == "dir" {
+	if parentPool.Driver == "dir" || parentPool.Driver == "ceph" {
 		config["size"] = ""
-	} else if parentPool.Driver == "lvm" {
+	} else if parentPool.Driver == "lvm" || parentPool.Driver == "ceph" {
 		if config["block.filesystem"] == "" {
 			config["block.filesystem"] = parentPool.Config["volume.block.filesystem"]
 		}
 		if config["block.filesystem"] == "" {
 			// Unchangeable volume property: Set unconditionally.
 			config["block.filesystem"] = "ext4"
+		}
+
+		if config["block.mount_options"] == "" {
+			config["block.mount_options"] = parentPool.Config["volume.block.mount_options"]
+		}
+		if config["block.mount_options"] == "" {
+			// Unchangeable volume property: Set unconditionally.
+			config["block.mount_options"] = "discard"
 		}
 
 		if config["size"] == "0" || config["size"] == "" {
@@ -98,6 +106,7 @@ func storageVolumeFillDefault(name string, config map[string]string, parentPool 
 			if err != nil {
 				return err
 			}
+		} else {
 			config["size"] = "10GB"
 		}
 

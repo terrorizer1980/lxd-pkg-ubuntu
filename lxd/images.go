@@ -203,21 +203,6 @@ func compressFile(path string, compress string) (string, error) {
 	return outfile.Name(), nil
 }
 
-type templateEntry struct {
-	When       []string          `yaml:"when"`
-	CreateOnly bool              `yaml:"create_only"`
-	Template   string            `yaml:"template"`
-	Properties map[string]string `yaml:"properties"`
-}
-
-type imageMetadata struct {
-	Architecture string                    `yaml:"architecture"`
-	CreationDate int64                     `yaml:"creation_date"`
-	ExpiryDate   int64                     `yaml:"expiry_date"`
-	Properties   map[string]string         `yaml:"properties"`
-	Templates    map[string]*templateEntry `yaml:"templates"`
-}
-
 /*
  * This function takes a container or snapshot from the local image server and
  * exports it as an image.
@@ -435,7 +420,7 @@ func imgPostURLInfo(d *Daemon, req api.ImagesPost, op *operation) (*api.Image, e
 
 func getImgPostInfo(d *Daemon, r *http.Request, builddir string, post *os.File) (*api.Image, error) {
 	info := api.Image{}
-	var imageMeta *imageMetadata
+	var imageMeta *api.ImageMetadata
 	logger := logging.AddContext(logger.Log, log.Ctx{"function": "getImgPostInfo"})
 
 	public, _ := strconv.Atoi(r.Header.Get("X-LXD-public"))
@@ -776,7 +761,7 @@ func imagesPost(d *Daemon, r *http.Request) Response {
 	return OperationResponse(op)
 }
 
-func getImageMetadata(fname string) (*imageMetadata, error) {
+func getImageMetadata(fname string) (*api.ImageMetadata, error) {
 	metadataName := "metadata.yaml"
 
 	compressionArgs, _, err := detectCompression(fname)
@@ -800,7 +785,7 @@ func getImageMetadata(fname string) (*imageMetadata, error) {
 		return nil, fmt.Errorf("Could not extract image %s from tar: %v (%s)", metadataName, err, outputLines[0])
 	}
 
-	metadata := imageMetadata{}
+	metadata := api.ImageMetadata{}
 	err = yaml.Unmarshal([]byte(output), &metadata)
 
 	if err != nil {
@@ -882,7 +867,7 @@ func autoUpdateImages(d *Daemon) {
 			continue
 		}
 
-		autoUpdateImage(d, nil, fingerprint, id, info)
+		autoUpdateImage(d, nil, id, info)
 	}
 
 	logger.Infof("Done updating images")
@@ -890,7 +875,8 @@ func autoUpdateImages(d *Daemon) {
 
 // Update a single image.  The operation can be nil, if no progress tracking is needed.
 // Returns whether the image has been updated.
-func autoUpdateImage(d *Daemon, op *operation, fingerprint string, id int, info *api.Image) error {
+func autoUpdateImage(d *Daemon, op *operation, id int, info *api.Image) error {
+	fingerprint := info.Fingerprint
 	_, source, err := dbImageSourceGet(d.db, id)
 	if err != nil {
 		logger.Error("Error getting source image", log.Ctx{"err": err, "fp": fingerprint})
@@ -1533,7 +1519,7 @@ func imageExport(d *Daemon, r *http.Request) Response {
 	if err != nil {
 		ext = ""
 	}
-	filename := fmt.Sprintf("%s%s", fingerprint, ext)
+	filename := fmt.Sprintf("%s%s", imgInfo.Fingerprint, ext)
 
 	if shared.PathExists(rootfsPath) {
 		files := make([]fileResponseEntry, 2)
@@ -1548,7 +1534,7 @@ func imageExport(d *Daemon, r *http.Request) Response {
 		if err != nil {
 			ext = ""
 		}
-		filename = fmt.Sprintf("%s%s", fingerprint, ext)
+		filename = fmt.Sprintf("%s%s", imgInfo.Fingerprint, ext)
 
 		files[1].identifier = "rootfs"
 		files[1].path = rootfsPath
@@ -1601,7 +1587,7 @@ func imageRefresh(d *Daemon, r *http.Request) Response {
 
 	// Begin background operation
 	run := func(op *operation) error {
-		return autoUpdateImage(d, op, fingerprint, imageId, imageInfo)
+		return autoUpdateImage(d, op, imageId, imageInfo)
 	}
 
 	op, err := operationCreate(operationClassTask, nil, nil, run, nil, nil)
