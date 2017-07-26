@@ -5,8 +5,11 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/lxc/lxd/client"
 	"github.com/lxc/lxd/shared/api"
@@ -26,9 +29,13 @@ type ProgressRenderer struct {
 	Format string
 
 	maxLength int
+	wait      time.Time
+	done      bool
 }
 
 func (p *ProgressRenderer) Done(msg string) {
+	p.done = true
+
 	if msg != "" {
 		msg += "\n"
 	}
@@ -44,12 +51,34 @@ func (p *ProgressRenderer) Done(msg string) {
 }
 
 func (p *ProgressRenderer) Update(status string) {
+	if p.done {
+		return
+	}
+
+	timeout := p.wait.Sub(time.Now())
+	if timeout.Seconds() > 0 {
+		time.Sleep(timeout)
+	}
+
 	msg := "%s"
 	if p.Format != "" {
 		msg = p.Format
 	}
 
 	msg = fmt.Sprintf("\r"+msg, status)
+
+	if len(msg) > p.maxLength {
+		p.maxLength = len(msg)
+	} else {
+		fmt.Printf("\r%s", strings.Repeat(" ", p.maxLength))
+	}
+
+	fmt.Print(msg)
+}
+
+func (p *ProgressRenderer) Warn(status string, timeout time.Duration) {
+	p.wait = time.Now().Add(timeout)
+	msg := fmt.Sprintf("\r%s", status)
 
 	if len(msg) > p.maxLength {
 		p.maxLength = len(msg)
@@ -281,4 +310,91 @@ func profileDeviceAdd(client lxd.ContainerServer, name string, devName string, d
 	}
 
 	return nil
+}
+
+// Wait for an operation and cancel it on SIGINT/SIGTERM
+func cancelableWait(op *lxd.RemoteOperation, progress *ProgressRenderer) error {
+	// Signal handling
+	chSignal := make(chan os.Signal)
+	signal.Notify(chSignal, os.Interrupt)
+
+	// Operation handling
+	chOperation := make(chan error)
+	go func() {
+		chOperation <- op.Wait()
+		close(chOperation)
+	}()
+
+	count := 0
+	for {
+		select {
+		case err := <-chOperation:
+			return err
+		case <-chSignal:
+			err := op.CancelTarget()
+			if err == nil {
+				return fmt.Errorf(i18n.G("Remote operation canceled by user"))
+			} else {
+				count++
+
+				if count == 3 {
+					return fmt.Errorf(i18n.G("User signaled us three times, exiting. The remote operation will keep running."))
+				}
+
+				if progress != nil {
+					progress.Warn(fmt.Sprintf(i18n.G("%v (interrupt two more times to force)"), err), time.Second*5)
+				}
+			}
+		}
+	}
+}
+
+// Create the specified image alises, updating those that already exist
+func ensureImageAliases(client lxd.ContainerServer, aliases []api.ImageAlias, fingerprint string) error {
+	if len(aliases) == 0 {
+		return nil
+	}
+
+	names := make([]string, len(aliases))
+	for i, alias := range aliases {
+		names[i] = alias.Name
+	}
+	sort.Strings(names)
+
+	resp, err := client.GetImageAliases()
+	if err != nil {
+		return err
+	}
+
+	// Delete existing aliases that match provided ones
+	for _, alias := range GetExistingAliases(names, resp) {
+		err := client.DeleteImageAlias(alias.Name)
+		if err != nil {
+			fmt.Println(fmt.Sprintf(i18n.G("Failed to remove alias %s"), alias.Name))
+		}
+	}
+	// Create new aliases
+	for _, alias := range aliases {
+		aliasPost := api.ImageAliasesPost{}
+		aliasPost.Name = alias.Name
+		aliasPost.Target = fingerprint
+		err := client.CreateImageAlias(aliasPost)
+		if err != nil {
+			fmt.Println(fmt.Sprintf(i18n.G("Failed to create alias %s"), alias.Name))
+		}
+	}
+	return nil
+}
+
+// GetExistingAliases returns the intersection between a list of aliases and all the existing ones.
+func GetExistingAliases(aliases []string, allAliases []api.ImageAliasesEntry) []api.ImageAliasesEntry {
+	existing := []api.ImageAliasesEntry{}
+	for _, alias := range allAliases {
+		name := alias.Name
+		pos := sort.SearchStrings(aliases, name)
+		if pos < len(aliases) && aliases[pos] == name {
+			existing = append(existing, alias)
+		}
+	}
+	return existing
 }

@@ -19,6 +19,12 @@ test_storage() {
   lxc storage show "$storage_pool" | grep -q 'description: foo'
 
   lxc storage volume create "$storage_pool" "$storage_volume"
+  if [ "$lxd_backend" != "dir" ] && [ "$lxd_backend" != "ceph" ]; then
+    # Test resizing/applying quota to a storage volume.
+    lxc storage volume set "$storage_pool" "$storage_volume" size 500MB
+    lxc storage volume unset "$storage_pool" "$storage_volume" size
+  fi
+  # Test setting description on a storage volume
   lxc storage volume show "$storage_pool" "$storage_volume" | sed 's/^description:.*/description: bar/' | lxc storage volume edit "$storage_pool" "$storage_volume"
   lxc storage volume show "$storage_pool" "$storage_volume" | grep -q 'description: bar'
   lxc storage volume delete "$storage_pool" "$storage_volume"
@@ -219,6 +225,7 @@ test_storage() {
       lxc list -c b c4pool2 | grep "lxdtest-$(basename "${LXD_DIR}")-pool2"
 
       lxc storage volume create "lxdtest-$(basename "${LXD_DIR}")-pool1" c1pool1
+      lxc storage volume set "lxdtest-$(basename "${LXD_DIR}")-pool1" c1pool1 zfs.use_refquota true
       lxc storage volume attach "lxdtest-$(basename "${LXD_DIR}")-pool1" c1pool1 c1pool1 testDevice /opt
       ! lxc storage volume attach "lxdtest-$(basename "${LXD_DIR}")-pool1" c1pool1 c1pool1 testDevice2 /opt
       lxc storage volume detach "lxdtest-$(basename "${LXD_DIR}")-pool1" c1pool1 c1pool1
@@ -330,10 +337,10 @@ test_storage() {
       lxc list -c b c12pool6 | grep "lxdtest-$(basename "${LXD_DIR}")-pool6"
       # grow lv
       lxc config device set c12pool6 root size 30MB
-      lxc restart c12pool6
+      lxc restart c12pool6 --force
       # shrink lv
       lxc config device set c12pool6 root size 25MB
-      lxc restart c12pool6
+      lxc restart c12pool6 --force
 
       lxc init testimage c10pool11 -s "lxdtest-$(basename "${LXD_DIR}")-pool11"
       lxc list -c b c10pool11 | grep "lxdtest-$(basename "${LXD_DIR}")-pool11"
@@ -698,7 +705,7 @@ test_storage() {
     QUOTA2="21MB"
   fi
 
-  if [ "$lxd_backend" != "dir" ]; then
+  if [ "$lxd_backend" != "dir" ] && [ "$lxd_backend" != "ceph" ]; then
     lxc launch testimage quota1
     lxc profile device set default root size "${QUOTA1}"
     lxc stop -f quota1

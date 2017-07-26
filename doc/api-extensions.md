@@ -37,7 +37,7 @@ This indicates support for PKI authentication mode.
 
 In this mode, the client and server both must use certificates issued by the same PKI.
 
-See lxd-ssl-authentication.md for details.
+See security.md for details.
 
 ## container\_last\_used\_at
 A last\_used\_at field was added to the /1.0/containers/\<name\> GET endpoint.
@@ -279,3 +279,39 @@ This allows forcing a refresh for an existing image.
 ## storage\_lvm\_lv\_resizing
 This introduces the ability to resize logical volumes by setting the "size"
 property in the containers root disk device.
+
+## id\_map\_base
+This introduces a new security.idmap.base allowing the user to skip the
+map auto-selection process for isolated containers and specify what host
+uid/gid to use as the base.
+
+## file\_symlinks
+This adds support for transfering symlinks through the file API.
+X-LXD-type can now be "symlink" with the request content being the target path.
+
+## container\_push\_target
+This adds the "target" field to POST /1.0/containers/NAME which can be
+used to have the source LXD host connect to the target during migration.
+
+## network\_vlan\_physical
+Allows use of "vlan" property with "physical" network devices.
+
+When set, this will instruct LXD to attach to the specified VLAN on the "parent" interface.
+LXD will look for an existing interface for that "parent" and VLAN on the host.
+If one can't be found it will create one itself.
+Then, LXD will directly attach this interface to the container.
+
+## storage\_images\_delete
+This enabled the storage API to delete storage volumes for images from
+a specific storage pool.
+
+## container\_edit\_metadata
+This adds support for editing a container metadata.yaml and related templates
+via API, by accessing urls under /1.0/containers/NAME/metadata. It can be used
+to edit a container before publishing an image from it.
+
+## container\_snapshot\_stateful\_migration
+This enables migrating stateful container snapshots to new containers.
+
+## storage\_driver\_ceph
+This adds a ceph storage driver.

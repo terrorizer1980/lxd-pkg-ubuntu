@@ -89,8 +89,9 @@ Images can be referenced by their full hash, shortest unique partial
 hash or alias name (if one is set).
 
 
-lxc image import <tarball> [<rootfs tarball>|<URL>] [<remote>:] [--public] [--created-at=ISO-8601] [--expires-at=ISO-8601] [--fingerprint=FINGERPRINT] [--alias=ALIAS...] [prop=value]
-    Import an image tarball (or tarballs) into the LXD image store.
+lxc image import <tarball>|<dir> [<rootfs tarball>|<URL>] [<remote>:] [--public] [--created-at=ISO-8601] [--expires-at=ISO-8601] [--fingerprint=FINGERPRINT] [--alias=ALIAS...] [prop=value]
+    Import an image tarball (or tarballs) or an image directory into the LXD image store.
+    Directory import is only available on Linux and must be performed as root.
 
 lxc image copy [<remote>:]<image> <remote>: [--alias=ALIAS...] [--copy-aliases] [--public] [--auto-update]
     Copy an image from one LXD daemon to another over the network.
@@ -338,8 +339,7 @@ func (c *imageCmd) doImageAlias(conf *config.Config, args []string) error {
 			return err
 		}
 
-		err = d.DeleteImageAlias(alias)
-		return err
+		return d.DeleteImageAlias(alias)
 	}
 	return errArgs
 }
@@ -388,32 +388,40 @@ func (c *imageCmd) run(conf *config.Config, args []string) error {
 			return err
 		}
 
-		// Check if an alias
-		fingerprint := c.dereferenceAlias(d, inName)
+		// Attempt to resolve an image alias
+		var imgInfo *api.Image
+		image := inName
+		if c.copyAliases {
+			alias, _, err := d.GetImageAlias(image)
+			if err == nil {
+				image = alias.Target
+			}
 
-		// Get the image
-		image, _, err := d.GetImage(fingerprint)
-		if err != nil {
-			return err
+			// Get the image info
+			imgInfo, _, err = d.GetImage(image)
+			if err != nil {
+				return err
+			}
+		} else {
+			// Don't fetch full image info if we don't need aliases (since it's
+			// an expensive operation)
+			imgInfo = &api.Image{}
+			imgInfo.Fingerprint = image
+			imgInfo.Public = true
 		}
 
-		// Setup the copy arguments
-		aliases := []api.ImageAlias{}
-		for _, entry := range c.addAliases {
-			alias := api.ImageAlias{}
-			alias.Name = entry
-			aliases = append(aliases, alias)
+		if imgInfo.Public && imgInfo.Fingerprint != inName && !strings.HasPrefix(imgInfo.Fingerprint, inName) {
+			// If dealing with an alias, set the imgInfo fingerprint to match
+			imgInfo.Fingerprint = inName
 		}
 
 		args := lxd.ImageCopyArgs{
-			Aliases:     aliases,
-			AutoUpdate:  c.autoUpdate,
-			CopyAliases: c.copyAliases,
-			Public:      c.publicImage,
+			AutoUpdate: c.autoUpdate,
+			Public:     c.publicImage,
 		}
 
 		// Do the copy
-		op, err := dest.CopyImage(d, *image, &args)
+		op, err := dest.CopyImage(d, *imgInfo, &args)
 		if err != nil {
 			return err
 		}
@@ -427,14 +435,27 @@ func (c *imageCmd) run(conf *config.Config, args []string) error {
 		}
 
 		// Wait for operation to finish
-		err = op.Wait()
+		err = cancelableWait(op, &progress)
 		if err != nil {
 			progress.Done("")
 			return err
 		}
 
 		progress.Done(i18n.G("Image copied successfully!"))
-		return nil
+
+		// Ensure aliases
+		aliases := make([]api.ImageAlias, len(c.addAliases))
+		for i, entry := range c.addAliases {
+			aliases[i].Name = entry
+		}
+		if c.copyAliases {
+			// Also add the original aliases
+			for _, alias := range imgInfo.Aliases {
+				aliases = append(aliases, alias)
+			}
+		}
+		err = ensureImageAliases(dest, aliases, image)
+		return err
 
 	case "delete":
 		/* delete [<remote>:]<image> [<remote>:][<image>...] */
@@ -494,6 +515,9 @@ func (c *imageCmd) run(conf *config.Config, args []string) error {
 
 			// Register progress handler
 			_, err = op.AddHandler(progress.UpdateOp)
+			if err != nil {
+				return err
+			}
 
 			// Check if refreshed
 			refreshed := false
@@ -666,6 +690,15 @@ func (c *imageCmd) run(conf *config.Config, args []string) error {
 			var rootfs io.ReadCloser
 
 			// Open meta
+			if shared.IsDir(imageFile) {
+				imageFile, err = packImageDir(imageFile)
+				if err != nil {
+					return err
+				}
+				// remove temp file
+				defer os.Remove(imageFile)
+
+			}
 			meta, err = os.Open(imageFile)
 			if err != nil {
 				return err
@@ -709,17 +742,16 @@ func (c *imageCmd) run(conf *config.Config, args []string) error {
 		progress.Done(fmt.Sprintf(i18n.G("Image imported with fingerprint: %s"), fingerprint))
 
 		// Add the aliases
-		for _, entry := range c.addAliases {
-			alias := api.ImageAliasesPost{}
-			alias.Name = entry
-			alias.Target = fingerprint
-
-			err = d.CreateImageAlias(alias)
+		if len(c.addAliases) > 0 {
+			aliases := make([]api.ImageAlias, len(c.addAliases))
+			for i, entry := range c.addAliases {
+				aliases[i].Name = entry
+			}
+			err = ensureImageAliases(d, aliases, fingerprint)
 			if err != nil {
 				return err
 			}
 		}
-
 		return nil
 
 	case "list":
@@ -739,9 +771,14 @@ func (c *imageCmd) run(conf *config.Config, args []string) error {
 					return err
 				}
 			} else {
-				remote, _, err = conf.ParseRemote(args[1])
+				var filter string
+				remote, filter, err = conf.ParseRemote(args[1])
 				if err != nil {
 					return err
+				}
+
+				if filter != "" {
+					filters = append(filters, filter)
 				}
 			}
 		} else {
@@ -1194,4 +1231,27 @@ func (c *imageCmd) aliasShouldShow(filters []string, state *api.ImageAliasesEntr
 	}
 
 	return false
+}
+
+// Package the image from the specified directory, if running as root.  Return
+// the image filename
+func packImageDir(path string) (string, error) {
+	switch os.Geteuid() {
+	case 0:
+	case -1:
+		return "", fmt.Errorf(
+			i18n.G("Directory import is not available on this platform"))
+	default:
+		return "", fmt.Errorf(i18n.G("Must run as root to import from directory"))
+	}
+
+	outFile, err := ioutil.TempFile("", "lxd_image_")
+	if err != nil {
+		return "", err
+	}
+	defer outFile.Close()
+	outFileName := outFile.Name()
+
+	shared.RunCommand("tar", "-C", path, "--numeric-owner", "-cJf", outFileName, "rootfs", "templates", "metadata.yaml")
+	return outFileName, nil
 }

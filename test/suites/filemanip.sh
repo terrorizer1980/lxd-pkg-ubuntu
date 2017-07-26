@@ -23,6 +23,7 @@ test_filemanip() {
   chown 1000:1000 "${TEST_DIR}"/source/another_level
   echo "foo" > "${TEST_DIR}"/source/foo
   echo "bar" > "${TEST_DIR}"/source/bar
+  ln -s bar "${TEST_DIR}"/source/baz
 
   lxc file push -p -r "${TEST_DIR}"/source filemanip/tmp/ptest
 
@@ -31,8 +32,30 @@ test_filemanip() {
   [ "$(lxc exec filemanip -- stat -c "%u" /tmp/ptest/source/another_level)" = "1000" ]
   [ "$(lxc exec filemanip -- stat -c "%g" /tmp/ptest/source/another_level)" = "1000" ]
   [ "$(lxc exec filemanip -- stat -c "%a" /tmp/ptest/source)" = "755" ]
+  [ "$(lxc exec filemanip -- readlink /tmp/ptest/source/baz)" = "bar" ]
 
   lxc exec filemanip -- rm -rf /tmp/ptest/source
+
+  # Test pushing/pulling a file with spaces
+  echo "foo" > "${TEST_DIR}/source/file with spaces"
+
+  lxc file push -p -r "${TEST_DIR}"/source filemanip/tmp/ptest
+  lxc exec filemanip -- find /tmp/ptest/source | grep -q "file with spaces"
+  rm -rf "${TEST_DIR}/source/file with spaces"
+
+  lxc file pull -p -r filemanip/tmp/ptest "${TEST_DIR}/dest"
+  find "${TEST_DIR}/dest/" | grep "file with spaces"
+  rm -rf "${TEST_DIR}/dest"
+
+  # Check that file permissions are not applied to intermediate directories
+
+  lxc file push -p --mode=400 "${TEST_DIR}"/source/foo \
+      filemanip/tmp/ptest/d1/d2/foo
+
+  [ "$(lxc exec filemanip -- stat -c "%a" /tmp/ptest/d1)" = "750" ]
+  [ "$(lxc exec filemanip -- stat -c "%a" /tmp/ptest/d1/d2)" = "750" ]
+
+  lxc exec filemanip -- rm -rf /tmp/ptest/d1
 
   # Special case where we are in the same directory as the one we are currently
   # created.

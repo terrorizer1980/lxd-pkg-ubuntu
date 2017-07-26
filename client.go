@@ -1,8 +1,7 @@
-package lxd
-
 // DEPRECATED: This package is now deprecated in favor of github.com/lxc/lxd/client
 //
 // This package will be entirely removed from the code tree with LXD 2.16
+package lxd
 
 import (
 	"bytes"
@@ -2748,7 +2747,7 @@ func (c *Client) AsyncWaitMeta(resp *api.Response) (map[string]interface{}, erro
 	return op.Metadata, nil
 }
 
-func (c *Client) ImageFromContainer(cname string, public bool, aliases []string, properties map[string]string, compression_algorithm string) (string, error) {
+func (c *Client) ImageFromContainer(cname string, public bool, aliases []string, properties map[string]string, compressionAlgorithm string) (string, error) {
 	if c.Remote.Public {
 		return "", fmt.Errorf("This function isn't supported by public remotes.")
 	}
@@ -2759,8 +2758,8 @@ func (c *Client) ImageFromContainer(cname string, public bool, aliases []string,
 
 	body := shared.Jmap{"public": public, "source": source, "properties": properties}
 
-	if compression_algorithm != "" {
-		body["compression_algorithm"] = compression_algorithm
+	if compressionAlgorithm != "" {
+		body["compression_algorithm"] = compressionAlgorithm
 	}
 
 	resp, err := c.post("images", body, api.AsyncResponse)

@@ -447,7 +447,7 @@ type container interface {
 	// File handling
 	FileExists(path string) error
 	FilePull(srcpath string, dstpath string) (int64, int64, os.FileMode, string, []string, error)
-	FilePush(srcpath string, dstpath string, uid int64, gid int64, mode int, write string) error
+	FilePush(type_ string, srcpath string, dstpath string, uid int64, gid int64, mode int, write string) error
 	FileRemove(path string) error
 
 	/* Command execution:
@@ -849,15 +849,19 @@ func containerConfigureInternal(c container) error {
 		storageTypeName := storage.GetStorageTypeName()
 		if storageTypeName == "lvm" && c.IsRunning() {
 			err = c.ConfigKeySet("volatile.apply_quota", rootDiskDevice["size"])
+			if err != nil {
+				return err
+			}
 		} else {
 			size, err := shared.ParseByteSizeString(rootDiskDevice["size"])
 			if err != nil {
 				return err
 			}
-			err = storage.ContainerSetQuota(c, size)
-		}
-		if err != nil {
-			return err
+
+			err = storage.StorageEntitySetQuota(storagePoolVolumeTypeContainer, size, c)
+			if err != nil {
+				return err
+			}
 		}
 	}
 

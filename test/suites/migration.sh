@@ -74,10 +74,10 @@ migration() {
   # perform existence check for various files.
   lxc_remote start l2:nonlive
   # FIXME: make this backend agnostic
-  if [ "$lxd2_backend" != "lvm" ]; then
+  if [ "$lxd2_backend" != "lvm" ] && [ "$lxd2_backend" != "zfs" ] && [ "$lxd2_backend" != "ceph" ]; then
     [ -d "${lxd2_dir}/containers/nonlive/rootfs" ]
   fi
-  lxc_remote stop l2:nonlive
+  lxc_remote stop l2:nonlive --force
 
   [ ! -d "${LXD_DIR}/containers/nonlive" ]
   # FIXME: make this backend agnostic
@@ -85,13 +85,13 @@ migration() {
     [ -d "${lxd2_dir}/snapshots/nonlive/snap0/rootfs/bin" ]
   fi
 
-  lxc_remote copy l2:nonlive l1:nonlive2
+  lxc_remote copy l2:nonlive l1:nonlive2 --mode=push
   # This line exists so that the container's storage volume is mounted when we
   # perform existence check for various files.
   lxc_remote start l2:nonlive
   [ -d "${LXD_DIR}/containers/nonlive2" ]
   # FIXME: make this backend agnostic
-  if [ "$lxd2_backend" != "lvm" ]; then
+  if [ "$lxd2_backend" != "lvm" ] && [ "$lxd2_backend" != "zfs" ] && [ "$lxd2_backend" != "ceph" ]; then
     [ -d "${lxd2_dir}/containers/nonlive/rootfs/bin" ]
   fi
 
@@ -100,15 +100,15 @@ migration() {
     [ -d "${LXD_DIR}/snapshots/nonlive2/snap0/rootfs/bin" ]
   fi
 
-  lxc_remote copy l1:nonlive2/snap0 l2:nonlive3
+  lxc_remote copy l1:nonlive2/snap0 l2:nonlive3 --mode=relay
   # FIXME: make this backend agnostic
-  if [ "$lxd2_backend" != "lvm" ]; then
+  if [ "$lxd2_backend" != "lvm" ] && [ "$lxd2_backend" != "zfs" ] && [ "$lxd2_backend" != "ceph" ]; then
     [ -d "${lxd2_dir}/containers/nonlive3/rootfs/bin" ]
   fi
   lxc_remote delete l2:nonlive3 --force
 
-  lxc_remote stop l2:nonlive
-  lxc_remote copy l2:nonlive l2:nonlive2
+  lxc_remote stop l2:nonlive --force
+  lxc_remote copy l2:nonlive l2:nonlive2 --mode=push
   # should have the same base image tag
   [ "$(lxc_remote config get l2:nonlive volatile.base_image)" = "$(lxc_remote config get l2:nonlive2 volatile.base_image)" ]
   # check that nonlive2 has a new addr in volatile
@@ -158,7 +158,7 @@ migration() {
   lxc_remote delete l2:udssr
 
   # Remote container only move.
-  lxc_remote move l1:cccp l2:udssr --container-only
+  lxc_remote move l1:cccp l2:udssr --container-only --mode=relay
   ! lxc_remote info l1:cccp
   [ "$(lxc_remote info l2:udssr | grep -c snap)" -eq 0 ]
   lxc_remote delete l2:udssr
@@ -168,7 +168,7 @@ migration() {
   lxc_remote snapshot l1:cccp
 
   # Remote container with snapshots move.
-  lxc_remote move l1:cccp l2:udssr
+  lxc_remote move l1:cccp l2:udssr --mode=push
   ! lxc_remote info l1:cccp
   [ "$(lxc_remote info l2:udssr | grep -c snap)" -eq 2 ]
   lxc_remote delete l2:udssr
@@ -179,7 +179,7 @@ migration() {
   lxc snapshot cccp
 
   # Local container with snapshots move.
-  lxc move cccp udssr
+  lxc move cccp udssr --mode=pull
   ! lxc info cccp
   [ "$(lxc info udssr | grep -c snap)" -eq 2 ]
   lxc delete udssr
@@ -217,5 +217,13 @@ migration() {
 
   lxc_remote stop --stateful l1:migratee
   lxc_remote start l1:migratee
+  lxc_remote snapshot --stateful l1:migratee
+  lxc_remote stop -f l1:migratee
+  lxc_remote copy l1:migratee/snap0 l2:migratee
+  ! lxc_remote copy l1:migratee/snap0 l2:migratee-new-name
+  lxc_remote copy --stateless l1:migratee/snap0 l2:migratee-new-name
+
   lxc_remote delete --force l1:migratee
+  lxc_remote delete --force l2:migratee
+  lxc_remote delete --force l2:migratee-new-name
 }

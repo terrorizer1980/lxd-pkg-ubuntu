@@ -182,6 +182,35 @@ func (op *Operation) setupListener() error {
 		return err
 	}
 
+	// Monitor event listener
+	go func() {
+		<-chReady
+
+		// We don't want concurrency while accessing the listener
+		op.handlerLock.Lock()
+
+		// Check if we're done already (because of another event)
+		listener := op.listener
+		if listener == nil {
+			op.handlerLock.Unlock()
+			return
+		}
+		op.handlerLock.Unlock()
+
+		// Wait for the listener or operation to be done
+		select {
+		case <-listener.chActive:
+			op.handlerLock.Lock()
+			if op.listener != nil {
+				op.Err = fmt.Sprintf("%v", listener.err)
+				close(op.chActive)
+			}
+			op.handlerLock.Unlock()
+		case <-op.chActive:
+			return
+		}
+	}()
+
 	// And do a manual refresh to avoid races
 	err = op.Refresh()
 	if err != nil {
@@ -277,6 +306,15 @@ func (op *RemoteOperation) AddHandler(function func(api.Operation)) (*EventTarge
 	op.handlers = append(op.handlers, function)
 
 	return target, nil
+}
+
+// CancelTarget attempts to cancel the target operation
+func (op *RemoteOperation) CancelTarget() error {
+	if op.targetOp == nil {
+		return fmt.Errorf("No associated target operation")
+	}
+
+	return op.targetOp.Cancel()
 }
 
 // GetTarget returns the target operation

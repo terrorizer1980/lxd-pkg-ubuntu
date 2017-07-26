@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"strconv"
 
@@ -196,14 +198,51 @@ func snapshotGet(sc container, name string) Response {
 }
 
 func snapshotPost(d *Daemon, r *http.Request, sc container, containerName string) Response {
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		return InternalError(err)
+	}
+
+	rdr1 := ioutil.NopCloser(bytes.NewBuffer(body))
+
 	raw := shared.Jmap{}
-	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+	if err := json.NewDecoder(rdr1).Decode(&raw); err != nil {
 		return BadRequest(err)
 	}
 
 	migration, err := raw.GetBool("migration")
 	if err == nil && migration {
-		ws, err := NewMigrationSource(sc, false, true)
+		rdr2 := ioutil.NopCloser(bytes.NewBuffer(body))
+		rdr3 := ioutil.NopCloser(bytes.NewBuffer(body))
+
+		req := api.ContainerPost{}
+		err = json.NewDecoder(rdr2).Decode(&req)
+		if err != nil {
+			return BadRequest(err)
+		}
+
+		reqNew := api.ContainerSnapshotPost{}
+		err = json.NewDecoder(rdr3).Decode(&reqNew)
+		if err != nil {
+			return BadRequest(err)
+		}
+
+		if reqNew.Name == "" {
+			return BadRequest(fmt.Errorf(`A new name for the ` +
+				`container must be provided`))
+		}
+
+		if reqNew.Live {
+			sourceName, _, _ := containerGetParentAndSnapshotName(containerName)
+			if sourceName != reqNew.Name {
+				return BadRequest(fmt.Errorf(`Copying `+
+					`stateful containers requires that `+
+					`source "%s" and `+`target "%s" name `+
+					`be identical`, sourceName, reqNew.Name))
+			}
+		}
+
+		ws, err := NewMigrationSource(sc, reqNew.Live, true)
 		if err != nil {
 			return SmartError(err)
 		}
@@ -211,6 +250,22 @@ func snapshotPost(d *Daemon, r *http.Request, sc container, containerName string
 		resources := map[string][]string{}
 		resources["containers"] = []string{containerName}
 
+		if req.Target != nil {
+			// Push mode
+			err := ws.ConnectTarget(*req.Target)
+			if err != nil {
+				return InternalError(err)
+			}
+
+			op, err := operationCreate(operationClassTask, resources, nil, ws.Do, nil, nil)
+			if err != nil {
+				return InternalError(err)
+			}
+
+			return OperationResponse(op)
+		}
+
+		// Pull mode
 		op, err := operationCreate(operationClassWebsocket, resources, ws.Metadata(), ws.Do, nil, ws.Connect)
 		if err != nil {
 			return InternalError(err)

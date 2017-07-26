@@ -2,6 +2,7 @@ package lxd
 
 import (
 	"io"
+	"net/http"
 
 	"github.com/gorilla/websocket"
 
@@ -12,6 +13,7 @@ import (
 // The Server type represents a generic read-only server.
 type Server interface {
 	GetConnectionInfo() (info *ConnectionInfo, err error)
+	GetHTTPClient() (client *http.Client, err error)
 }
 
 // The ImageServer type represents a read-only image server.
@@ -85,6 +87,15 @@ type ContainerServer interface {
 	GetContainerLogfiles(name string) (logfiles []string, err error)
 	GetContainerLogfile(name string, filename string) (content io.ReadCloser, err error)
 	DeleteContainerLogfile(name string, filename string) (err error)
+
+	GetContainerMetadata(name string) (*api.ImageMetadata, string, error)
+	SetContainerMetadata(name string, metadata api.ImageMetadata, ETag string) error
+
+	GetContainerTemplateFiles(containerName string) (templates []string, err error)
+	GetContainerTemplateFile(containerName string, templateName string) (content io.ReadCloser, err error)
+	CreateContainerTemplateFile(containerName string, templateName string, content io.ReadSeeker) (err error)
+	UpdateContainerTemplateFile(containerName string, templateName string, content io.ReadSeeker) (err error)
+	DeleteContainerTemplateFile(name string, templateName string) (err error)
 
 	// Event handling functions
 	GetEvents() (listener *EventListener, err error)
@@ -240,12 +251,22 @@ type ContainerCopyArgs struct {
 
 	// If set, only the container will copied, its snapshots won't
 	ContainerOnly bool
+
+	// The transfer mode, can be "pull" (default), "push" or "relay"
+	Mode string
 }
 
 // The ContainerSnapshotCopyArgs struct is used to pass additional options during container copy
 type ContainerSnapshotCopyArgs struct {
 	// If set, the container will be renamed on copy
 	Name string
+
+	// The transfer mode, can be "pull" (default), "push" or "relay"
+	Mode string
+
+	// API extension: container_snapshot_stateful_migration
+	// If set, the container running state will be transferred (live migration)
+	Live bool
 }
 
 // The ContainerExecArgs struct is used to pass additional options during container exec

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -124,38 +125,42 @@ func (c *fileCmd) recursivePushFile(d lxd.ContainerServer, container string, sou
 			return fmt.Errorf(i18n.G("Failed to walk path for %s: %s"), p, err)
 		}
 
-		// Detect symlinks
-		if !fInfo.Mode().IsRegular() && !fInfo.Mode().IsDir() {
-			return fmt.Errorf(i18n.G("'%s' isn't a regular file or directory."), p)
+		// Detect unsupported files
+		if !fInfo.Mode().IsRegular() && !fInfo.Mode().IsDir() && fInfo.Mode()&os.ModeSymlink != os.ModeSymlink {
+			return fmt.Errorf(i18n.G("'%s' isn't a supported file type."), p)
 		}
 
+		// Prepare for file transfer
 		targetPath := path.Join(target, filepath.ToSlash(p[sourceLen:]))
+		mode, uid, gid := shared.GetOwnerMode(fInfo)
+		args := lxd.ContainerFileArgs{
+			UID:  int64(uid),
+			GID:  int64(gid),
+			Mode: int(mode.Perm()),
+		}
+
 		if fInfo.IsDir() {
-			mode, uid, gid := shared.GetOwnerMode(fInfo)
-			args := lxd.ContainerFileArgs{
-				UID:  int64(uid),
-				GID:  int64(gid),
-				Mode: int(mode.Perm()),
-				Type: "directory",
+			// Directory handling
+			args.Type = "directory"
+		} else if fInfo.Mode()&os.ModeSymlink == os.ModeSymlink {
+			// Symlink handling
+			symlinkTarget, err := os.Readlink(p)
+			if err != nil {
+				return err
 			}
 
-			return d.CreateContainerFile(container, targetPath, args)
-		}
+			args.Type = "symlink"
+			args.Content = bytes.NewReader([]byte(symlinkTarget))
+		} else {
+			// File handling
+			f, err := os.Open(p)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
 
-		f, err := os.Open(p)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-
-		mode, uid, gid := shared.GetOwnerMode(fInfo)
-
-		args := lxd.ContainerFileArgs{
-			Content: f,
-			UID:     int64(uid),
-			GID:     int64(gid),
-			Mode:    int(mode.Perm()),
-			Type:    "file",
+			args.Type = "file"
+			args.Content = f
 		}
 
 		return d.CreateContainerFile(container, targetPath, args)
@@ -164,7 +169,7 @@ func (c *fileCmd) recursivePushFile(d lxd.ContainerServer, container string, sou
 	return filepath.Walk(source, sendFile)
 }
 
-func (c *fileCmd) recursiveMkdir(d lxd.ContainerServer, container string, p string, mode os.FileMode, uid int64, gid int64) error {
+func (c *fileCmd) recursiveMkdir(d lxd.ContainerServer, container string, p string, mode *os.FileMode, uid int64, gid int64) error {
 	/* special case, every container has a /, we don't need to do anything */
 	if p == "/" {
 		return nil
@@ -197,10 +202,14 @@ func (c *fileCmd) recursiveMkdir(d lxd.ContainerServer, container string, p stri
 			continue
 		}
 
+		modeArg := -1
+		if mode != nil {
+			modeArg = int(mode.Perm())
+		}
 		args := lxd.ContainerFileArgs{
 			UID:  uid,
 			GID:  gid,
-			Mode: int(mode.Perm()),
+			Mode: modeArg,
 			Type: "directory",
 		}
 
@@ -286,7 +295,7 @@ func (c *fileCmd) push(conf *config.Config, send_file_perms bool, args []string)
 
 			mode, uid, gid := shared.GetOwnerMode(finfo)
 
-			err = c.recursiveMkdir(d, container, targetPath, mode, int64(uid), int64(gid))
+			err = c.recursiveMkdir(d, container, targetPath, &mode, int64(uid), int64(gid))
 			if err != nil {
 				return err
 			}
@@ -346,12 +355,8 @@ func (c *fileCmd) push(conf *config.Config, send_file_perms bool, args []string)
 				return err
 			}
 
-			if c.mode == "" || c.uid == -1 || c.gid == -1 {
-				dMode, dUid, dGid := shared.GetOwnerMode(finfo)
-				if c.mode == "" {
-					mode = dMode
-				}
-
+			_, dUid, dGid := shared.GetOwnerMode(finfo)
+			if c.uid == -1 || c.gid == -1 {
 				if c.uid == -1 {
 					uid = dUid
 				}
@@ -361,7 +366,7 @@ func (c *fileCmd) push(conf *config.Config, send_file_perms bool, args []string)
 				}
 			}
 
-			err = c.recursiveMkdir(d, container, path.Dir(fpath), mode, int64(uid), int64(gid))
+			err = c.recursiveMkdir(d, container, path.Dir(fpath), nil, int64(uid), int64(gid))
 			if err != nil {
 				return err
 			}
