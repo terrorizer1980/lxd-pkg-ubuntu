@@ -1,0 +1,38 @@
+From b8d63b0a251a3ed1c63a60680480ea5531860dba Mon Sep 17 00:00:00 2001
+From: Christian Brauner <christian.brauner@ubuntu.com>
+Date: Wed, 26 Jul 2017 15:06:57 +0200
+Subject: patches: fix canmount=noauto patch
+
+When either one of those datasets does not exist (e.g. the user has deleted it
+or has upgrade from a LXD instance that didn't automatically create these
+datasets already) then the upgrade will fail.
+
+Closes #3594.
+
+Signed-off-by: Christian Brauner <christian.brauner@ubuntu.com>
+---
+ lxd/patches.go | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/lxd/patches.go b/lxd/patches.go
+index bc511f4c..b3d5af51 100644
+--- a/lxd/patches.go
++++ b/lxd/patches.go
+@@ -2273,7 +2273,16 @@ func patchStorageZFSnoauto(name string, d *Daemon) error {
+ 		if zpool == "" {
+ 			continue
+ 		}
+-		paths := []string{fmt.Sprintf("%s/containers", zpool), fmt.Sprintf("%s/custom", zpool)}
++
++		containersDatasetPath := fmt.Sprintf("%s/containers", zpool)
++		customDatasetPath := fmt.Sprintf("%s/custom", zpool)
++		paths := []string{}
++		for _, v := range []string{containersDatasetPath, customDatasetPath} {
++			_, err := shared.RunCommand("zfs", "get", "-H", "-p", "-o", "value", "name", v)
++			if err == nil {
++				paths = append(paths, v)
++			}
++		}
+ 
+ 		args := []string{"list", "-t", "filesystem", "-o", "name", "-H", "-r"}
+ 		args = append(args, paths...)
