@@ -1,0 +1,26 @@
+From 99556630adc49f5b933b8458b877db005d455b7e Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Mon, 31 Jul 2017 17:59:19 -0400
+Subject: Don't use un-initialized structs in import
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ lxd/api_internal.go | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/lxd/api_internal.go b/lxd/api_internal.go
+index a41746ff..09c49da3 100644
+--- a/lxd/api_internal.go
++++ b/lxd/api_internal.go
+@@ -204,7 +204,7 @@ func internalImport(d *Daemon, r *http.Request) Response {
+ 
+ 	if poolErr == NoSuchObjectError {
+ 		// Create the storage pool db entry if it doesn't exist.
+-		err := storagePoolDBCreate(d, containerPoolName, pool.Description, backup.Pool.Driver, backup.Pool.Config)
++		err := storagePoolDBCreate(d, containerPoolName, "", backup.Pool.Driver, backup.Pool.Config)
+ 		if err != nil {
+ 			return SmartError(err)
+ 		}

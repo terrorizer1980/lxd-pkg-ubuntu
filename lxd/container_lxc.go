@@ -1812,6 +1812,7 @@ func (c *containerLXC) startCommon() (string, error) {
 			}
 
 			sawNvidia := false
+			found := false
 			for _, gpu := range gpus {
 				if (m["vendorid"] != "" && gpu.vendorid != m["vendorid"]) ||
 					(m["pci"] != "" && gpu.pci != m["pci"]) ||
@@ -1819,6 +1820,8 @@ func (c *containerLXC) startCommon() (string, error) {
 					(m["id"] != "" && gpu.id != m["id"]) {
 					continue
 				}
+
+				found = true
 
 				err := c.setupUnixDevice(k, m, gpu.major, gpu.minor, gpu.path, true)
 				if err != nil {
@@ -1844,6 +1847,12 @@ func (c *containerLXC) startCommon() (string, error) {
 						return "", err
 					}
 				}
+			}
+
+			if !found {
+				msg := "Failed to detect requested GPU device"
+				logger.Error(msg)
+				return "", fmt.Errorf(msg)
 			}
 		} else if m["type"] == "disk" {
 			if m["path"] != "/" {
@@ -2655,7 +2664,7 @@ func (c *containerLXC) Snapshots() ([]container, error) {
 	return containers, nil
 }
 
-func (c *containerLXC) Restore(sourceContainer container) error {
+func (c *containerLXC) Restore(sourceContainer container, stateful bool) error {
 	var ctxMap log.Ctx
 
 	// Initialize storage interface for the container.
@@ -2749,8 +2758,13 @@ func (c *containerLXC) Restore(sourceContainer container) error {
 
 	// If the container wasn't running but was stateful, should we restore
 	// it as running?
-	if shared.PathExists(c.StatePath()) {
+	if stateful == true {
+		if !shared.PathExists(c.StatePath()) {
+			return fmt.Errorf("Stateful snapshot restore requested by snapshot is stateless")
+		}
+
 		logger.Debug("Performing stateful restore", ctxMap)
+		c.stateful = true
 		err := c.Migrate(lxc.MIGRATE_RESTORE, c.StatePath(), "snapshot", false, false)
 		if err != nil {
 			return err
@@ -3854,6 +3868,7 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 				}
 
 				sawNvidia := false
+				found := false
 				for _, gpu := range gpus {
 					if (m["vendorid"] != "" && gpu.vendorid != m["vendorid"]) ||
 						(m["pci"] != "" && gpu.pci != m["pci"]) ||
@@ -3861,6 +3876,8 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 						(m["id"] != "" && gpu.id != m["id"]) {
 						continue
 					}
+
+					found = true
 
 					err = c.insertUnixDeviceNum(m, gpu.major, gpu.minor, gpu.path)
 					if err != nil {
@@ -3892,6 +3909,12 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
 							return err
 						}
 					}
+				}
+
+				if !found {
+					msg := "Failed to detect requested GPU device"
+					logger.Error(msg)
+					return fmt.Errorf(msg)
 				}
 			}
 		}
@@ -5788,12 +5811,12 @@ func (c *containerLXC) createNetworkDevice(name string, m types.Device) (string,
 	if shared.StringInSlice(m["nictype"], []string{"bridged", "p2p"}) {
 		n2 := deviceNextVeth()
 
-		_, err := shared.RunCommand("ip", "link", "add", n1, "type", "veth", "peer", "name", n2)
+		_, err := shared.RunCommand("ip", "link", "add", "dev", n1, "type", "veth", "peer", "name", n2)
 		if err != nil {
 			return "", fmt.Errorf("Failed to create the veth interface: %s", err)
 		}
 
-		_, err = shared.RunCommand("ip", "link", "set", n1, "up")
+		_, err = shared.RunCommand("ip", "link", "set", "dev", n1, "up")
 		if err != nil {
 			return "", fmt.Errorf("Failed to bring up the veth interface %s: %s", n1, err)
 		}
@@ -5836,7 +5859,7 @@ func (c *containerLXC) createNetworkDevice(name string, m types.Device) (string,
 
 		// Handle macvlan
 		if m["nictype"] == "macvlan" {
-			_, err := shared.RunCommand("ip", "link", "add", n1, "link", device, "type", "macvlan", "mode", "bridge")
+			_, err := shared.RunCommand("ip", "link", "add", "dev", n1, "link", device, "type", "macvlan", "mode", "bridge")
 			if err != nil {
 				return "", fmt.Errorf("Failed to create the new macvlan interface: %s", err)
 			}

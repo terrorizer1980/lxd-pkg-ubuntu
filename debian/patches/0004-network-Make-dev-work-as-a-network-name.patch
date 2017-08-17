@@ -1,0 +1,199 @@
+From 36194f18efc4105c1133ef805677eb7ae79cbfe3 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Tue, 1 Aug 2017 12:33:49 -0400
+Subject: network: Make "dev" work as a network name
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ lxd/container_lxc.go  |  6 +++---
+ lxd/devices.go        |  2 +-
+ lxd/networks.go       | 28 ++++++++++++++--------------
+ lxd/networks_utils.go |  4 ++--
+ 4 files changed, 20 insertions(+), 20 deletions(-)
+
+diff --git a/lxd/container_lxc.go b/lxd/container_lxc.go
+index a438b9d7..f0bc405b 100644
+--- a/lxd/container_lxc.go
++++ b/lxd/container_lxc.go
+@@ -5788,12 +5788,12 @@ func (c *containerLXC) createNetworkDevice(name string, m types.Device) (string,
+ 	if shared.StringInSlice(m["nictype"], []string{"bridged", "p2p"}) {
+ 		n2 := deviceNextVeth()
+ 
+-		_, err := shared.RunCommand("ip", "link", "add", n1, "type", "veth", "peer", "name", n2)
++		_, err := shared.RunCommand("ip", "link", "add", "dev", n1, "type", "veth", "peer", "name", n2)
+ 		if err != nil {
+ 			return "", fmt.Errorf("Failed to create the veth interface: %s", err)
+ 		}
+ 
+-		_, err = shared.RunCommand("ip", "link", "set", n1, "up")
++		_, err = shared.RunCommand("ip", "link", "set", "dev", n1, "up")
+ 		if err != nil {
+ 			return "", fmt.Errorf("Failed to bring up the veth interface %s: %s", n1, err)
+ 		}
+@@ -5836,7 +5836,7 @@ func (c *containerLXC) createNetworkDevice(name string, m types.Device) (string,
+ 
+ 		// Handle macvlan
+ 		if m["nictype"] == "macvlan" {
+-			_, err := shared.RunCommand("ip", "link", "add", n1, "link", device, "type", "macvlan", "mode", "bridge")
++			_, err := shared.RunCommand("ip", "link", "add", "dev", n1, "link", device, "type", "macvlan", "mode", "bridge")
+ 			if err != nil {
+ 				return "", fmt.Errorf("Failed to create the new macvlan interface: %s", err)
+ 			}
+diff --git a/lxd/devices.go b/lxd/devices.go
+index 7d65bfa1..018ca8f9 100644
+--- a/lxd/devices.go
++++ b/lxd/devices.go
+@@ -877,7 +877,7 @@ func deviceNextVeth() string {
+ }
+ 
+ func deviceRemoveInterface(nic string) error {
+-	_, err := shared.RunCommand("ip", "link", "del", nic)
++	_, err := shared.RunCommand("ip", "link", "del", "dev", nic)
+ 	return err
+ }
+ 
+diff --git a/lxd/networks.go b/lxd/networks.go
+index 43c6dedc..6f446440 100644
+--- a/lxd/networks.go
++++ b/lxd/networks.go
+@@ -546,7 +546,7 @@ func (n *network) Start() error {
+ 				return err
+ 			}
+ 		} else {
+-			_, err := shared.RunCommand("ip", "link", "add", n.name, "type", "bridge")
++			_, err := shared.RunCommand("ip", "link", "add", "dev", n.name, "type", "bridge")
+ 			if err != nil {
+ 				return err
+ 			}
+@@ -578,7 +578,7 @@ func (n *network) Start() error {
+ 	// Cleanup any existing tunnel device
+ 	for _, iface := range ifaces {
+ 		if strings.HasPrefix(iface.Name, fmt.Sprintf("%s-", n.name)) {
+-			_, err = shared.RunCommand("ip", "link", "del", iface.Name)
++			_, err = shared.RunCommand("ip", "link", "del", "dev", iface.Name)
+ 			if err != nil {
+ 				return err
+ 			}
+@@ -601,7 +601,7 @@ func (n *network) Start() error {
+ 
+ 	// Attempt to add a dummy device to the bridge to force the MTU
+ 	if mtu != "" && n.config["bridge.driver"] != "openvswitch" {
+-		_, err = shared.RunCommand("ip", "link", "add", fmt.Sprintf("%s-mtu", n.name), "mtu", mtu, "type", "dummy")
++		_, err = shared.RunCommand("ip", "link", "add", "dev", fmt.Sprintf("%s-mtu", n.name), "mtu", mtu, "type", "dummy")
+ 		if err == nil {
+ 			networkAttachInterface(n.name, fmt.Sprintf("%s-mtu", n.name))
+ 		}
+@@ -612,13 +612,13 @@ func (n *network) Start() error {
+ 		mtu = "1500"
+ 	}
+ 
+-	_, err = shared.RunCommand("ip", "link", "set", n.name, "mtu", mtu)
++	_, err = shared.RunCommand("ip", "link", "set", "dev", n.name, "mtu", mtu)
+ 	if err != nil {
+ 		return err
+ 	}
+ 
+ 	// Bring it up
+-	_, err = shared.RunCommand("ip", "link", "set", n.name, "up")
++	_, err = shared.RunCommand("ip", "link", "set", "dev", n.name, "up")
+ 	if err != nil {
+ 		return err
+ 	}
+@@ -1013,13 +1013,13 @@ func (n *network) Start() error {
+ 				return err
+ 			}
+ 
+-			_, err = shared.RunCommand("ip", "link", "set", "tunl0", "up")
++			_, err = shared.RunCommand("ip", "link", "set", "dev", "tunl0", "up")
+ 			if err != nil {
+ 				return err
+ 			}
+ 
+ 			// Fails if the map is already set
+-			shared.RunCommand("ip", "link", "change", "tunl0", "type", "ipip", "fan-map", fmt.Sprintf("%s:%s", overlay, underlay))
++			shared.RunCommand("ip", "link", "change", "dev", "tunl0", "type", "ipip", "fan-map", fmt.Sprintf("%s:%s", overlay, underlay))
+ 
+ 			_, err = shared.RunCommand("ip", "route", "add", overlay, "dev", "tunl0", "src", addr[0])
+ 			if err != nil {
+@@ -1038,12 +1038,12 @@ func (n *network) Start() error {
+ 				return err
+ 			}
+ 
+-			_, err = shared.RunCommand("ip", "link", "set", tunName, "mtu", mtu, "up")
++			_, err = shared.RunCommand("ip", "link", "set", "dev", tunName, "mtu", mtu, "up")
+ 			if err != nil {
+ 				return err
+ 			}
+ 
+-			_, err = shared.RunCommand("ip", "link", "set", n.name, "up")
++			_, err = shared.RunCommand("ip", "link", "set", "dev", n.name, "up")
+ 			if err != nil {
+ 				return err
+ 			}
+@@ -1068,7 +1068,7 @@ func (n *network) Start() error {
+ 		tunName := fmt.Sprintf("%s-%s", n.name, tunnel)
+ 
+ 		// Configure the tunnel
+-		cmd := []string{"ip", "link", "add", tunName}
++		cmd := []string{"ip", "link", "add", "dev", tunName}
+ 		if tunProtocol == "gre" {
+ 			// Skip partial configs
+ 			if tunProtocol == "" || tunLocal == "" || tunRemote == "" {
+@@ -1130,12 +1130,12 @@ func (n *network) Start() error {
+ 			return err
+ 		}
+ 
+-		_, err = shared.RunCommand("ip", "link", "set", tunName, "mtu", mtu, "up")
++		_, err = shared.RunCommand("ip", "link", "set", "dev", tunName, "mtu", mtu, "up")
+ 		if err != nil {
+ 			return err
+ 		}
+ 
+-		_, err = shared.RunCommand("ip", "link", "set", n.name, "up")
++		_, err = shared.RunCommand("ip", "link", "set", "dev", n.name, "up")
+ 		if err != nil {
+ 			return err
+ 		}
+@@ -1213,7 +1213,7 @@ func (n *network) Stop() error {
+ 			return err
+ 		}
+ 	} else {
+-		_, err := shared.RunCommand("ip", "link", "del", n.name)
++		_, err := shared.RunCommand("ip", "link", "del", "dev", n.name)
+ 		if err != nil {
+ 			return err
+ 		}
+@@ -1260,7 +1260,7 @@ func (n *network) Stop() error {
+ 	// Cleanup any existing tunnel device
+ 	for _, iface := range ifaces {
+ 		if strings.HasPrefix(iface.Name, fmt.Sprintf("%s-", n.name)) {
+-			_, err = shared.RunCommand("ip", "link", "del", iface.Name)
++			_, err = shared.RunCommand("ip", "link", "del", "dev", iface.Name)
+ 			if err != nil {
+ 				return err
+ 			}
+diff --git a/lxd/networks_utils.go b/lxd/networks_utils.go
+index e87f79e7..6aea6a52 100644
+--- a/lxd/networks_utils.go
++++ b/lxd/networks_utils.go
+@@ -34,7 +34,7 @@ func networkAutoAttach(d *Daemon, devName string) error {
+ 
+ func networkAttachInterface(netName string, devName string) error {
+ 	if shared.PathExists(fmt.Sprintf("/sys/class/net/%s/bridge", netName)) {
+-		_, err := shared.RunCommand("ip", "link", "set", devName, "master", netName)
++		_, err := shared.RunCommand("ip", "link", "set", "dev", devName, "master", netName)
+ 		if err != nil {
+ 			return err
+ 		}
+@@ -53,7 +53,7 @@ func networkAttachInterface(netName string, devName string) error {
+ 
+ func networkDetachInterface(netName string, devName string) error {
+ 	if shared.PathExists(fmt.Sprintf("/sys/class/net/%s/bridge", netName)) {
+-		_, err := shared.RunCommand("ip", "link", "set", devName, "nomaster")
++		_, err := shared.RunCommand("ip", "link", "set", "dev", devName, "nomaster")
+ 		if err != nil {
+ 			return err
+ 		}

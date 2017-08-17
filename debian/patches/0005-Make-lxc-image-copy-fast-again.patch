@@ -1,0 +1,49 @@
+From 7a0a8e35fa57b49645782ab5c01af240725d84be Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Tue, 1 Aug 2017 17:48:12 -0400
+Subject: Make "lxc image copy" fast again
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ lxc/image.go | 23 +++++++++++++++++------
+ 1 file changed, 17 insertions(+), 6 deletions(-)
+
+diff --git a/lxc/image.go b/lxc/image.go
+index 2dcbe3a2..9afe70ae 100644
+--- a/lxc/image.go
++++ b/lxc/image.go
+@@ -388,14 +388,25 @@ func (c *imageCmd) run(conf *config.Config, args []string) error {
+ 			return err
+ 		}
+ 
+-		image := c.dereferenceAlias(d, inName)
+-		imgInfo, _, err := d.GetImage(image)
+-		if err != nil {
+-			return err
++		var imgInfo *api.Image
++		if conf.Remotes[remote].Protocol == "simplestreams" && !c.copyAliases {
++			// All simplestreams images are always public, so unless we
++			// need the aliases list too, we can skip the otherwise very expensive
++			// alias resolution and image info retrieval step.
++			imgInfo = &api.Image{}
++			imgInfo.Fingerprint = inName
++			imgInfo.Public = true
++		} else {
++			// Resolve any alias and then grab the image information from the source
++			image := c.dereferenceAlias(d, inName)
++			imgInfo, _, err = d.GetImage(image)
++			if err != nil {
++				return err
++			}
+ 		}
+ 
+-		if imgInfo.Public && imgInfo.Fingerprint != inName && !strings.HasPrefix(imgInfo.Fingerprint, image) {
+-			// If dealing with an alias, set the imgInfo fingerprint to match
++		if imgInfo.Public && imgInfo.Fingerprint != inName && !strings.HasPrefix(imgInfo.Fingerprint, inName) {
++			// If dealing with an alias, set the imgInfo fingerprint to match the provided alias (needed for auto-update)
+ 			imgInfo.Fingerprint = inName
+ 		}
+ 

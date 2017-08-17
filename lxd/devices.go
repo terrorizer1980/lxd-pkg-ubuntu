@@ -205,11 +205,39 @@ func deviceLoadGpu() ([]gpuDevice, []nvidiaGpuDevices, error) {
 				if !isNvidia {
 					isNvidia = true
 				}
-				nvidiaPath := "/dev/nvidia" + strconv.Itoa(tmpGpu.minor)
-				stat := syscall.Stat_t{}
-				err := syscall.Stat(nvidiaPath, &stat)
+
+				nvidiaPath := fmt.Sprintf("/proc/driver/nvidia/gpus/%s/information", tmpGpu.pci)
+				buf, err := ioutil.ReadFile(nvidiaPath)
 				if err != nil {
-					continue
+					return nil, nil, err
+				}
+				strBuf := strings.TrimSpace(string(buf))
+				idx := strings.Index(strBuf, "Device Minor:")
+				idx += len("Device Minor:")
+				strBuf = strBuf[idx:]
+				strBuf = strings.TrimSpace(strBuf)
+				idx = strings.Index(strBuf, " ")
+				if idx == -1 {
+					idx = strings.Index(strBuf, "\t")
+				}
+				if idx >= 1 {
+					strBuf = strBuf[:idx]
+				}
+
+				if strBuf == "" {
+					return nil, nil, fmt.Errorf("No device minor index detected")
+				}
+
+				_, err = strconv.Atoi(strBuf)
+				if err != nil {
+					return nil, nil, err
+				}
+
+				nvidiaPath = "/dev/nvidia" + strBuf
+				stat := syscall.Stat_t{}
+				err = syscall.Stat(nvidiaPath, &stat)
+				if err != nil {
+					return nil, nil, err
 				}
 				tmpGpu.nvidia.path = nvidiaPath
 				tmpGpu.nvidia.major = int(stat.Rdev / 256)
@@ -513,6 +541,43 @@ func deviceTaskBalance(d *Daemon) {
 			return
 		}
 	}
+
+	effectiveCpusInt, err := parseCpuset(effectiveCpus)
+	if err != nil {
+		logger.Errorf("Error parsing effective CPU set")
+		return
+	}
+
+	isolatedCpusInt := []int{}
+	if shared.PathExists("/sys/devices/system/cpu/isolated") {
+		buf, err := ioutil.ReadFile("/sys/devices/system/cpu/isolated")
+		if err != nil {
+			logger.Errorf("Error reading host's isolated cpu")
+			return
+		}
+
+		// File might exist even though there are no isolated cpus.
+		isolatedCpus := strings.TrimSpace(string(buf))
+		if isolatedCpus != "" {
+			isolatedCpusInt, err = parseCpuset(isolatedCpus)
+			if err != nil {
+				logger.Errorf("Error parsing isolated CPU set: %s", string(isolatedCpus))
+				return
+			}
+		}
+	}
+
+	effectiveCpusSlice := []string{}
+	for _, id := range effectiveCpusInt {
+		if shared.IntInSlice(id, isolatedCpusInt) {
+			continue
+		}
+
+		effectiveCpusSlice = append(effectiveCpusSlice, fmt.Sprintf("%d", id))
+	}
+
+	effectiveCpus = strings.Join(effectiveCpusSlice, ",")
+
 	err = cGroupSet("cpuset", "/lxc", "cpuset.cpus", effectiveCpus)
 	if err != nil && shared.PathExists("/sys/fs/cgroup/cpuset/lxc") {
 		logger.Warn("Error setting lxd's cpuset.cpus", log.Ctx{"err": err})
@@ -877,7 +942,7 @@ func deviceNextVeth() string {
 }
 
 func deviceRemoveInterface(nic string) error {
-	_, err := shared.RunCommand("ip", "link", "del", nic)
+	_, err := shared.RunCommand("ip", "link", "del", "dev", nic)
 	return err
 }
 

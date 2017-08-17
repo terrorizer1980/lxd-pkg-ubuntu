@@ -359,7 +359,7 @@ func (c *imageCmd) run(conf *config.Config, args []string) error {
 		return c.doImageAlias(conf, args)
 
 	case "copy":
-		/* copy [<remote>:]<image> [<rmeote>:]<image> */
+		/* copy [<remote>:]<image> [<remote>:]<image> */
 		if len(args) != 3 {
 			return errArgs
 		}
@@ -388,30 +388,29 @@ func (c *imageCmd) run(conf *config.Config, args []string) error {
 			return err
 		}
 
-		// Attempt to resolve an image alias
 		var imgInfo *api.Image
-		image := inName
-		if c.copyAliases {
-			alias, _, err := d.GetImageAlias(image)
-			if err == nil {
-				image = alias.Target
-			}
-
-			// Get the image info
+		var fp string
+		if conf.Remotes[remote].Protocol == "simplestreams" && !c.copyAliases && len(c.addAliases) == 0 {
+			// All simplestreams images are always public, so unless we
+			// need the aliases list too or the real fingerprint, we can skip the otherwise very expensive
+			// alias resolution and image info retrieval step.
+			imgInfo = &api.Image{}
+			imgInfo.Fingerprint = inName
+			imgInfo.Public = true
+		} else {
+			// Resolve any alias and then grab the image information from the source
+			image := c.dereferenceAlias(d, inName)
 			imgInfo, _, err = d.GetImage(image)
 			if err != nil {
 				return err
 			}
-		} else {
-			// Don't fetch full image info if we don't need aliases (since it's
-			// an expensive operation)
-			imgInfo = &api.Image{}
-			imgInfo.Fingerprint = image
-			imgInfo.Public = true
+
+			// Store the fingerprint for use when creating aliases later (as imgInfo.Fingerprint may be overriden)
+			fp = imgInfo.Fingerprint
 		}
 
 		if imgInfo.Public && imgInfo.Fingerprint != inName && !strings.HasPrefix(imgInfo.Fingerprint, inName) {
-			// If dealing with an alias, set the imgInfo fingerprint to match
+			// If dealing with an alias, set the imgInfo fingerprint to match the provided alias (needed for auto-update)
 			imgInfo.Fingerprint = inName
 		}
 
@@ -454,7 +453,7 @@ func (c *imageCmd) run(conf *config.Config, args []string) error {
 				aliases = append(aliases, alias)
 			}
 		}
-		err = ensureImageAliases(dest, aliases, image)
+		err = ensureImageAliases(dest, aliases, fp)
 		return err
 
 	case "delete":

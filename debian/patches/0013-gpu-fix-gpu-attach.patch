@@ -1,0 +1,132 @@
+From 539434c56d60e6591e36ad16ebba853418911fe5 Mon Sep 17 00:00:00 2001
+From: Christian Brauner <christian.brauner@ubuntu.com>
+Date: Thu, 10 Aug 2017 20:17:16 +0200
+Subject: gpu: fix gpu attach
+
+The previous code assumes that the nvidia card index and the dri card index are
+identical, i.e. for a given pair {/dev/card<card-idx>, /dev/nvidia<nvidia-idx>}
+it was assumed that <card-idx> == <nvidia-idx> but it is definitely possible
+that <card-idx> != <nvidia-idx>.
+
+Also, let's report an error when we don't find the gpu device that the user
+requested.
+
+Closes #3642.
+
+Signed-off-by: Christian Brauner <christian.brauner@ubuntu.com>
+---
+ lxd/container_lxc.go | 18 ++++++++++++++++++
+ lxd/devices.go       | 34 +++++++++++++++++++++++++++++++---
+ 2 files changed, 49 insertions(+), 3 deletions(-)
+
+diff --git a/lxd/container_lxc.go b/lxd/container_lxc.go
+index 62356543..8d26217f 100644
+--- a/lxd/container_lxc.go
++++ b/lxd/container_lxc.go
+@@ -1812,6 +1812,7 @@ func (c *containerLXC) startCommon() (string, error) {
+ 			}
+ 
+ 			sawNvidia := false
++			found := false
+ 			for _, gpu := range gpus {
+ 				if (m["vendorid"] != "" && gpu.vendorid != m["vendorid"]) ||
+ 					(m["pci"] != "" && gpu.pci != m["pci"]) ||
+@@ -1820,6 +1821,8 @@ func (c *containerLXC) startCommon() (string, error) {
+ 					continue
+ 				}
+ 
++				found = true
++
+ 				err := c.setupUnixDevice(k, m, gpu.major, gpu.minor, gpu.path, true)
+ 				if err != nil {
+ 					return "", err
+@@ -1845,6 +1848,12 @@ func (c *containerLXC) startCommon() (string, error) {
+ 					}
+ 				}
+ 			}
++
++			if !found {
++				msg := "Failed to detect requested GPU device"
++				logger.Error(msg)
++				return "", fmt.Errorf(msg)
++			}
+ 		} else if m["type"] == "disk" {
+ 			if m["path"] != "/" {
+ 				diskDevices[k] = m
+@@ -3859,6 +3868,7 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
+ 				}
+ 
+ 				sawNvidia := false
++				found := false
+ 				for _, gpu := range gpus {
+ 					if (m["vendorid"] != "" && gpu.vendorid != m["vendorid"]) ||
+ 						(m["pci"] != "" && gpu.pci != m["pci"]) ||
+@@ -3867,6 +3877,8 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
+ 						continue
+ 					}
+ 
++					found = true
++
+ 					err = c.insertUnixDeviceNum(m, gpu.major, gpu.minor, gpu.path)
+ 					if err != nil {
+ 						logger.Error("Failed to insert GPU device.", log.Ctx{"err": err, "gpu": gpu, "container": c.Name()})
+@@ -3898,6 +3910,12 @@ func (c *containerLXC) Update(args containerArgs, userRequested bool) error {
+ 						}
+ 					}
+ 				}
++
++				if !found {
++					msg := "Failed to detect requested GPU device"
++					logger.Error(msg)
++					return fmt.Errorf(msg)
++				}
+ 			}
+ 		}
+ 
+diff --git a/lxd/devices.go b/lxd/devices.go
+index 771094b5..2fa749a1 100644
+--- a/lxd/devices.go
++++ b/lxd/devices.go
+@@ -205,11 +205,39 @@ func deviceLoadGpu() ([]gpuDevice, []nvidiaGpuDevices, error) {
+ 				if !isNvidia {
+ 					isNvidia = true
+ 				}
+-				nvidiaPath := "/dev/nvidia" + strconv.Itoa(tmpGpu.minor)
++
++				nvidiaPath := fmt.Sprintf("/proc/driver/nvidia/gpus/%s/information", tmpGpu.pci)
++				buf, err := ioutil.ReadFile(nvidiaPath)
++				if err != nil {
++					return nil, nil, err
++				}
++				strBuf := strings.TrimSpace(string(buf))
++				idx := strings.Index(strBuf, "Device Minor:")
++				idx += len("Device Minor:")
++				strBuf = strBuf[idx:]
++				strBuf = strings.TrimSpace(strBuf)
++				idx = strings.Index(strBuf, " ")
++				if idx == -1 {
++					idx = strings.Index(strBuf, "\t")
++				}
++				if idx >= 1 {
++					strBuf = strBuf[:idx]
++				}
++
++				if strBuf == "" {
++					return nil, nil, fmt.Errorf("No device minor index detected")
++				}
++
++				_, err = strconv.Atoi(strBuf)
++				if err != nil {
++					return nil, nil, err
++				}
++
++				nvidiaPath = "/dev/nvidia" + strBuf
+ 				stat := syscall.Stat_t{}
+-				err := syscall.Stat(nvidiaPath, &stat)
++				err = syscall.Stat(nvidiaPath, &stat)
+ 				if err != nil {
+-					continue
++					return nil, nil, err
+ 				}
+ 				tmpGpu.nvidia.path = nvidiaPath
+ 				tmpGpu.nvidia.major = int(stat.Rdev / 256)

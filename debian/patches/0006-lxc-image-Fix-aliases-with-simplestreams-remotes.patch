@@ -1,0 +1,49 @@
+From d483b57db2bbcc07652fc94122072b07f71f9049 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Wed, 2 Aug 2017 04:05:29 -0400
+Subject: lxc/image: Fix aliases with simplestreams remotes
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ lxc/image.go | 10 +++++++---
+ 1 file changed, 7 insertions(+), 3 deletions(-)
+
+diff --git a/lxc/image.go b/lxc/image.go
+index 9afe70ae..f6670174 100644
+--- a/lxc/image.go
++++ b/lxc/image.go
+@@ -389,9 +389,10 @@ func (c *imageCmd) run(conf *config.Config, args []string) error {
+ 		}
+ 
+ 		var imgInfo *api.Image
+-		if conf.Remotes[remote].Protocol == "simplestreams" && !c.copyAliases {
++		var fp string
++		if conf.Remotes[remote].Protocol == "simplestreams" && !c.copyAliases && len(c.addAliases) == 0 {
+ 			// All simplestreams images are always public, so unless we
+-			// need the aliases list too, we can skip the otherwise very expensive
++			// need the aliases list too or the real fingerprint, we can skip the otherwise very expensive
+ 			// alias resolution and image info retrieval step.
+ 			imgInfo = &api.Image{}
+ 			imgInfo.Fingerprint = inName
+@@ -403,6 +404,9 @@ func (c *imageCmd) run(conf *config.Config, args []string) error {
+ 			if err != nil {
+ 				return err
+ 			}
++
++			// Store the fingerprint for use when creating aliases later (as imgInfo.Fingerprint may be overriden)
++			fp = imgInfo.Fingerprint
+ 		}
+ 
+ 		if imgInfo.Public && imgInfo.Fingerprint != inName && !strings.HasPrefix(imgInfo.Fingerprint, inName) {
+@@ -449,7 +453,7 @@ func (c *imageCmd) run(conf *config.Config, args []string) error {
+ 				aliases = append(aliases, alias)
+ 			}
+ 		}
+-		err = ensureImageAliases(dest, aliases, imgInfo.Fingerprint)
++		err = ensureImageAliases(dest, aliases, fp)
+ 		return err
+ 
+ 	case "delete":

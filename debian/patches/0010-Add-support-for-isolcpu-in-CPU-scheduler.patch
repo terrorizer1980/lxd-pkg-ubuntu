@@ -1,0 +1,60 @@
+From d06516ed1dd5a0841fc90d4e51b232c4848074fd Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Tue, 8 Aug 2017 18:17:47 -0400
+Subject: Add support for isolcpu in CPU scheduler
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Closes #3624
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ lxd/devices.go | 34 ++++++++++++++++++++++++++++++++++
+ 1 file changed, 34 insertions(+)
+
+diff --git a/lxd/devices.go b/lxd/devices.go
+index 018ca8f9..b35a198d 100644
+--- a/lxd/devices.go
++++ b/lxd/devices.go
+@@ -513,6 +513,40 @@ func deviceTaskBalance(d *Daemon) {
+ 			return
+ 		}
+ 	}
++
++	effectiveCpusInt, err := parseCpuset(effectiveCpus)
++	if err != nil {
++		logger.Errorf("Error parsing effective CPU set")
++		return
++	}
++
++	isolatedCpusInt := effectiveCpusInt
++
++	if shared.PathExists("/sys/devices/system/cpu/isolated") {
++		isolatedCpus, err := ioutil.ReadFile("/sys/devices/system/cpu/isolated")
++		if err != nil {
++			logger.Errorf("Error reading host's isolated cpu")
++			return
++		}
++
++		isolatedCpusInt, err = parseCpuset(strings.TrimRight(string(isolatedCpus), "\n"))
++		if err != nil {
++			logger.Errorf("Error parsing isolated CPU set: %s", string(isolatedCpus))
++			return
++		}
++	}
++
++	effectiveCpusSlice := []string{}
++	for _, id := range effectiveCpusInt {
++		if shared.IntInSlice(id, isolatedCpusInt) {
++			continue
++		}
++
++		effectiveCpusSlice = append(effectiveCpusSlice, fmt.Sprintf("%d", id))
++	}
++
++	effectiveCpus = strings.Join(effectiveCpusSlice, ",")
++
+ 	err = cGroupSet("cpuset", "/lxc", "cpuset.cpus", effectiveCpus)
+ 	if err != nil && shared.PathExists("/sys/fs/cgroup/cpuset/lxc") {
+ 		logger.Warn("Error setting lxd's cpuset.cpus", log.Ctx{"err": err})
