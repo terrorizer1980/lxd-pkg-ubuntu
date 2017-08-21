@@ -1,0 +1,2 @@
+debian/lxd.maintscript
+debian/lxd.upstart
