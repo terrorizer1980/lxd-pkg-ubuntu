@@ -19,6 +19,8 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
+	"github.com/lxc/lxd/lxd/db"
+	"github.com/lxc/lxd/lxd/util"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/logger"
 
@@ -205,11 +207,39 @@ func deviceLoadGpu() ([]gpuDevice, []nvidiaGpuDevices, error) {
 				if !isNvidia {
 					isNvidia = true
 				}
-				nvidiaPath := "/dev/nvidia" + strconv.Itoa(tmpGpu.minor)
-				stat := syscall.Stat_t{}
-				err := syscall.Stat(nvidiaPath, &stat)
+
+				nvidiaPath := fmt.Sprintf("/proc/driver/nvidia/gpus/%s/information", tmpGpu.pci)
+				buf, err := ioutil.ReadFile(nvidiaPath)
 				if err != nil {
-					continue
+					return nil, nil, err
+				}
+				strBuf := strings.TrimSpace(string(buf))
+				idx := strings.Index(strBuf, "Device Minor:")
+				idx += len("Device Minor:")
+				strBuf = strBuf[idx:]
+				strBuf = strings.TrimSpace(strBuf)
+				idx = strings.Index(strBuf, " ")
+				if idx == -1 {
+					idx = strings.Index(strBuf, "\t")
+				}
+				if idx >= 1 {
+					strBuf = strBuf[:idx]
+				}
+
+				if strBuf == "" {
+					return nil, nil, fmt.Errorf("No device minor index detected")
+				}
+
+				_, err = strconv.Atoi(strBuf)
+				if err != nil {
+					return nil, nil, err
+				}
+
+				nvidiaPath = "/dev/nvidia" + strBuf
+				stat := syscall.Stat_t{}
+				err = syscall.Stat(nvidiaPath, &stat)
+				if err != nil {
+					return nil, nil, err
 				}
 				tmpGpu.nvidia.path = nvidiaPath
 				tmpGpu.nvidia.major = int(stat.Rdev / 256)
@@ -513,6 +543,43 @@ func deviceTaskBalance(d *Daemon) {
 			return
 		}
 	}
+
+	effectiveCpusInt, err := parseCpuset(effectiveCpus)
+	if err != nil {
+		logger.Errorf("Error parsing effective CPU set")
+		return
+	}
+
+	isolatedCpusInt := []int{}
+	if shared.PathExists("/sys/devices/system/cpu/isolated") {
+		buf, err := ioutil.ReadFile("/sys/devices/system/cpu/isolated")
+		if err != nil {
+			logger.Errorf("Error reading host's isolated cpu")
+			return
+		}
+
+		// File might exist even though there are no isolated cpus.
+		isolatedCpus := strings.TrimSpace(string(buf))
+		if isolatedCpus != "" {
+			isolatedCpusInt, err = parseCpuset(isolatedCpus)
+			if err != nil {
+				logger.Errorf("Error parsing isolated CPU set: %s", string(isolatedCpus))
+				return
+			}
+		}
+	}
+
+	effectiveCpusSlice := []string{}
+	for _, id := range effectiveCpusInt {
+		if shared.IntInSlice(id, isolatedCpusInt) {
+			continue
+		}
+
+		effectiveCpusSlice = append(effectiveCpusSlice, fmt.Sprintf("%d", id))
+	}
+
+	effectiveCpus = strings.Join(effectiveCpusSlice, ",")
+
 	err = cGroupSet("cpuset", "/lxc", "cpuset.cpus", effectiveCpus)
 	if err != nil && shared.PathExists("/sys/fs/cgroup/cpuset/lxc") {
 		logger.Warn("Error setting lxd's cpuset.cpus", log.Ctx{"err": err})
@@ -524,7 +591,7 @@ func deviceTaskBalance(d *Daemon) {
 	}
 
 	// Iterate through the containers
-	containers, err := dbContainersList(d.db, cTypeRegular)
+	containers, err := db.ContainersList(d.db, db.CTypeRegular)
 	if err != nil {
 		logger.Error("problem loading containers list", log.Ctx{"err": err})
 		return
@@ -532,7 +599,7 @@ func deviceTaskBalance(d *Daemon) {
 	fixedContainers := map[int][]container{}
 	balancedContainers := map[container]int{}
 	for _, name := range containers {
-		c, err := containerLoadByName(d, name)
+		c, err := containerLoadByName(d.State(), name)
 		if err != nil {
 			continue
 		}
@@ -650,14 +717,14 @@ func deviceNetworkPriority(d *Daemon, netif string) {
 		return
 	}
 
-	containers, err := dbContainersList(d.db, cTypeRegular)
+	containers, err := db.ContainersList(d.db, db.CTypeRegular)
 	if err != nil {
 		return
 	}
 
 	for _, name := range containers {
 		// Get the container struct
-		c, err := containerLoadByName(d, name)
+		c, err := containerLoadByName(d.State(), name)
 		if err != nil {
 			continue
 		}
@@ -681,14 +748,14 @@ func deviceNetworkPriority(d *Daemon, netif string) {
 }
 
 func deviceUSBEvent(d *Daemon, usb usbDevice) {
-	containers, err := dbContainersList(d.db, cTypeRegular)
+	containers, err := db.ContainersList(d.db, db.CTypeRegular)
 	if err != nil {
 		logger.Error("problem loading containers list", log.Ctx{"err": err})
 		return
 	}
 
 	for _, name := range containers {
-		containerIf, err := containerLoadByName(d, name)
+		containerIf, err := containerLoadByName(d.State(), name)
 		if err != nil {
 			continue
 		}
@@ -767,7 +834,7 @@ func deviceEventListener(d *Daemon) {
 
 			logger.Debugf("Scheduler: network: %s has been added: updating network priorities", e[0])
 			deviceNetworkPriority(d, e[0])
-			networkAutoAttach(d, e[0])
+			networkAutoAttach(d.db, e[0])
 		case e := <-chUSB:
 			deviceUSBEvent(d, e)
 		case e := <-deviceSchedRebalance:
@@ -877,7 +944,7 @@ func deviceNextVeth() string {
 }
 
 func deviceRemoveInterface(nic string) error {
-	_, err := shared.RunCommand("ip", "link", "del", nic)
+	_, err := shared.RunCommand("ip", "link", "del", "dev", nic)
 	return err
 }
 
@@ -1074,7 +1141,7 @@ func deviceGetParentBlocks(path string) ([]string, error) {
 
 	// Deal with per-filesystem oddities. We don't care about failures here
 	// because any non-special filesystem => directory backend.
-	fs, _ := filesystemDetect(expPath)
+	fs, _ := util.FilesystemDetect(expPath)
 
 	if fs == "zfs" && shared.PathExists("/dev/zfs") {
 		// Accessible zfs filesystems

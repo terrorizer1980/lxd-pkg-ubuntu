@@ -423,6 +423,7 @@ Input (container based on a local image with the "ubuntu/devel" alias):
                 "type": "unix-char"
             },
         },
+        "instance_type": "c2.micro",                                        # An optional instance type to use as basis for limits
         "source": {"type": "image",                                         # Can be: "image", "migration", "copy" or "none"
                    "alias": "ubuntu/devel"},                                # Name of the alias
     }
@@ -1401,8 +1402,8 @@ In the source image case, the following dict must be used:
         },
         "aliases": [                            # Set initial aliases ("image_create_aliases" API extension)
             {"name": "my-alias",
-             "description: "A description"
-        },
+             "description": "A description"}
+        ],
         "source": {
             "type": "image",
             "mode": "pull",                     # Only pull is supported for now
@@ -1426,8 +1427,8 @@ In the source container case, the following dict must be used:
         },
         "aliases": [                    # Set initial aliases ("image_create_aliases" API extension)
             {"name": "my-alias",
-             "description: "A description"
-        },
+             "description": "A description"}
+        ],
         "source": {
             "type": "container",        # One of "container" or "snapshot"
             "name": "abc"
@@ -1444,8 +1445,8 @@ In the remote image URL case, the following dict must be used:
         },
         "aliases": [                                    # Set initial aliases ("image_create_aliases" API extension)
             {"name": "my-alias",
-             "description: "A description"
-        },
+             "description": "A description"}
+        ],
         "source": {
             "type": "url",
             "url": "https://www.some-server.com/image"  # URL for the image
@@ -2053,7 +2054,7 @@ Input:
         "name": "pool1"
     }
 
-## /1.0/storage-pools/<name>
+## /1.0/storage-pools/\<name\>
 ### GET
  * Description: information about a storage pool
  * Introduced: with API extension "storage"
@@ -2151,7 +2152,7 @@ Input (none at present):
     {
     }
 
-## /1.0/storage-pools/<name>/volumes
+## /1.0/storage-pools/\<name\>/volumes
 ### GET
  * Description: list of storage volumes
  * Introduced: with API extension "storage"
@@ -2183,7 +2184,7 @@ Input (none at present):
         "/1.0/storage-pools/default/volumes/images/62e850a334bb9d99cac00b2e618e0291e5e7bb7db56c4246ecaf8e46fa0631a6"
     ]
 
-## /1.0/storage-pools/<pool>/volumes
+## /1.0/storage-pools/\<pool\>/volumes
 ### GET
  * Description: list all storage volumes on a storage pool
  * Introduced: with API extension "storage"
@@ -2251,7 +2252,7 @@ Input:
     }
 
 
-## /1.0/storage-pools/<pool>/volumes/<type>/<name>
+## /1.0/storage-pools/\<pool\>/volumes/\<type\>/\<name\>
 ### GET
  * Description: information about a storage volume of a given type on a storage pool
  * Introduced: with API extension "storage"

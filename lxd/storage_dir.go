@@ -8,6 +8,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/lxc/lxd/lxd/db"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/logger"
@@ -50,6 +51,8 @@ func (s *storageDir) StoragePoolCheck() error {
 func (s *storageDir) StoragePoolCreate() error {
 	logger.Infof("Creating DIR storage pool \"%s\".", s.pool.Name)
 
+	s.pool.Config["volatile.initial_source"] = s.pool.Config["source"]
+
 	source := s.pool.Config["source"]
 	if source == "" {
 		source = filepath.Join(shared.VarPath("storage-pools"), s.pool.Name)
@@ -75,6 +78,15 @@ func (s *storageDir) StoragePoolCreate() error {
 			}
 			os.Remove(source)
 		}()
+	} else {
+		empty, err := shared.PathIsEmpty(source)
+		if err != nil {
+			return err
+		}
+
+		if !empty {
+			return fmt.Errorf("The provided directory is not empty")
+		}
 	}
 
 	prefix := shared.VarPath("storage-pools")
@@ -203,13 +215,13 @@ func (s *storageDir) StoragePoolVolumeDelete() error {
 		return err
 	}
 
-	err = dbStoragePoolVolumeDelete(
-		s.d.db,
+	err = db.StoragePoolVolumeDelete(
+		s.s.DB,
 		s.volume.Name,
 		storagePoolVolumeTypeCustom,
 		s.poolID)
 	if err != nil {
-		logger.Errorf(`Failed to delete database entry for ZFS `+
+		logger.Errorf(`Failed to delete database entry for DIR `+
 			`storage volume "%s" on storage pool "%s"`,
 			s.volume.Name, s.pool.Name)
 	}
@@ -292,7 +304,7 @@ func (s *storageDir) ContainerCreateFromImage(container container, imageFingerpr
 	}()
 
 	imagePath := shared.VarPath("images", imageFingerprint)
-	err = unpackImage(s.d, imagePath, containerMntPoint, storageTypeDir)
+	err = unpackImage(imagePath, containerMntPoint, storageTypeDir)
 	if err != nil {
 		return err
 	}
@@ -463,14 +475,14 @@ func (s *storageDir) ContainerCopy(target container, source container, container
 	}
 
 	for _, snap := range snapshots {
-		sourceSnapshot, err := containerLoadByName(s.d, snap.Name())
+		sourceSnapshot, err := containerLoadByName(s.s, snap.Name())
 		if err != nil {
 			return err
 		}
 
 		_, snapOnlyName, _ := containerGetParentAndSnapshotName(snap.Name())
 		newSnapName := fmt.Sprintf("%s/%s", target.Name(), snapOnlyName)
-		targetSnapshot, err := containerLoadByName(s.d, newSnapName)
+		targetSnapshot, err := containerLoadByName(s.s, newSnapName)
 		if err != nil {
 			return err
 		}

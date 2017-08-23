@@ -8,6 +8,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/lxc/lxd/lxd/db"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/logger"
 
@@ -45,6 +46,7 @@ var patches = []patch{
 	{name: "storage_api_lvm_detect_lv_size", run: patchStorageApiDetectLVSize},
 	{name: "storage_api_insert_zfs_driver", run: patchStorageApiInsertZfsDriver},
 	{name: "storage_zfs_noauto", run: patchStorageZFSnoauto},
+	{name: "storage_zfs_volume_size", run: patchStorageZFSVolumeSize},
 }
 
 type patch struct {
@@ -60,7 +62,7 @@ func (p *patch) apply(d *Daemon) error {
 		return err
 	}
 
-	err = dbPatchesMarkApplied(d.db, p.name)
+	err = db.PatchesMarkApplied(d.db, p.name)
 	if err != nil {
 		return err
 	}
@@ -68,8 +70,17 @@ func (p *patch) apply(d *Daemon) error {
 	return nil
 }
 
+// Return the names of all available patches.
+func patchesGetNames() []string {
+	names := make([]string, len(patches))
+	for i, patch := range patches {
+		names[i] = patch.name
+	}
+	return names
+}
+
 func patchesApplyAll(d *Daemon) error {
-	appliedPatches, err := dbPatches(d.db)
+	appliedPatches, err := db.Patches(d.db)
 	if err != nil {
 		return err
 	}
@@ -105,7 +116,7 @@ DELETE FROM profiles_devices_config WHERE profile_device_id NOT IN (SELECT id FR
 }
 
 func patchInvalidProfileNames(name string, d *Daemon) error {
-	profiles, err := dbProfiles(d.db)
+	profiles, err := db.Profiles(d.db)
 	if err != nil {
 		return err
 	}
@@ -113,7 +124,7 @@ func patchInvalidProfileNames(name string, d *Daemon) error {
 	for _, profile := range profiles {
 		if strings.Contains(profile, "/") || shared.StringInSlice(profile, []string{".", ".."}) {
 			logger.Info("Removing unreachable profile (invalid name)", log.Ctx{"name": profile})
-			err := dbProfileDelete(d.db, profile)
+			err := db.ProfileDelete(d.db, profile)
 			if err != nil {
 				return err
 			}
@@ -125,7 +136,7 @@ func patchInvalidProfileNames(name string, d *Daemon) error {
 
 func patchNetworkPermissions(name string, d *Daemon) error {
 	// Get the list of networks
-	networks, err := dbNetworks(d.db)
+	networks, err := db.Networks(d.db)
 	if err != nil {
 		return err
 	}
@@ -169,7 +180,7 @@ func patchStorageApi(name string, d *Daemon) error {
 	} else if zfsPoolName != "" {
 		preStorageApiStorageType = storageTypeZfs
 		defaultPoolName = zfsPoolName
-	} else if d.BackingFs == "btrfs" {
+	} else if d.os.BackingFS == "btrfs" {
 		preStorageApiStorageType = storageTypeBtrfs
 	} else {
 		// Dir storage pool.
@@ -192,25 +203,25 @@ func patchStorageApi(name string, d *Daemon) error {
 	// Check if this LXD instace currently has any containers, snapshots, or
 	// images configured. If so, we create a default storage pool in the
 	// database. Otherwise, the user will have to run LXD init.
-	cRegular, err := dbContainersList(d.db, cTypeRegular)
+	cRegular, err := db.ContainersList(d.db, db.CTypeRegular)
 	if err != nil {
 		return err
 	}
 
 	// Get list of existing snapshots.
-	cSnapshots, err := dbContainersList(d.db, cTypeSnapshot)
+	cSnapshots, err := db.ContainersList(d.db, db.CTypeSnapshot)
 	if err != nil {
 		return err
 	}
 
 	// Get list of existing public images.
-	imgPublic, err := dbImagesGet(d.db, true)
+	imgPublic, err := db.ImagesGet(d.db, true)
 	if err != nil {
 		return err
 	}
 
 	// Get list of existing private images.
-	imgPrivate, err := dbImagesGet(d.db, false)
+	imgPrivate, err := db.ImagesGet(d.db, false)
 	if err != nil {
 		return err
 	}
@@ -272,7 +283,7 @@ func patchStorageApi(name string, d *Daemon) error {
 	daemonConfig["storage.zfs_remove_snapshots"].Set(d, "")
 	daemonConfig["storage.zfs_use_refquota"].Set(d, "")
 
-	return d.SetupStorageDriver(true)
+	return SetupStorageDriver(d, true)
 }
 
 func upgradeFromStorageTypeBtrfs(name string, d *Daemon, defaultPoolName string, defaultStorageTypeName string, cRegular []string, cSnapshots []string, imgPublic []string, imgPrivate []string) error {
@@ -291,7 +302,7 @@ func upgradeFromStorageTypeBtrfs(name string, d *Daemon, defaultPoolName string,
 	}
 
 	poolID := int64(-1)
-	pools, err := dbStoragePools(d.db)
+	pools, err := db.StoragePools(d.db)
 	if err == nil { // Already exist valid storage pools.
 		// Check if the storage pool already has a db entry.
 		if shared.StringInSlice(defaultPoolName, pools) {
@@ -300,7 +311,7 @@ func upgradeFromStorageTypeBtrfs(name string, d *Daemon, defaultPoolName string,
 
 		// Get the pool ID as we need it for storage volume creation.
 		// (Use a tmp variable as Go's scoping is freaking me out.)
-		tmp, pool, err := dbStoragePoolGet(d.db, defaultPoolName)
+		tmp, pool, err := db.StoragePoolGet(d.db, defaultPoolName)
 		if err != nil {
 			logger.Errorf("Failed to query database: %s.", err)
 			return err
@@ -313,12 +324,12 @@ func upgradeFromStorageTypeBtrfs(name string, d *Daemon, defaultPoolName string,
 		if pool.Config == nil {
 			pool.Config = poolConfig
 		}
-		err = dbStoragePoolUpdate(d.db, defaultPoolName, "", pool.Config)
+		err = db.StoragePoolUpdate(d.db, defaultPoolName, "", pool.Config)
 		if err != nil {
 			return err
 		}
-	} else if err == NoSuchObjectError { // Likely a pristine upgrade.
-		tmp, err := dbStoragePoolCreate(d.db, defaultPoolName, "", defaultStorageTypeName, poolConfig)
+	} else if err == db.NoSuchObjectError { // Likely a pristine upgrade.
+		tmp, err := dbStoragePoolCreateAndUpdateCache(d.db, defaultPoolName, "", defaultStorageTypeName, poolConfig)
 		if err != nil {
 			return err
 		}
@@ -350,7 +361,7 @@ func upgradeFromStorageTypeBtrfs(name string, d *Daemon, defaultPoolName string,
 	}
 
 	// Get storage pool from the db after having updated it above.
-	_, defaultPool, err := dbStoragePoolGet(d.db, defaultPoolName)
+	_, defaultPool, err := db.StoragePoolGet(d.db, defaultPoolName)
 	if err != nil {
 		return err
 	}
@@ -364,16 +375,16 @@ func upgradeFromStorageTypeBtrfs(name string, d *Daemon, defaultPoolName string,
 			return err
 		}
 
-		_, err = dbStoragePoolVolumeGetTypeID(d.db, ct, storagePoolVolumeTypeContainer, poolID)
+		_, err = db.StoragePoolVolumeGetTypeID(d.db, ct, storagePoolVolumeTypeContainer, poolID)
 		if err == nil {
 			logger.Warnf("Storage volumes database already contains an entry for the container.")
-			err := dbStoragePoolVolumeUpdate(d.db, ct, storagePoolVolumeTypeContainer, poolID, "", containerPoolVolumeConfig)
+			err := db.StoragePoolVolumeUpdate(d.db, ct, storagePoolVolumeTypeContainer, poolID, "", containerPoolVolumeConfig)
 			if err != nil {
 				return err
 			}
-		} else if err == NoSuchObjectError {
+		} else if err == db.NoSuchObjectError {
 			// Insert storage volumes for containers into the database.
-			_, err := dbStoragePoolVolumeCreate(d.db, ct, "", storagePoolVolumeTypeContainer, poolID, containerPoolVolumeConfig)
+			_, err := db.StoragePoolVolumeCreate(d.db, ct, "", storagePoolVolumeTypeContainer, poolID, containerPoolVolumeConfig)
 			if err != nil {
 				logger.Errorf("Could not insert a storage volume for container \"%s\".", ct)
 				return err
@@ -422,7 +433,7 @@ func upgradeFromStorageTypeBtrfs(name string, d *Daemon, defaultPoolName string,
 		}
 
 		// Check if we need to account for snapshots for this container.
-		ctSnapshots, err := dbContainerGetSnapshots(d.db, ct)
+		ctSnapshots, err := db.ContainerGetSnapshots(d.db, ct)
 		if err != nil {
 			return err
 		}
@@ -452,16 +463,16 @@ func upgradeFromStorageTypeBtrfs(name string, d *Daemon, defaultPoolName string,
 				return err
 			}
 
-			_, err = dbStoragePoolVolumeGetTypeID(d.db, cs, storagePoolVolumeTypeContainer, poolID)
+			_, err = db.StoragePoolVolumeGetTypeID(d.db, cs, storagePoolVolumeTypeContainer, poolID)
 			if err == nil {
 				logger.Warnf("Storage volumes database already contains an entry for the snapshot.")
-				err := dbStoragePoolVolumeUpdate(d.db, cs, storagePoolVolumeTypeContainer, poolID, "", snapshotPoolVolumeConfig)
+				err := db.StoragePoolVolumeUpdate(d.db, cs, storagePoolVolumeTypeContainer, poolID, "", snapshotPoolVolumeConfig)
 				if err != nil {
 					return err
 				}
-			} else if err == NoSuchObjectError {
+			} else if err == db.NoSuchObjectError {
 				// Insert storage volumes for containers into the database.
-				_, err := dbStoragePoolVolumeCreate(d.db, cs, "", storagePoolVolumeTypeContainer, poolID, snapshotPoolVolumeConfig)
+				_, err := db.StoragePoolVolumeCreate(d.db, cs, "", storagePoolVolumeTypeContainer, poolID, snapshotPoolVolumeConfig)
 				if err != nil {
 					logger.Errorf("Could not insert a storage volume for snapshot \"%s\".", cs)
 					return err
@@ -533,16 +544,16 @@ func upgradeFromStorageTypeBtrfs(name string, d *Daemon, defaultPoolName string,
 			return err
 		}
 
-		_, err = dbStoragePoolVolumeGetTypeID(d.db, img, storagePoolVolumeTypeImage, poolID)
+		_, err = db.StoragePoolVolumeGetTypeID(d.db, img, storagePoolVolumeTypeImage, poolID)
 		if err == nil {
 			logger.Warnf("Storage volumes database already contains an entry for the image.")
-			err := dbStoragePoolVolumeUpdate(d.db, img, storagePoolVolumeTypeImage, poolID, "", imagePoolVolumeConfig)
+			err := db.StoragePoolVolumeUpdate(d.db, img, storagePoolVolumeTypeImage, poolID, "", imagePoolVolumeConfig)
 			if err != nil {
 				return err
 			}
-		} else if err == NoSuchObjectError {
+		} else if err == db.NoSuchObjectError {
 			// Insert storage volumes for containers into the database.
-			_, err := dbStoragePoolVolumeCreate(d.db, img, "", storagePoolVolumeTypeImage, poolID, imagePoolVolumeConfig)
+			_, err := db.StoragePoolVolumeCreate(d.db, img, "", storagePoolVolumeTypeImage, poolID, imagePoolVolumeConfig)
 			if err != nil {
 				logger.Errorf("Could not insert a storage volume for image \"%s\".", img)
 				return err
@@ -588,7 +599,7 @@ func upgradeFromStorageTypeDir(name string, d *Daemon, defaultPoolName string, d
 	}
 
 	poolID := int64(-1)
-	pools, err := dbStoragePools(d.db)
+	pools, err := db.StoragePools(d.db)
 	if err == nil { // Already exist valid storage pools.
 		// Check if the storage pool already has a db entry.
 		if shared.StringInSlice(defaultPoolName, pools) {
@@ -597,7 +608,7 @@ func upgradeFromStorageTypeDir(name string, d *Daemon, defaultPoolName string, d
 
 		// Get the pool ID as we need it for storage volume creation.
 		// (Use a tmp variable as Go's scoping is freaking me out.)
-		tmp, pool, err := dbStoragePoolGet(d.db, defaultPoolName)
+		tmp, pool, err := db.StoragePoolGet(d.db, defaultPoolName)
 		if err != nil {
 			logger.Errorf("Failed to query database: %s.", err)
 			return err
@@ -610,12 +621,12 @@ func upgradeFromStorageTypeDir(name string, d *Daemon, defaultPoolName string, d
 		if pool.Config == nil {
 			pool.Config = poolConfig
 		}
-		err = dbStoragePoolUpdate(d.db, defaultPoolName, pool.Description, pool.Config)
+		err = db.StoragePoolUpdate(d.db, defaultPoolName, pool.Description, pool.Config)
 		if err != nil {
 			return err
 		}
-	} else if err == NoSuchObjectError { // Likely a pristine upgrade.
-		tmp, err := dbStoragePoolCreate(d.db, defaultPoolName, "", defaultStorageTypeName, poolConfig)
+	} else if err == db.NoSuchObjectError { // Likely a pristine upgrade.
+		tmp, err := dbStoragePoolCreateAndUpdateCache(d.db, defaultPoolName, "", defaultStorageTypeName, poolConfig)
 		if err != nil {
 			return err
 		}
@@ -636,7 +647,7 @@ func upgradeFromStorageTypeDir(name string, d *Daemon, defaultPoolName string, d
 	}
 
 	// Get storage pool from the db after having updated it above.
-	_, defaultPool, err := dbStoragePoolGet(d.db, defaultPoolName)
+	_, defaultPool, err := db.StoragePoolGet(d.db, defaultPoolName)
 	if err != nil {
 		return err
 	}
@@ -651,16 +662,16 @@ func upgradeFromStorageTypeDir(name string, d *Daemon, defaultPoolName string, d
 			return err
 		}
 
-		_, err = dbStoragePoolVolumeGetTypeID(d.db, ct, storagePoolVolumeTypeContainer, poolID)
+		_, err = db.StoragePoolVolumeGetTypeID(d.db, ct, storagePoolVolumeTypeContainer, poolID)
 		if err == nil {
 			logger.Warnf("Storage volumes database already contains an entry for the container.")
-			err := dbStoragePoolVolumeUpdate(d.db, ct, storagePoolVolumeTypeContainer, poolID, "", containerPoolVolumeConfig)
+			err := db.StoragePoolVolumeUpdate(d.db, ct, storagePoolVolumeTypeContainer, poolID, "", containerPoolVolumeConfig)
 			if err != nil {
 				return err
 			}
-		} else if err == NoSuchObjectError {
+		} else if err == db.NoSuchObjectError {
 			// Insert storage volumes for containers into the database.
-			_, err := dbStoragePoolVolumeCreate(d.db, ct, "", storagePoolVolumeTypeContainer, poolID, containerPoolVolumeConfig)
+			_, err := db.StoragePoolVolumeCreate(d.db, ct, "", storagePoolVolumeTypeContainer, poolID, containerPoolVolumeConfig)
 			if err != nil {
 				logger.Errorf("Could not insert a storage volume for container \"%s\".", ct)
 				return err
@@ -768,16 +779,16 @@ func upgradeFromStorageTypeDir(name string, d *Daemon, defaultPoolName string, d
 			return err
 		}
 
-		_, err = dbStoragePoolVolumeGetTypeID(d.db, cs, storagePoolVolumeTypeContainer, poolID)
+		_, err = db.StoragePoolVolumeGetTypeID(d.db, cs, storagePoolVolumeTypeContainer, poolID)
 		if err == nil {
 			logger.Warnf("Storage volumes database already contains an entry for the snapshot.")
-			err := dbStoragePoolVolumeUpdate(d.db, cs, storagePoolVolumeTypeContainer, poolID, "", snapshotPoolVolumeConfig)
+			err := db.StoragePoolVolumeUpdate(d.db, cs, storagePoolVolumeTypeContainer, poolID, "", snapshotPoolVolumeConfig)
 			if err != nil {
 				return err
 			}
-		} else if err == NoSuchObjectError {
+		} else if err == db.NoSuchObjectError {
 			// Insert storage volumes for containers into the database.
-			_, err := dbStoragePoolVolumeCreate(d.db, cs, "", storagePoolVolumeTypeContainer, poolID, snapshotPoolVolumeConfig)
+			_, err := db.StoragePoolVolumeCreate(d.db, cs, "", storagePoolVolumeTypeContainer, poolID, snapshotPoolVolumeConfig)
 			if err != nil {
 				logger.Errorf("Could not insert a storage volume for snapshot \"%s\".", cs)
 				return err
@@ -798,16 +809,16 @@ func upgradeFromStorageTypeDir(name string, d *Daemon, defaultPoolName string, d
 			return err
 		}
 
-		_, err = dbStoragePoolVolumeGetTypeID(d.db, img, storagePoolVolumeTypeImage, poolID)
+		_, err = db.StoragePoolVolumeGetTypeID(d.db, img, storagePoolVolumeTypeImage, poolID)
 		if err == nil {
 			logger.Warnf("Storage volumes database already contains an entry for the image.")
-			err := dbStoragePoolVolumeUpdate(d.db, img, storagePoolVolumeTypeImage, poolID, "", imagePoolVolumeConfig)
+			err := db.StoragePoolVolumeUpdate(d.db, img, storagePoolVolumeTypeImage, poolID, "", imagePoolVolumeConfig)
 			if err != nil {
 				return err
 			}
-		} else if err == NoSuchObjectError {
+		} else if err == db.NoSuchObjectError {
 			// Insert storage volumes for containers into the database.
-			_, err := dbStoragePoolVolumeCreate(d.db, img, "", storagePoolVolumeTypeImage, poolID, imagePoolVolumeConfig)
+			_, err := db.StoragePoolVolumeCreate(d.db, img, "", storagePoolVolumeTypeImage, poolID, imagePoolVolumeConfig)
 			if err != nil {
 				logger.Errorf("Could not insert a storage volume for image \"%s\".", img)
 				return err
@@ -881,7 +892,7 @@ func upgradeFromStorageTypeLvm(name string, d *Daemon, defaultPoolName string, d
 	// are already configured. If so, we can assume that a partial upgrade
 	// has been performed and can skip the next steps.
 	poolID := int64(-1)
-	pools, err := dbStoragePools(d.db)
+	pools, err := db.StoragePools(d.db)
 	if err == nil { // Already exist valid storage pools.
 		// Check if the storage pool already has a db entry.
 		if shared.StringInSlice(defaultPoolName, pools) {
@@ -890,7 +901,7 @@ func upgradeFromStorageTypeLvm(name string, d *Daemon, defaultPoolName string, d
 
 		// Get the pool ID as we need it for storage volume creation.
 		// (Use a tmp variable as Go's scoping is freaking me out.)
-		tmp, pool, err := dbStoragePoolGet(d.db, defaultPoolName)
+		tmp, pool, err := db.StoragePoolGet(d.db, defaultPoolName)
 		if err != nil {
 			logger.Errorf("Failed to query database: %s.", err)
 			return err
@@ -903,12 +914,12 @@ func upgradeFromStorageTypeLvm(name string, d *Daemon, defaultPoolName string, d
 		if pool.Config == nil {
 			pool.Config = poolConfig
 		}
-		err = dbStoragePoolUpdate(d.db, defaultPoolName, pool.Description, pool.Config)
+		err = db.StoragePoolUpdate(d.db, defaultPoolName, pool.Description, pool.Config)
 		if err != nil {
 			return err
 		}
-	} else if err == NoSuchObjectError { // Likely a pristine upgrade.
-		tmp, err := dbStoragePoolCreate(d.db, defaultPoolName, "", defaultStorageTypeName, poolConfig)
+	} else if err == db.NoSuchObjectError { // Likely a pristine upgrade.
+		tmp, err := dbStoragePoolCreateAndUpdateCache(d.db, defaultPoolName, "", defaultStorageTypeName, poolConfig)
 		if err != nil {
 			return err
 		}
@@ -939,7 +950,7 @@ func upgradeFromStorageTypeLvm(name string, d *Daemon, defaultPoolName string, d
 	}
 
 	// Get storage pool from the db after having updated it above.
-	_, defaultPool, err := dbStoragePoolGet(d.db, defaultPoolName)
+	_, defaultPool, err := db.StoragePoolGet(d.db, defaultPoolName)
 	if err != nil {
 		return err
 	}
@@ -954,16 +965,16 @@ func upgradeFromStorageTypeLvm(name string, d *Daemon, defaultPoolName string, d
 			return err
 		}
 
-		_, err = dbStoragePoolVolumeGetTypeID(d.db, ct, storagePoolVolumeTypeContainer, poolID)
+		_, err = db.StoragePoolVolumeGetTypeID(d.db, ct, storagePoolVolumeTypeContainer, poolID)
 		if err == nil {
 			logger.Warnf("Storage volumes database already contains an entry for the container.")
-			err := dbStoragePoolVolumeUpdate(d.db, ct, storagePoolVolumeTypeContainer, poolID, "", containerPoolVolumeConfig)
+			err := db.StoragePoolVolumeUpdate(d.db, ct, storagePoolVolumeTypeContainer, poolID, "", containerPoolVolumeConfig)
 			if err != nil {
 				return err
 			}
-		} else if err == NoSuchObjectError {
+		} else if err == db.NoSuchObjectError {
 			// Insert storage volumes for containers into the database.
-			_, err := dbStoragePoolVolumeCreate(d.db, ct, "", storagePoolVolumeTypeContainer, poolID, containerPoolVolumeConfig)
+			_, err := db.StoragePoolVolumeCreate(d.db, ct, "", storagePoolVolumeTypeContainer, poolID, containerPoolVolumeConfig)
 			if err != nil {
 				logger.Errorf("Could not insert a storage volume for container \"%s\".", ct)
 				return err
@@ -1028,14 +1039,14 @@ func upgradeFromStorageTypeLvm(name string, d *Daemon, defaultPoolName string, d
 
 				// Initialize storage interface for the new
 				// container.
-				ctStorage, err := storagePoolVolumeContainerLoadInit(d, ct)
+				ctStorage, err := storagePoolVolumeContainerLoadInit(d.State(), ct)
 				if err != nil {
 					logger.Errorf("Failed to initialize new storage interface for LVM container %s: %s.", ct, err)
 					return err
 				}
 
 				// Load the container from the database.
-				ctStruct, err := containerLoadByName(d, ct)
+				ctStruct, err := containerLoadByName(d.State(), ct)
 				if err != nil {
 					logger.Errorf("Failed to load LVM container %s: %s.", ct, err)
 					return err
@@ -1092,7 +1103,7 @@ func upgradeFromStorageTypeLvm(name string, d *Daemon, defaultPoolName string, d
 		}
 
 		// Check if we need to account for snapshots for this container.
-		ctSnapshots, err := dbContainerGetSnapshots(d.db, ct)
+		ctSnapshots, err := db.ContainerGetSnapshots(d.db, ct)
 		if err != nil {
 			return err
 		}
@@ -1109,16 +1120,16 @@ func upgradeFromStorageTypeLvm(name string, d *Daemon, defaultPoolName string, d
 				return err
 			}
 
-			_, err = dbStoragePoolVolumeGetTypeID(d.db, cs, storagePoolVolumeTypeContainer, poolID)
+			_, err = db.StoragePoolVolumeGetTypeID(d.db, cs, storagePoolVolumeTypeContainer, poolID)
 			if err == nil {
 				logger.Warnf("Storage volumes database already contains an entry for the snapshot.")
-				err := dbStoragePoolVolumeUpdate(d.db, cs, storagePoolVolumeTypeContainer, poolID, "", snapshotPoolVolumeConfig)
+				err := db.StoragePoolVolumeUpdate(d.db, cs, storagePoolVolumeTypeContainer, poolID, "", snapshotPoolVolumeConfig)
 				if err != nil {
 					return err
 				}
-			} else if err == NoSuchObjectError {
+			} else if err == db.NoSuchObjectError {
 				// Insert storage volumes for containers into the database.
-				_, err := dbStoragePoolVolumeCreate(d.db, cs, "", storagePoolVolumeTypeContainer, poolID, snapshotPoolVolumeConfig)
+				_, err := db.StoragePoolVolumeCreate(d.db, cs, "", storagePoolVolumeTypeContainer, poolID, snapshotPoolVolumeConfig)
 				if err != nil {
 					logger.Errorf("Could not insert a storage volume for snapshot \"%s\".", cs)
 					return err
@@ -1181,14 +1192,14 @@ func upgradeFromStorageTypeLvm(name string, d *Daemon, defaultPoolName string, d
 
 					// Initialize storage interface for the new
 					// snapshot.
-					csStorage, err := storagePoolVolumeContainerLoadInit(d, cs)
+					csStorage, err := storagePoolVolumeContainerLoadInit(d.State(), cs)
 					if err != nil {
 						logger.Errorf("Failed to initialize new storage interface for LVM container %s: %s.", cs, err)
 						return err
 					}
 
 					// Load the snapshot from the database.
-					csStruct, err := containerLoadByName(d, cs)
+					csStruct, err := containerLoadByName(d.State(), cs)
 					if err != nil {
 						logger.Errorf("Failed to load LVM container %s: %s.", cs, err)
 						return err
@@ -1280,16 +1291,16 @@ func upgradeFromStorageTypeLvm(name string, d *Daemon, defaultPoolName string, d
 			return err
 		}
 
-		_, err = dbStoragePoolVolumeGetTypeID(d.db, img, storagePoolVolumeTypeImage, poolID)
+		_, err = db.StoragePoolVolumeGetTypeID(d.db, img, storagePoolVolumeTypeImage, poolID)
 		if err == nil {
 			logger.Warnf("Storage volumes database already contains an entry for the image.")
-			err := dbStoragePoolVolumeUpdate(d.db, img, storagePoolVolumeTypeImage, poolID, "", imagePoolVolumeConfig)
+			err := db.StoragePoolVolumeUpdate(d.db, img, storagePoolVolumeTypeImage, poolID, "", imagePoolVolumeConfig)
 			if err != nil {
 				return err
 			}
-		} else if err == NoSuchObjectError {
+		} else if err == db.NoSuchObjectError {
 			// Insert storage volumes for containers into the database.
-			_, err := dbStoragePoolVolumeCreate(d.db, img, "", storagePoolVolumeTypeImage, poolID, imagePoolVolumeConfig)
+			_, err := db.StoragePoolVolumeCreate(d.db, img, "", storagePoolVolumeTypeImage, poolID, imagePoolVolumeConfig)
 			if err != nil {
 				logger.Errorf("Could not insert a storage volume for image \"%s\".", img)
 				return err
@@ -1341,7 +1352,7 @@ func upgradeFromStorageTypeLvm(name string, d *Daemon, defaultPoolName string, d
 			// This image didn't exist as a logical volume on the
 			// old LXD instance so we need to kick it from the
 			// storage volumes database for this pool.
-			err := dbStoragePoolVolumeDelete(d.db, img, storagePoolVolumeTypeImage, poolID)
+			err := db.StoragePoolVolumeDelete(d.db, img, storagePoolVolumeTypeImage, poolID)
 			if err != nil {
 				return err
 			}
@@ -1381,7 +1392,7 @@ func upgradeFromStorageTypeZfs(name string, d *Daemon, defaultPoolName string, d
 	// are already configured. If so, we can assume that a partial upgrade
 	// has been performed and can skip the next steps.
 	poolID := int64(-1)
-	pools, err := dbStoragePools(d.db)
+	pools, err := db.StoragePools(d.db)
 	if err == nil { // Already exist valid storage pools.
 		// Check if the storage pool already has a db entry.
 		if shared.StringInSlice(poolName, pools) {
@@ -1390,7 +1401,7 @@ func upgradeFromStorageTypeZfs(name string, d *Daemon, defaultPoolName string, d
 
 		// Get the pool ID as we need it for storage volume creation.
 		// (Use a tmp variable as Go's scoping is freaking me out.)
-		tmp, pool, err := dbStoragePoolGet(d.db, poolName)
+		tmp, pool, err := db.StoragePoolGet(d.db, poolName)
 		if err != nil {
 			logger.Errorf("Failed to query database: %s.", err)
 			return err
@@ -1403,11 +1414,11 @@ func upgradeFromStorageTypeZfs(name string, d *Daemon, defaultPoolName string, d
 		if pool.Config == nil {
 			pool.Config = poolConfig
 		}
-		err = dbStoragePoolUpdate(d.db, poolName, pool.Description, pool.Config)
+		err = db.StoragePoolUpdate(d.db, poolName, pool.Description, pool.Config)
 		if err != nil {
 			return err
 		}
-	} else if err == NoSuchObjectError { // Likely a pristine upgrade.
+	} else if err == db.NoSuchObjectError { // Likely a pristine upgrade.
 		if shared.PathExists(oldLoopFilePath) {
 			// This is a loop file pool.
 			poolConfig["source"] = shared.VarPath("disks", poolName+".img")
@@ -1435,7 +1446,7 @@ func upgradeFromStorageTypeZfs(name string, d *Daemon, defaultPoolName string, d
 		}
 
 		// (Use a tmp variable as Go's scoping is freaking me out.)
-		tmp, err := dbStoragePoolCreate(d.db, poolName, "", defaultStorageTypeName, poolConfig)
+		tmp, err := dbStoragePoolCreateAndUpdateCache(d.db, poolName, "", defaultStorageTypeName, poolConfig)
 		if err != nil {
 			logger.Warnf("Storage pool already exists in the database. Proceeding...")
 		}
@@ -1446,7 +1457,7 @@ func upgradeFromStorageTypeZfs(name string, d *Daemon, defaultPoolName string, d
 	}
 
 	// Get storage pool from the db after having updated it above.
-	_, defaultPool, err := dbStoragePoolGet(d.db, poolName)
+	_, defaultPool, err := db.StoragePoolGet(d.db, poolName)
 	if err != nil {
 		return err
 	}
@@ -1471,16 +1482,16 @@ func upgradeFromStorageTypeZfs(name string, d *Daemon, defaultPoolName string, d
 			return err
 		}
 
-		_, err = dbStoragePoolVolumeGetTypeID(d.db, ct, storagePoolVolumeTypeContainer, poolID)
+		_, err = db.StoragePoolVolumeGetTypeID(d.db, ct, storagePoolVolumeTypeContainer, poolID)
 		if err == nil {
 			logger.Warnf("Storage volumes database already contains an entry for the container.")
-			err := dbStoragePoolVolumeUpdate(d.db, ct, storagePoolVolumeTypeContainer, poolID, "", containerPoolVolumeConfig)
+			err := db.StoragePoolVolumeUpdate(d.db, ct, storagePoolVolumeTypeContainer, poolID, "", containerPoolVolumeConfig)
 			if err != nil {
 				return err
 			}
-		} else if err == NoSuchObjectError {
+		} else if err == db.NoSuchObjectError {
 			// Insert storage volumes for containers into the database.
-			_, err := dbStoragePoolVolumeCreate(d.db, ct, "", storagePoolVolumeTypeContainer, poolID, containerPoolVolumeConfig)
+			_, err := db.StoragePoolVolumeCreate(d.db, ct, "", storagePoolVolumeTypeContainer, poolID, containerPoolVolumeConfig)
 			if err != nil {
 				logger.Errorf("Could not insert a storage volume for container \"%s\".", ct)
 				return err
@@ -1538,7 +1549,7 @@ func upgradeFromStorageTypeZfs(name string, d *Daemon, defaultPoolName string, d
 		}
 
 		// Check if we need to account for snapshots for this container.
-		ctSnapshots, err := dbContainerGetSnapshots(d.db, ct)
+		ctSnapshots, err := db.ContainerGetSnapshots(d.db, ct)
 		if err != nil {
 			logger.Errorf("Failed to query database")
 			return err
@@ -1557,16 +1568,16 @@ func upgradeFromStorageTypeZfs(name string, d *Daemon, defaultPoolName string, d
 				return err
 			}
 
-			_, err = dbStoragePoolVolumeGetTypeID(d.db, cs, storagePoolVolumeTypeContainer, poolID)
+			_, err = db.StoragePoolVolumeGetTypeID(d.db, cs, storagePoolVolumeTypeContainer, poolID)
 			if err == nil {
 				logger.Warnf("Storage volumes database already contains an entry for the snapshot.")
-				err := dbStoragePoolVolumeUpdate(d.db, cs, storagePoolVolumeTypeContainer, poolID, "", snapshotPoolVolumeConfig)
+				err := db.StoragePoolVolumeUpdate(d.db, cs, storagePoolVolumeTypeContainer, poolID, "", snapshotPoolVolumeConfig)
 				if err != nil {
 					return err
 				}
-			} else if err == NoSuchObjectError {
+			} else if err == db.NoSuchObjectError {
 				// Insert storage volumes for containers into the database.
-				_, err := dbStoragePoolVolumeCreate(d.db, cs, "", storagePoolVolumeTypeContainer, poolID, snapshotPoolVolumeConfig)
+				_, err := db.StoragePoolVolumeCreate(d.db, cs, "", storagePoolVolumeTypeContainer, poolID, snapshotPoolVolumeConfig)
 				if err != nil {
 					logger.Errorf("Could not insert a storage volume for snapshot \"%s\".", cs)
 					return err
@@ -1613,16 +1624,16 @@ func upgradeFromStorageTypeZfs(name string, d *Daemon, defaultPoolName string, d
 			return err
 		}
 
-		_, err = dbStoragePoolVolumeGetTypeID(d.db, img, storagePoolVolumeTypeImage, poolID)
+		_, err = db.StoragePoolVolumeGetTypeID(d.db, img, storagePoolVolumeTypeImage, poolID)
 		if err == nil {
 			logger.Warnf("Storage volumes database already contains an entry for the image.")
-			err := dbStoragePoolVolumeUpdate(d.db, img, storagePoolVolumeTypeImage, poolID, "", imagePoolVolumeConfig)
+			err := db.StoragePoolVolumeUpdate(d.db, img, storagePoolVolumeTypeImage, poolID, "", imagePoolVolumeConfig)
 			if err != nil {
 				return err
 			}
-		} else if err == NoSuchObjectError {
+		} else if err == db.NoSuchObjectError {
 			// Insert storage volumes for containers into the database.
-			_, err := dbStoragePoolVolumeCreate(d.db, img, "", storagePoolVolumeTypeImage, poolID, imagePoolVolumeConfig)
+			_, err := db.StoragePoolVolumeCreate(d.db, img, "", storagePoolVolumeTypeImage, poolID, imagePoolVolumeConfig)
 			if err != nil {
 				logger.Errorf("Could not insert a storage volume for image \"%s\".", img)
 				return err
@@ -1681,10 +1692,10 @@ func updatePoolPropertyForAllObjects(d *Daemon, poolName string, allcontainers [
 	// appropriate device including a pool is added to the default profile
 	// or the user explicitly passes the pool the container's storage volume
 	// is supposed to be created on.
-	profiles, err := dbProfiles(d.db)
+	profiles, err := db.Profiles(d.db)
 	if err == nil {
 		for _, pName := range profiles {
-			pID, p, err := dbProfileGet(d.db, pName)
+			pID, p, err := db.ProfileGet(d.db, pName)
 			if err != nil {
 				logger.Errorf("Could not query database: %s.", err)
 				return err
@@ -1725,26 +1736,26 @@ func updatePoolPropertyForAllObjects(d *Daemon, poolName string, allcontainers [
 			// This is nasty, but we need to clear the profiles config and
 			// devices in order to add the new root device including the
 			// newly added storage pool.
-			tx, err := dbBegin(d.db)
+			tx, err := db.Begin(d.db)
 			if err != nil {
 				return err
 			}
 
-			err = dbProfileConfigClear(tx, pID)
+			err = db.ProfileConfigClear(tx, pID)
 			if err != nil {
 				logger.Errorf("Failed to clear old profile configuration for profile %s: %s.", pName, err)
 				tx.Rollback()
 				continue
 			}
 
-			err = dbProfileConfigAdd(tx, pID, p.Config)
+			err = db.ProfileConfigAdd(tx, pID, p.Config)
 			if err != nil {
 				logger.Errorf("Failed to add new profile configuration: %s: %s.", pName, err)
 				tx.Rollback()
 				continue
 			}
 
-			err = dbDevicesAdd(tx, "profile", pID, p.Devices)
+			err = db.DevicesAdd(tx, "profile", pID, p.Devices)
 			if err != nil {
 				logger.Errorf("Failed to add new profile profile root disk device: %s: %s.", pName, err)
 				tx.Rollback()
@@ -1762,12 +1773,12 @@ func updatePoolPropertyForAllObjects(d *Daemon, poolName string, allcontainers [
 
 	// Make sure all containers and snapshots have a valid disk configuration
 	for _, ct := range allcontainers {
-		c, err := containerLoadByName(d, ct)
+		c, err := containerLoadByName(d.State(), ct)
 		if err != nil {
 			continue
 		}
 
-		args := containerArgs{
+		args := db.ContainerArgs{
 			Architecture: c.Architecture(),
 			Config:       c.LocalConfig(),
 			Ephemeral:    c.IsEphemeral(),
@@ -1778,9 +1789,9 @@ func updatePoolPropertyForAllObjects(d *Daemon, poolName string, allcontainers [
 		}
 
 		if c.IsSnapshot() {
-			args.Ctype = cTypeSnapshot
+			args.Ctype = db.CTypeSnapshot
 		} else {
-			args.Ctype = cTypeRegular
+			args.Ctype = db.CTypeRegular
 		}
 
 		// Check if the container already has a valid root device entry (profile or previous upgrade)
@@ -1827,8 +1838,8 @@ func updatePoolPropertyForAllObjects(d *Daemon, poolName string, allcontainers [
 }
 
 func patchStorageApiV1(name string, d *Daemon) error {
-	pools, err := dbStoragePools(d.db)
-	if err != nil && err == NoSuchObjectError {
+	pools, err := db.StoragePools(d.db)
+	if err != nil && err == db.NoSuchObjectError {
 		// No pool was configured in the previous update. So we're on a
 		// pristine LXD instance.
 		return nil
@@ -1843,13 +1854,13 @@ func patchStorageApiV1(name string, d *Daemon) error {
 		return nil
 	}
 
-	cRegular, err := dbContainersList(d.db, cTypeRegular)
+	cRegular, err := db.ContainersList(d.db, db.CTypeRegular)
 	if err != nil {
 		return err
 	}
 
 	// Get list of existing snapshots.
-	cSnapshots, err := dbContainersList(d.db, cTypeSnapshot)
+	cSnapshots, err := db.ContainersList(d.db, db.CTypeSnapshot)
 	if err != nil {
 		return err
 	}
@@ -1864,7 +1875,7 @@ func patchStorageApiV1(name string, d *Daemon) error {
 }
 
 func patchStorageApiDirCleanup(name string, d *Daemon) error {
-	_, err := dbExec(d.db, "DELETE FROM storage_volumes WHERE type=? AND name NOT IN (SELECT fingerprint FROM images);", storagePoolVolumeTypeImage)
+	_, err := db.Exec(d.db, "DELETE FROM storage_volumes WHERE type=? AND name NOT IN (SELECT fingerprint FROM images);", storagePoolVolumeTypeImage)
 	if err != nil {
 		return err
 	}
@@ -1873,12 +1884,12 @@ func patchStorageApiDirCleanup(name string, d *Daemon) error {
 }
 
 func patchStorageApiLvmKeys(name string, d *Daemon) error {
-	_, err := dbExec(d.db, "UPDATE storage_pools_config SET key='lvm.thinpool_name' WHERE key='volume.lvm.thinpool_name';")
+	_, err := db.Exec(d.db, "UPDATE storage_pools_config SET key='lvm.thinpool_name' WHERE key='volume.lvm.thinpool_name';")
 	if err != nil {
 		return err
 	}
 
-	_, err = dbExec(d.db, "DELETE FROM storage_volumes_config WHERE key='lvm.thinpool_name';")
+	_, err = db.Exec(d.db, "DELETE FROM storage_volumes_config WHERE key='lvm.thinpool_name';")
 	if err != nil {
 		return err
 	}
@@ -1887,8 +1898,8 @@ func patchStorageApiLvmKeys(name string, d *Daemon) error {
 }
 
 func patchStorageApiKeys(name string, d *Daemon) error {
-	pools, err := dbStoragePools(d.db)
-	if err != nil && err == NoSuchObjectError {
+	pools, err := db.StoragePools(d.db)
+	if err != nil && err == db.NoSuchObjectError {
 		// No pool was configured in the previous update. So we're on a
 		// pristine LXD instance.
 		return nil
@@ -1899,7 +1910,7 @@ func patchStorageApiKeys(name string, d *Daemon) error {
 	}
 
 	for _, poolName := range pools {
-		_, pool, err := dbStoragePoolGet(d.db, poolName)
+		_, pool, err := db.StoragePoolGet(d.db, poolName)
 		if err != nil {
 			logger.Errorf("Failed to query database: %s", err)
 			return err
@@ -1932,7 +1943,7 @@ func patchStorageApiKeys(name string, d *Daemon) error {
 		}
 
 		// Update the config in the database.
-		err = dbStoragePoolUpdate(d.db, poolName, pool.Description, pool.Config)
+		err = db.StoragePoolUpdate(d.db, poolName, pool.Description, pool.Config)
 		if err != nil {
 			return err
 		}
@@ -1944,9 +1955,9 @@ func patchStorageApiKeys(name string, d *Daemon) error {
 // In case any of the objects images/containers/snapshots are missing storage
 // volume configuration entries, let's add the defaults.
 func patchStorageApiUpdateStorageConfigs(name string, d *Daemon) error {
-	pools, err := dbStoragePools(d.db)
+	pools, err := db.StoragePools(d.db)
 	if err != nil {
-		if err == NoSuchObjectError {
+		if err == db.NoSuchObjectError {
 			return nil
 		}
 		logger.Errorf("Failed to query database: %s", err)
@@ -1954,7 +1965,7 @@ func patchStorageApiUpdateStorageConfigs(name string, d *Daemon) error {
 	}
 
 	for _, poolName := range pools {
-		poolID, pool, err := dbStoragePoolGet(d.db, poolName)
+		poolID, pool, err := db.StoragePoolGet(d.db, poolName)
 		if err != nil {
 			logger.Errorf("Failed to query database: %s", err)
 			return err
@@ -2020,15 +2031,15 @@ func patchStorageApiUpdateStorageConfigs(name string, d *Daemon) error {
 		}
 
 		// Update the storage pool config.
-		err = dbStoragePoolUpdate(d.db, poolName, pool.Description, pool.Config)
+		err = db.StoragePoolUpdate(d.db, poolName, pool.Description, pool.Config)
 		if err != nil {
 			return err
 		}
 
 		// Get all storage volumes on the storage pool.
-		volumes, err := dbStoragePoolVolumesGet(d.db, poolID, supportedVolumeTypes)
+		volumes, err := db.StoragePoolVolumesGet(d.db, poolID, supportedVolumeTypes)
 		if err != nil {
-			if err == NoSuchObjectError {
+			if err == db.NoSuchObjectError {
 				continue
 			}
 			return err
@@ -2081,7 +2092,7 @@ func patchStorageApiUpdateStorageConfigs(name string, d *Daemon) error {
 			// exist in the db, so it's safe to ignore the error.
 			volumeType, _ := storagePoolVolumeTypeNameToType(volume.Type)
 			// Update the volume config.
-			err = dbStoragePoolVolumeUpdate(d.db, volume.Name, volumeType, poolID, volume.Description, volume.Config)
+			err = db.StoragePoolVolumeUpdate(d.db, volume.Name, volumeType, poolID, volume.Description, volume.Config)
 			if err != nil {
 				return err
 			}
@@ -2092,9 +2103,9 @@ func patchStorageApiUpdateStorageConfigs(name string, d *Daemon) error {
 }
 
 func patchStorageApiLxdOnBtrfs(name string, d *Daemon) error {
-	pools, err := dbStoragePools(d.db)
+	pools, err := db.StoragePools(d.db)
 	if err != nil {
-		if err == NoSuchObjectError {
+		if err == db.NoSuchObjectError {
 			return nil
 		}
 		logger.Errorf("Failed to query database: %s", err)
@@ -2102,7 +2113,7 @@ func patchStorageApiLxdOnBtrfs(name string, d *Daemon) error {
 	}
 
 	for _, poolName := range pools {
-		_, pool, err := dbStoragePoolGet(d.db, poolName)
+		_, pool, err := db.StoragePoolGet(d.db, poolName)
 		if err != nil {
 			logger.Errorf("Failed to query database: %s", err)
 			return err
@@ -2119,7 +2130,7 @@ func patchStorageApiLxdOnBtrfs(name string, d *Daemon) error {
 			}
 		}
 
-		if d.BackingFs != "btrfs" {
+		if d.os.BackingFS != "btrfs" {
 			continue
 		}
 
@@ -2137,7 +2148,7 @@ func patchStorageApiLxdOnBtrfs(name string, d *Daemon) error {
 		pool.Config["source"] = getStoragePoolMountPoint(poolName)
 
 		// Update the storage pool config.
-		err = dbStoragePoolUpdate(d.db, poolName, pool.Description, pool.Config)
+		err = db.StoragePoolUpdate(d.db, poolName, pool.Description, pool.Config)
 		if err != nil {
 			return err
 		}
@@ -2149,9 +2160,9 @@ func patchStorageApiLxdOnBtrfs(name string, d *Daemon) error {
 }
 
 func patchStorageApiDetectLVSize(name string, d *Daemon) error {
-	pools, err := dbStoragePools(d.db)
+	pools, err := db.StoragePools(d.db)
 	if err != nil {
-		if err == NoSuchObjectError {
+		if err == db.NoSuchObjectError {
 			return nil
 		}
 		logger.Errorf("Failed to query database: %s", err)
@@ -2159,7 +2170,7 @@ func patchStorageApiDetectLVSize(name string, d *Daemon) error {
 	}
 
 	for _, poolName := range pools {
-		poolID, pool, err := dbStoragePoolGet(d.db, poolName)
+		poolID, pool, err := db.StoragePoolGet(d.db, poolName)
 		if err != nil {
 			logger.Errorf("Failed to query database: %s", err)
 			return err
@@ -2182,9 +2193,9 @@ func patchStorageApiDetectLVSize(name string, d *Daemon) error {
 		}
 
 		// Get all storage volumes on the storage pool.
-		volumes, err := dbStoragePoolVolumesGet(d.db, poolID, supportedVolumeTypes)
+		volumes, err := db.StoragePoolVolumesGet(d.db, poolID, supportedVolumeTypes)
 		if err != nil {
-			if err == NoSuchObjectError {
+			if err == db.NoSuchObjectError {
 				continue
 			}
 			return err
@@ -2229,7 +2240,7 @@ func patchStorageApiDetectLVSize(name string, d *Daemon) error {
 			// exist in the db, so it's safe to ignore the error.
 			volumeType, _ := storagePoolVolumeTypeNameToType(volume.Type)
 			// Update the volume config.
-			err = dbStoragePoolVolumeUpdate(d.db, volume.Name, volumeType, poolID, volume.Description, volume.Config)
+			err = db.StoragePoolVolumeUpdate(d.db, volume.Name, volumeType, poolID, volume.Description, volume.Config)
 			if err != nil {
 				return err
 			}
@@ -2240,7 +2251,7 @@ func patchStorageApiDetectLVSize(name string, d *Daemon) error {
 }
 
 func patchStorageApiInsertZfsDriver(name string, d *Daemon) error {
-	_, err := dbExec(d.db, "UPDATE storage_pools SET driver='zfs', description='' WHERE driver=''")
+	_, err := db.Exec(d.db, "UPDATE storage_pools SET driver='zfs', description='' WHERE driver=''")
 	if err != nil {
 		return err
 	}
@@ -2249,9 +2260,9 @@ func patchStorageApiInsertZfsDriver(name string, d *Daemon) error {
 }
 
 func patchStorageZFSnoauto(name string, d *Daemon) error {
-	pools, err := dbStoragePools(d.db)
+	pools, err := db.StoragePools(d.db)
 	if err != nil {
-		if err == NoSuchObjectError {
+		if err == db.NoSuchObjectError {
 			return nil
 		}
 		logger.Errorf("Failed to query database: %s", err)
@@ -2259,7 +2270,7 @@ func patchStorageZFSnoauto(name string, d *Daemon) error {
 	}
 
 	for _, poolName := range pools {
-		_, pool, err := dbStoragePoolGet(d.db, poolName)
+		_, pool, err := db.StoragePoolGet(d.db, poolName)
 		if err != nil {
 			logger.Errorf("Failed to query database: %s", err)
 			return err
@@ -2273,7 +2284,16 @@ func patchStorageZFSnoauto(name string, d *Daemon) error {
 		if zpool == "" {
 			continue
 		}
-		paths := []string{fmt.Sprintf("%s/containers", zpool), fmt.Sprintf("%s/custom", zpool)}
+
+		containersDatasetPath := fmt.Sprintf("%s/containers", zpool)
+		customDatasetPath := fmt.Sprintf("%s/custom", zpool)
+		paths := []string{}
+		for _, v := range []string{containersDatasetPath, customDatasetPath} {
+			_, err := shared.RunCommand("zfs", "get", "-H", "-p", "-o", "value", "name", v)
+			if err == nil {
+				paths = append(paths, v)
+			}
+		}
 
 		args := []string{"list", "-t", "filesystem", "-o", "name", "-H", "-r"}
 		args = append(args, paths...)
@@ -2297,6 +2317,72 @@ func patchStorageZFSnoauto(name string, d *Daemon) error {
 				return fmt.Errorf("Unable to set canmount=noauto on: %s", entry)
 			}
 		}
+	}
+
+	return nil
+}
+
+func patchStorageZFSVolumeSize(name string, d *Daemon) error {
+	pools, err := db.StoragePools(d.db)
+	if err != nil && err == db.NoSuchObjectError {
+		// No pool was configured in the previous update. So we're on a
+		// pristine LXD instance.
+		return nil
+	} else if err != nil {
+		// Database is screwed.
+		logger.Errorf("Failed to query database: %s", err)
+		return err
+	}
+
+	for _, poolName := range pools {
+		poolID, pool, err := db.StoragePoolGet(d.db, poolName)
+		if err != nil {
+			logger.Errorf("Failed to query database: %s", err)
+			return err
+		}
+
+		// We only care about zfs
+		if pool.Driver != "zfs" {
+			continue
+		}
+
+		// Get all storage volumes on the storage pool.
+		volumes, err := db.StoragePoolVolumesGet(d.db, poolID, supportedVolumeTypes)
+		if err != nil {
+			if err == db.NoSuchObjectError {
+				continue
+			}
+			return err
+		}
+
+		for _, volume := range volumes {
+			if volume.Type != "container" && volume.Type != "image" {
+				continue
+			}
+
+			// ZFS storage volumes for containers and images should
+			// never have a size property set directly on the
+			// storage volume itself. For containers the size
+			// property is regulated either via a profiles root disk
+			// device size property or via the containers local
+			// root disk device size property. So unset it here
+			// unconditionally.
+			if volume.Config["size"] != "" {
+				volume.Config["size"] = ""
+			}
+
+			// It shouldn't be possible that false volume types
+			// exist in the db, so it's safe to ignore the error.
+			volumeType, _ := storagePoolVolumeTypeNameToType(volume.Type)
+			// Update the volume config.
+			err = db.StoragePoolVolumeUpdate(d.db, volume.Name,
+				volumeType, poolID, volume.Description,
+				volume.Config)
+			if err != nil {
+				return err
+			}
+		}
+
 	}
 
 	return nil
@@ -2338,7 +2424,7 @@ func patchUpdateFromV10(d *Daemon) error {
 }
 
 func patchUpdateFromV11(d *Daemon) error {
-	cNames, err := dbContainersList(d.db, cTypeSnapshot)
+	cNames, err := db.ContainersList(d.db, db.CTypeSnapshot)
 	if err != nil {
 		return err
 	}
@@ -2409,7 +2495,7 @@ func patchUpdateFromV15(d *Daemon) error {
 	// munge all LVM-backed containers' LV names to match what is
 	// required for snapshot support
 
-	cNames, err := dbContainersList(d.db, cTypeRegular)
+	cNames, err := db.ContainersList(d.db, db.CTypeRegular)
 	if err != nil {
 		return err
 	}

@@ -10,6 +10,8 @@ import (
 
 	"gopkg.in/lxc/go-lxc.v2"
 
+	"github.com/lxc/lxd/lxd/db"
+	"github.com/lxc/lxd/lxd/util"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/osarch"
@@ -119,6 +121,9 @@ func api10Get(d *Daemon, r *http.Request) Response {
 			"container_edit_metadata",
 			"container_snapshot_stateful_migration",
 			"storage_driver_ceph",
+			"storage_ceph_user_name",
+			"resource_limits",
+			"storage_volatile_initial_source",
 		},
 		APIStatus:  "stable",
 		APIVersion: version.APIVersion,
@@ -127,7 +132,7 @@ func api10Get(d *Daemon, r *http.Request) Response {
 	}
 
 	// If untrusted, return now
-	if !d.isTrustedClient(r) {
+	if !util.IsTrustedClient(r, d.clientCerts) {
 		return SyncResponseETag(true, srv, nil)
 	}
 
@@ -169,7 +174,7 @@ func api10Get(d *Daemon, r *http.Request) Response {
 		kernelArchitecture += string(byte(c))
 	}
 
-	addresses, err := d.ListenAddresses()
+	addresses, err := util.ListenAddresses(daemonConfig["core.https_address"].Get())
 	if err != nil {
 		return InternalError(err)
 	}
@@ -186,7 +191,7 @@ func api10Get(d *Daemon, r *http.Request) Response {
 
 	architectures := []string{}
 
-	for _, architecture := range d.architectures {
+	for _, architecture := range d.os.Architectures {
 		architectureName, err := osarch.ArchitectureName(architecture)
 		if err != nil {
 			return InternalError(err)
@@ -239,12 +244,12 @@ func api10Get(d *Daemon, r *http.Request) Response {
 }
 
 func api10Put(d *Daemon, r *http.Request) Response {
-	oldConfig, err := dbConfigValuesGet(d.db)
+	oldConfig, err := db.ConfigValuesGet(d.db)
 	if err != nil {
 		return SmartError(err)
 	}
 
-	err = etagCheck(r, daemonConfigRender())
+	err = util.EtagCheck(r, daemonConfigRender())
 	if err != nil {
 		return PreconditionFailed(err)
 	}
@@ -258,12 +263,12 @@ func api10Put(d *Daemon, r *http.Request) Response {
 }
 
 func api10Patch(d *Daemon, r *http.Request) Response {
-	oldConfig, err := dbConfigValuesGet(d.db)
+	oldConfig, err := db.ConfigValuesGet(d.db)
 	if err != nil {
 		return SmartError(err)
 	}
 
-	err = etagCheck(r, daemonConfigRender())
+	err = util.EtagCheck(r, daemonConfigRender())
 	if err != nil {
 		return PreconditionFailed(err)
 	}

@@ -7,6 +7,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/lxc/lxd/lxd/db"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/logger"
 )
@@ -156,13 +157,11 @@ func (s *storageCeph) MigrationSource(c container, containerOnly bool) (Migratio
 	// List all the snapshots in order of reverse creation. The idea here is
 	// that we send the oldest to newest snapshot, hopefully saving on xfer
 	// costs. Then, after all that, we send the container itself.
-	snapshots, err := cephRBDVolumeListSnapshots(
-		s.ClusterName,
-		s.OSDPoolName,
-		containerName,
-		storagePoolVolumeTypeNameContainer)
+	snapshots, err := cephRBDVolumeListSnapshots(s.ClusterName,
+		s.OSDPoolName, containerName,
+		storagePoolVolumeTypeNameContainer, s.UserName)
 	if err != nil {
-		if err != NoSuchObjectError {
+		if err != db.NoSuchObjectError {
 			logger.Errorf(`Failed to list snapshots for RBD storage volume "%s" on storage pool "%s": %s`, containerName, s.pool.Name, err)
 			return nil, err
 		}
@@ -179,7 +178,7 @@ func (s *storageCeph) MigrationSource(c container, containerOnly bool) (Migratio
 		}
 
 		lxdName := fmt.Sprintf("%s%s%s", containerName, shared.SnapshotDelimiter, snap[len("snapshot_"):])
-		snapshot, err := containerLoadByName(s.d, lxdName)
+		snapshot, err := containerLoadByName(s.s, lxdName)
 		if err != nil {
 			logger.Errorf(`Failed to load snapshot "%s" for RBD storage volume "%s" on storage pool "%s": %s`, lxdName, containerName, s.pool.Name, err)
 			return nil, err
@@ -218,17 +217,11 @@ func (s *storageCeph) MigrationSink(live bool, c container, snapshots []*Snapsho
 	// set to the correct cluster name for that LXD instance. Yeah, I think
 	// that's actually correct.
 	containerName := c.Name()
-	if !cephRBDVolumeExists(
-		s.ClusterName,
-		s.OSDPoolName,
-		containerName,
-		storagePoolVolumeTypeNameContainer) {
-
-		err := cephRBDVolumeCreate(
-			s.ClusterName,
-			s.OSDPoolName,
-			containerName,
-			storagePoolVolumeTypeNameContainer, "0")
+	if !cephRBDVolumeExists(s.ClusterName, s.OSDPoolName, containerName,
+		storagePoolVolumeTypeNameContainer, s.UserName) {
+		err := cephRBDVolumeCreate(s.ClusterName, s.OSDPoolName,
+			containerName, storagePoolVolumeTypeNameContainer, "0",
+			s.UserName)
 		if err != nil {
 			logger.Errorf(`Failed to create RBD storage volume "%s" for cluster "%s" in OSD pool "%s" on storage pool "%s": %s`, containerName, s.ClusterName, s.OSDPoolName, s.pool.Name, err)
 			return err
@@ -274,7 +267,7 @@ func (s *storageCeph) MigrationSink(live bool, c container, snapshots []*Snapsho
 				args.Devices[snapLocalRootDiskDeviceKey]["pool"] = parentStoragePool
 			}
 		}
-		_, err := containerCreateEmptySnapshot(c.Daemon(), args)
+		_, err := containerCreateEmptySnapshot(c.StateObject(), args)
 		if err != nil {
 			logger.Errorf(`Failed to create empty RBD storage `+
 				`volume for container "%s" on storage pool "%s: %s`,

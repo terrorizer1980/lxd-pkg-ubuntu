@@ -12,6 +12,7 @@ import (
 	"golang.org/x/crypto/ssh/terminal"
 
 	"github.com/lxc/lxd/client"
+	"github.com/lxc/lxd/lxd/util"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/cmd"
@@ -150,6 +151,11 @@ func (cmd *CmdInit) fillDataInteractive(data *cmdInitData, client lxd.ContainerS
 	networking := cmd.askNetworking()
 	imagesAutoUpdate := cmd.askImages()
 	bridge := cmd.askBridge(client)
+
+	_, err = exec.LookPath("dnsmasq")
+	if err != nil && bridge != nil {
+		return fmt.Errorf("LXD managed bridges require \"dnsmasq\". Install it and try again.")
+	}
 
 	err = cmd.fillDataWithStorage(data, storage, existingPools)
 	if err != nil {
@@ -740,7 +746,7 @@ func (cmd *CmdInit) askStorage(client lxd.ContainerServer, existingPools []strin
 				}
 				storage.Device = cmd.Context.AskString("Path to the existing block device: ", "", deviceExists)
 			} else {
-				backingFs, err := filesystemDetect(shared.VarPath())
+				backingFs, err := util.FilesystemDetect(shared.VarPath())
 				if err == nil && storage.Backend == "btrfs" && backingFs == "btrfs" {
 					if cmd.Context.AskBool("Would you like to create a new subvolume for the BTRFS storage pool (yes/no) [default=yes]: ", "yes") {
 						storage.Dataset = shared.VarPath("storage-pools", storage.Pool)
@@ -884,6 +890,7 @@ func (cmd *CmdInit) askBridge(client lxd.ContainerServer) *cmdInitBridgeParams {
 	if !cmd.Context.AskBool("Would you like to create a new network bridge (yes/no) [default=yes]? ", "yes") {
 		return nil
 	}
+
 	bridge := &cmdInitBridgeParams{}
 	for {
 		bridge.Name = cmd.Context.AskString("What should the new bridge be called [default=lxdbr0]? ", "lxdbr0", networkValidName)

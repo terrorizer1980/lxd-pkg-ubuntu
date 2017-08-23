@@ -167,7 +167,7 @@ type SQLiteDriver struct {
 
 // SQLiteConn implement sql.Conn.
 type SQLiteConn struct {
-	dbMu        sync.Mutex
+	mu          sync.Mutex
 	db          *C.sqlite3
 	loc         *time.Location
 	txlock      string
@@ -202,6 +202,7 @@ type SQLiteRows struct {
 	cols     []string
 	decltype []string
 	cls      bool
+	closed   bool
 	done     chan struct{}
 }
 
@@ -761,9 +762,9 @@ func (c *SQLiteConn) Close() error {
 		return c.lastError()
 	}
 	deleteHandles(c)
-	c.dbMu.Lock()
+	c.mu.Lock()
 	c.db = nil
-	c.dbMu.Unlock()
+	c.mu.Unlock()
 	runtime.SetFinalizer(c, nil)
 	return nil
 }
@@ -772,8 +773,8 @@ func (c *SQLiteConn) dbConnOpen() bool {
 	if c == nil {
 		return false
 	}
-	c.dbMu.Lock()
-	defer c.dbMu.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.db != nil
 }
 
@@ -866,10 +867,11 @@ func (s *SQLiteStmt) bind(args []namedValue) error {
 		case float64:
 			rv = C.sqlite3_bind_double(s.s, n, C.double(v))
 		case []byte:
-			if len(v) == 0 {
+			ln := len(v)
+			if ln == 0 {
 				v = placeHolder
 			}
-			rv = C._sqlite3_bind_blob(s.s, n, unsafe.Pointer(&v[0]), C.int(len(v)))
+			rv = C._sqlite3_bind_blob(s.s, n, unsafe.Pointer(&v[0]), C.int(ln))
 		case time.Time:
 			b := []byte(v.Format(SQLiteTimestampFormats[0]))
 			rv = C._sqlite3_bind_text(s.s, n, (*C.char)(unsafe.Pointer(&b[0])), C.int(len(b)))
@@ -904,6 +906,7 @@ func (s *SQLiteStmt) query(ctx context.Context, args []namedValue) (driver.Rows,
 		cols:     nil,
 		decltype: nil,
 		cls:      s.cls,
+		closed:   false,
 		done:     make(chan struct{}),
 	}
 
@@ -976,9 +979,10 @@ func (s *SQLiteStmt) exec(ctx context.Context, args []namedValue) (driver.Result
 
 // Close the rows.
 func (rc *SQLiteRows) Close() error {
-	if rc.s.closed {
+	if rc.s.closed || rc.closed {
 		return nil
 	}
+	rc.closed = true
 	if rc.done != nil {
 		close(rc.done)
 	}

@@ -5,6 +5,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/lxc/lxd/lxd/db"
 	"github.com/lxc/lxd/lxd/types"
 	"github.com/lxc/lxd/shared"
 )
@@ -91,7 +92,7 @@ func rsyncMigrationSource(c container, containerOnly bool) (MigrationStorageSour
 	return rsyncStorageSourceDriver{c, snapshots}, nil
 }
 
-func snapshotProtobufToContainerArgs(containerName string, snap *Snapshot) containerArgs {
+func snapshotProtobufToContainerArgs(containerName string, snap *Snapshot) db.ContainerArgs {
 	config := map[string]string{}
 
 	for _, ent := range snap.LocalConfig {
@@ -109,9 +110,9 @@ func snapshotProtobufToContainerArgs(containerName string, snap *Snapshot) conta
 	}
 
 	name := containerName + shared.SnapshotDelimiter + snap.GetName()
-	return containerArgs{
+	return db.ContainerArgs{
 		Name:         name,
-		Ctype:        cTypeSnapshot,
+		Ctype:        db.CTypeSnapshot,
 		Config:       config,
 		Profiles:     snap.Profiles,
 		Ephemeral:    snap.GetEphemeral(),
@@ -162,7 +163,7 @@ func rsyncMigrationSink(live bool, container container, snapshots []*Snapshot, c
 					}
 				}
 
-				s, err := containerCreateEmptySnapshot(container.Daemon(), args)
+				s, err := containerCreateEmptySnapshot(container.StateObject(), args)
 				if err != nil {
 					return err
 				}
@@ -212,7 +213,7 @@ func rsyncMigrationSink(live bool, container container, snapshots []*Snapshot, c
 					return err
 				}
 
-				_, err = containerCreateAsSnapshot(container.Daemon(), args, container)
+				_, err = containerCreateAsSnapshot(container.StateObject(), args, container)
 				if err != nil {
 					return err
 				}

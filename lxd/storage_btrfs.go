@@ -15,6 +15,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/lxc/lxd/lxd/db"
+	"github.com/lxc/lxd/lxd/util"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/logger"
@@ -102,6 +104,7 @@ func (s *storageBtrfs) StoragePoolCheck() error {
 
 func (s *storageBtrfs) StoragePoolCreate() error {
 	logger.Infof("Creating BTRFS storage pool \"%s\".", s.pool.Name)
+	s.pool.Config["volatile.initial_source"] = s.pool.Config["source"]
 
 	isBlockDev := false
 	source := s.pool.Config["source"]
@@ -166,7 +169,7 @@ func (s *storageBtrfs) StoragePoolCreate() error {
 					} else if strings.HasPrefix(cleanSource, lxdDir) {
 						if cleanSource != poolMntPoint {
 							return fmt.Errorf("BTRFS subvolumes requests in LXD directory \"%s\" are only valid under \"%s\"\n(e.g. source=%s)", shared.VarPath(), shared.VarPath("storage-pools"), poolMntPoint)
-						} else if s.d.BackingFs != "btrfs" {
+						} else if s.s.OS.BackingFS != "btrfs" {
 							return fmt.Errorf("creation of BTRFS subvolume requested but \"%s\" does not reside on BTRFS filesystem", source)
 						}
 					}
@@ -391,7 +394,7 @@ func (s *storageBtrfs) StoragePoolMount() (bool, error) {
 		} else if !isBlockDev && cleanSource != poolMntPoint {
 			mountSource = source
 			mountFlags |= syscall.MS_BIND
-		} else if !isBlockDev && cleanSource == poolMntPoint && s.d.BackingFs == "btrfs" {
+		} else if !isBlockDev && cleanSource == poolMntPoint && s.s.OS.BackingFS == "btrfs" {
 			return false, nil
 		}
 		// User is using block device path.
@@ -561,13 +564,13 @@ func (s *storageBtrfs) StoragePoolVolumeDelete() error {
 		}
 	}
 
-	err = dbStoragePoolVolumeDelete(
-		s.d.db,
+	err = db.StoragePoolVolumeDelete(
+		s.s.DB,
 		s.volume.Name,
 		storagePoolVolumeTypeCustom,
 		s.poolID)
 	if err != nil {
-		logger.Errorf(`Failed to delete database entry for ZFS `+
+		logger.Errorf(`Failed to delete database entry for BTRFS `+
 			`storage volume "%s" on storage pool "%s"`,
 			s.volume.Name, s.pool.Name)
 	}
@@ -925,14 +928,14 @@ func (s *storageBtrfs) ContainerCopy(target container, source container, contain
 	}
 
 	for _, snap := range snapshots {
-		sourceSnapshot, err := containerLoadByName(s.d, snap.Name())
+		sourceSnapshot, err := containerLoadByName(s.s, snap.Name())
 		if err != nil {
 			return err
 		}
 
 		_, snapOnlyName, _ := containerGetParentAndSnapshotName(snap.Name())
 		newSnapName := fmt.Sprintf("%s/%s", target.Name(), snapOnlyName)
-		targetSnapshot, err := containerLoadByName(s.d, newSnapName)
+		targetSnapshot, err := containerLoadByName(s.s, newSnapName)
 		if err != nil {
 			return err
 		}
@@ -1349,7 +1352,7 @@ func (s *storageBtrfs) ImageCreate(fingerprint string) error {
 
 	// Unpack the image in imageMntPoint.
 	imagePath := shared.VarPath("images", fingerprint)
-	err = unpackImage(s.d, imagePath, tmpImageSubvolumeName, storageTypeBtrfs)
+	err = unpackImage(imagePath, tmpImageSubvolumeName, storageTypeBtrfs)
 	if err != nil {
 		return err
 	}
@@ -1462,7 +1465,7 @@ func btrfsSubVolumeQGroup(subvol string) (string, error) {
 		"-f")
 
 	if err != nil {
-		return "", NoSuchObjectError
+		return "", db.NoSuchObjectError
 	}
 
 	var qgroup string
@@ -1681,7 +1684,7 @@ func isOnBtrfs(path string) bool {
 		return false
 	}
 
-	if fs.Type != filesystemSuperMagicBtrfs {
+	if fs.Type != util.FilesystemSuperMagicBtrfs {
 		return false
 	}
 
@@ -2062,7 +2065,7 @@ func (s *storageBtrfs) MigrationSink(live bool, container container, snapshots [
 			}
 
 			snapshotMntPoint := getSnapshotMountPoint(containerPool, args.Name)
-			_, err := containerCreateEmptySnapshot(container.Daemon(), args)
+			_, err := containerCreateEmptySnapshot(container.StateObject(), args)
 			if err != nil {
 				return err
 			}
@@ -2158,7 +2161,7 @@ func (s *storageBtrfs) StorageEntitySetQuota(volumeType int, size int64, data in
 
 	_, err := btrfsSubVolumeQGroup(subvol)
 	if err != nil {
-		if err != NoSuchObjectError {
+		if err != db.NoSuchObjectError {
 			return err
 		}
 

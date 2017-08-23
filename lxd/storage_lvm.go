@@ -8,6 +8,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/lxc/lxd/lxd/db"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/logger"
@@ -105,6 +106,8 @@ func (s *storageLvm) StoragePoolCheck() error {
 
 func (s *storageLvm) StoragePoolCreate() error {
 	logger.Infof("Creating LVM storage pool \"%s\".", s.pool.Name)
+
+	s.pool.Config["volatile.initial_source"] = s.pool.Config["source"]
 
 	var globalErr error
 	tryUndo := true
@@ -280,7 +283,7 @@ func (s *storageLvm) StoragePoolCreate() error {
 		}
 
 		// Check that we don't already use this volume group.
-		inUse, user, err := lxdUsesPool(s.d.db, poolName, s.pool.Driver, "lvm.vg_name")
+		inUse, user, err := lxdUsesPool(s.s.DB, poolName, s.pool.Driver, "lvm.vg_name")
 		if err != nil {
 			return err
 		}
@@ -468,7 +471,7 @@ func (s *storageLvm) StoragePoolVolumeCreate() error {
 	}
 
 	if s.useThinpool {
-		err = lvmCreateThinpool(s.d, s.sTypeVersion, poolName, thinPoolName, lvFsType)
+		err = lvmCreateThinpool(s.s, s.sTypeVersion, poolName, thinPoolName, lvFsType)
 		if err != nil {
 			return err
 		}
@@ -541,13 +544,13 @@ func (s *storageLvm) StoragePoolVolumeDelete() error {
 		}
 	}
 
-	err = dbStoragePoolVolumeDelete(
-		s.d.db,
+	err = db.StoragePoolVolumeDelete(
+		s.s.DB,
 		s.volume.Name,
 		storagePoolVolumeTypeCustom,
 		s.poolID)
 	if err != nil {
-		logger.Errorf(`Failed to delete database entry for ZFS `+
+		logger.Errorf(`Failed to delete database entry for LVM `+
 			`storage volume "%s" on storage pool "%s"`,
 			s.volume.Name, s.pool.Name)
 	}
@@ -834,7 +837,7 @@ func (s *storageLvm) ContainerCreate(container container) error {
 
 	poolName := s.getOnDiskPoolName()
 	if s.useThinpool {
-		err = lvmCreateThinpool(s.d, s.sTypeVersion, poolName, thinPoolName, lvFsType)
+		err = lvmCreateThinpool(s.s, s.sTypeVersion, poolName, thinPoolName, lvFsType)
 		if err != nil {
 			return err
 		}
@@ -1061,12 +1064,12 @@ func (s *storageLvm) ContainerCopy(target container, source container, container
 
 		logger.Debugf("Copying LVM container storage for snapshot %s -> %s.", snap.Name(), newSnapName)
 
-		sourceSnapshot, err := containerLoadByName(s.d, snap.Name())
+		sourceSnapshot, err := containerLoadByName(s.s, snap.Name())
 		if err != nil {
 			return err
 		}
 
-		targetSnapshot, err := containerLoadByName(s.d, newSnapName)
+		targetSnapshot, err := containerLoadByName(s.s, newSnapName)
 		if err != nil {
 			return err
 		}
@@ -1511,7 +1514,7 @@ func (s *storageLvm) ImageCreate(fingerprint string) error {
 	}()
 
 	if s.useThinpool {
-		err = lvmCreateThinpool(s.d, s.sTypeVersion, poolName, thinPoolName, lvFsType)
+		err = lvmCreateThinpool(s.s, s.sTypeVersion, poolName, thinPoolName, lvFsType)
 		if err != nil {
 			return err
 		}
@@ -1545,7 +1548,7 @@ func (s *storageLvm) ImageCreate(fingerprint string) error {
 		}
 
 		imagePath := shared.VarPath("images", fingerprint)
-		err = unpackImage(s.d, imagePath, imageMntPoint, storageTypeLvm)
+		err = unpackImage(imagePath, imageMntPoint, storageTypeLvm)
 		if err != nil {
 			return err
 		}
@@ -1706,8 +1709,8 @@ func (s *storageLvm) StorageEntitySetQuota(volumeType int, size int64, data inte
 
 	// Update the database
 	s.volume.Config["size"] = shared.GetByteSizeString(size, 0)
-	err = dbStoragePoolVolumeUpdate(
-		s.d.db,
+	err = db.StoragePoolVolumeUpdate(
+		s.s.DB,
 		s.volume.Name,
 		volumeType,
 		s.poolID,
