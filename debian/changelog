@@ -1,3 +1,15 @@
+lxd (2.0.10-0ubuntu1~16.04.2) xenial; urgency=medium
+
+  * Fix regression in image update logic (LP: #1712455):
+    - 0005-Fix-regression-in-image-auto-update-logic.patch
+    - 0006-lxd-images-Carry-old-cached-value-on-refresh.patch
+    - 0007-Attempt-to-restore-the-auto_update-property.patch
+
+  * Ship a sysctl.d file that bumps inotify watches count. (LP: #1602192)
+  * Update debian/watch to look only at LTS releases.
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Tue, 22 Aug 2017 20:39:36 -0400
+
 lxd (2.0.10-0ubuntu1~16.04.1) xenial; urgency=medium
 
   * New upstream bugfix release (2.0.10) (LP: #1693340)
