@@ -63,6 +63,7 @@ Depends: acl,
          rsync,
          squashfs-tools,
          uidmap (>= 1:4.1.5.1-1ubuntu5~),
+         xdelta3,
          xz-utils,
          ${misc:Depends},
          ${shlibs:Depends}
