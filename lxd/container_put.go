@@ -8,6 +8,8 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"github.com/lxc/lxd/lxd/db"
+	"github.com/lxc/lxd/lxd/util"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/osarch"
@@ -20,14 +22,14 @@ import (
 func containerPut(d *Daemon, r *http.Request) Response {
 	// Get the container
 	name := mux.Vars(r)["name"]
-	c, err := containerLoadByName(d, name)
+	c, err := containerLoadByName(d.State(), name)
 	if err != nil {
 		return NotFound
 	}
 
 	// Validate the ETag
 	etag := []interface{}{c.Architecture(), c.LocalConfig(), c.LocalDevices(), c.IsEphemeral(), c.Profiles()}
-	err = etagCheck(r, etag)
+	err = util.EtagCheck(r, etag)
 	if err != nil {
 		return PreconditionFailed(err)
 	}
@@ -47,7 +49,7 @@ func containerPut(d *Daemon, r *http.Request) Response {
 	if configRaw.Restore == "" {
 		// Update container configuration
 		do = func(op *operation) error {
-			args := containerArgs{
+			args := db.ContainerArgs{
 				Architecture: architecture,
 				Description:  configRaw.Description,
 				Config:       configRaw.Config,
@@ -87,12 +89,12 @@ func containerSnapRestore(d *Daemon, name string, snap string, stateful bool) er
 		snap = name + shared.SnapshotDelimiter + snap
 	}
 
-	c, err := containerLoadByName(d, name)
+	c, err := containerLoadByName(d.State(), name)
 	if err != nil {
 		return err
 	}
 
-	source, err := containerLoadByName(d, snap)
+	source, err := containerLoadByName(d.State(), snap)
 	if err != nil {
 		switch err {
 		case sql.ErrNoRows:

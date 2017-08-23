@@ -19,6 +19,8 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
+	"github.com/lxc/lxd/lxd/db"
+	"github.com/lxc/lxd/lxd/util"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/logger"
 
@@ -589,7 +591,7 @@ func deviceTaskBalance(d *Daemon) {
 	}
 
 	// Iterate through the containers
-	containers, err := dbContainersList(d.db, cTypeRegular)
+	containers, err := db.ContainersList(d.db, db.CTypeRegular)
 	if err != nil {
 		logger.Error("problem loading containers list", log.Ctx{"err": err})
 		return
@@ -597,7 +599,7 @@ func deviceTaskBalance(d *Daemon) {
 	fixedContainers := map[int][]container{}
 	balancedContainers := map[container]int{}
 	for _, name := range containers {
-		c, err := containerLoadByName(d, name)
+		c, err := containerLoadByName(d.State(), name)
 		if err != nil {
 			continue
 		}
@@ -715,14 +717,14 @@ func deviceNetworkPriority(d *Daemon, netif string) {
 		return
 	}
 
-	containers, err := dbContainersList(d.db, cTypeRegular)
+	containers, err := db.ContainersList(d.db, db.CTypeRegular)
 	if err != nil {
 		return
 	}
 
 	for _, name := range containers {
 		// Get the container struct
-		c, err := containerLoadByName(d, name)
+		c, err := containerLoadByName(d.State(), name)
 		if err != nil {
 			continue
 		}
@@ -746,14 +748,14 @@ func deviceNetworkPriority(d *Daemon, netif string) {
 }
 
 func deviceUSBEvent(d *Daemon, usb usbDevice) {
-	containers, err := dbContainersList(d.db, cTypeRegular)
+	containers, err := db.ContainersList(d.db, db.CTypeRegular)
 	if err != nil {
 		logger.Error("problem loading containers list", log.Ctx{"err": err})
 		return
 	}
 
 	for _, name := range containers {
-		containerIf, err := containerLoadByName(d, name)
+		containerIf, err := containerLoadByName(d.State(), name)
 		if err != nil {
 			continue
 		}
@@ -832,7 +834,7 @@ func deviceEventListener(d *Daemon) {
 
 			logger.Debugf("Scheduler: network: %s has been added: updating network priorities", e[0])
 			deviceNetworkPriority(d, e[0])
-			networkAutoAttach(d, e[0])
+			networkAutoAttach(d.db, e[0])
 		case e := <-chUSB:
 			deviceUSBEvent(d, e)
 		case e := <-deviceSchedRebalance:
@@ -1139,7 +1141,7 @@ func deviceGetParentBlocks(path string) ([]string, error) {
 
 	// Deal with per-filesystem oddities. We don't care about failures here
 	// because any non-special filesystem => directory backend.
-	fs, _ := filesystemDetect(expPath)
+	fs, _ := util.FilesystemDetect(expPath)
 
 	if fs == "zfs" && shared.PathExists("/dev/zfs") {
 		// Accessible zfs filesystems

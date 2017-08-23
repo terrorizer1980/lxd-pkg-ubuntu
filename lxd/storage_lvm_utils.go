@@ -7,6 +7,8 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/lxc/lxd/lxd/db"
+	"github.com/lxc/lxd/lxd/state"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/logger"
 )
@@ -463,7 +465,7 @@ func (s *storageLvm) containerCreateFromImageLv(c container, fp string) error {
 
 	imagePath := shared.VarPath("images", fp)
 	containerMntPoint := getContainerMountPoint(s.pool.Name, containerName)
-	err = unpackImage(s.d, imagePath, containerMntPoint, storageTypeLvm)
+	err = unpackImage(imagePath, containerMntPoint, storageTypeLvm)
 	if err != nil {
 		logger.Errorf(`Failed to unpack image "%s" into non-thinpool `+
 			`LVM storage volume "%s" for container "%s" on `+
@@ -668,10 +670,10 @@ func storageLVMThinpoolExists(vgName string, poolName string) (bool, error) {
 	return false, fmt.Errorf("pool named \"%s\" exists but is not a thin pool", poolName)
 }
 
-func storageLVMGetThinPoolUsers(d *Daemon) ([]string, error) {
+func storageLVMGetThinPoolUsers(s *state.State) ([]string, error) {
 	results := []string{}
 
-	cNames, err := dbContainersList(d.db, cTypeRegular)
+	cNames, err := db.ContainersList(s.DB, db.CTypeRegular)
 	if err != nil {
 		return results, err
 	}
@@ -689,7 +691,7 @@ func storageLVMGetThinPoolUsers(d *Daemon) ([]string, error) {
 		}
 	}
 
-	imageNames, err := dbImagesGet(d.db, false)
+	imageNames, err := db.ImagesGet(s.DB, false)
 	if err != nil {
 		return results, err
 	}
@@ -704,8 +706,8 @@ func storageLVMGetThinPoolUsers(d *Daemon) ([]string, error) {
 	return results, nil
 }
 
-func storageLVMValidateThinPoolName(d *Daemon, vgName string, value string) error {
-	users, err := storageLVMGetThinPoolUsers(d)
+func storageLVMValidateThinPoolName(s *state.State, vgName string, value string) error {
+	users, err := storageLVMGetThinPoolUsers(s)
 	if err != nil {
 		return fmt.Errorf("error checking if a pool is already in use: %v", err)
 	}
@@ -817,7 +819,7 @@ func lvmCreateLv(vgName string, thinPoolName string, lvName string, lvFsType str
 	return nil
 }
 
-func lvmCreateThinpool(d *Daemon, sTypeVersion string, vgName string, thinPoolName string, lvFsType string) error {
+func lvmCreateThinpool(s *state.State, sTypeVersion string, vgName string, thinPoolName string, lvFsType string) error {
 	exists, err := storageLVMThinpoolExists(vgName, thinPoolName)
 	if err != nil {
 		return err
@@ -832,7 +834,7 @@ func lvmCreateThinpool(d *Daemon, sTypeVersion string, vgName string, thinPoolNa
 		return err
 	}
 
-	err = storageLVMValidateThinPoolName(d, vgName, thinPoolName)
+	err = storageLVMValidateThinPoolName(s, vgName, thinPoolName)
 	if err != nil {
 		logger.Errorf("Setting thin pool name: %s.", err)
 		return fmt.Errorf("Error setting LVM thin pool config: %v", err)

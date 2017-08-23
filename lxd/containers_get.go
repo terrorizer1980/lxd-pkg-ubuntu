@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/lxc/lxd/lxd/db"
+	"github.com/lxc/lxd/lxd/util"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/logger"
 	"github.com/lxc/lxd/shared/version"
@@ -12,11 +14,11 @@ import (
 
 func containersGet(d *Daemon, r *http.Request) Response {
 	for i := 0; i < 100; i++ {
-		result, err := doContainersGet(d, d.isRecursionRequest(r))
+		result, err := doContainersGet(d, util.IsRecursionRequest(r))
 		if err == nil {
 			return SyncResponse(true, result)
 		}
-		if !isDbLockedError(err) {
+		if !db.IsDbLockedError(err) {
 			logger.Debugf("DBERR: containersGet: error %q", err)
 			return SmartError(err)
 		}
@@ -31,7 +33,7 @@ func containersGet(d *Daemon, r *http.Request) Response {
 }
 
 func doContainersGet(d *Daemon, recursion bool) (interface{}, error) {
-	result, err := dbContainersList(d.db, cTypeRegular)
+	result, err := db.ContainersList(d.db, db.CTypeRegular)
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +68,7 @@ func doContainersGet(d *Daemon, recursion bool) (interface{}, error) {
 }
 
 func doContainerGet(d *Daemon, cname string) (*api.Container, error) {
-	c, err := containerLoadByName(d, cname)
+	c, err := containerLoadByName(d.State(), cname)
 	if err != nil {
 		return nil, err
 	}

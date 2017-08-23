@@ -8,12 +8,16 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 
 	"github.com/gorilla/mux"
 	log "gopkg.in/inconshreveable/log15.v2"
 
+	"github.com/lxc/lxd/lxd/db"
+	"github.com/lxc/lxd/lxd/state"
+	"github.com/lxc/lxd/lxd/util"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/logger"
@@ -28,7 +32,7 @@ func networksGet(d *Daemon, r *http.Request) Response {
 		recursion = 0
 	}
 
-	ifs, err := networkGetInterfaces(d)
+	ifs, err := networkGetInterfaces(d.db)
 	if err != nil {
 		return InternalError(err)
 	}
@@ -77,7 +81,7 @@ func networksPost(d *Daemon, r *http.Request) Response {
 		return BadRequest(fmt.Errorf("Only 'bridge' type networks can be created"))
 	}
 
-	networks, err := networkGetInterfaces(d)
+	networks, err := networkGetInterfaces(d.db)
 	if err != nil {
 		return InternalError(err)
 	}
@@ -126,14 +130,14 @@ func networksPost(d *Daemon, r *http.Request) Response {
 	}
 
 	// Create the database entry
-	_, err = dbNetworkCreate(d.db, req.Name, req.Description, req.Config)
+	_, err = db.NetworkCreate(d.db, req.Name, req.Description, req.Config)
 	if err != nil {
 		return InternalError(
 			fmt.Errorf("Error inserting %s into database: %s", req.Name, err))
 	}
 
 	// Start the network
-	n, err := networkLoadByName(d, req.Name)
+	n, err := networkLoadByName(d.State(), req.Name)
 	if err != nil {
 		return InternalError(err)
 	}
@@ -165,7 +169,7 @@ func networkGet(d *Daemon, r *http.Request) Response {
 func doNetworkGet(d *Daemon, name string) (api.Network, error) {
 	// Get some information
 	osInfo, _ := net.InterfaceByName(name)
-	_, dbInfo, _ := dbNetworkGet(d.db, name)
+	_, dbInfo, _ := db.NetworkGet(d.db, name)
 
 	// Sanity check
 	if osInfo == nil && dbInfo == nil {
@@ -179,13 +183,13 @@ func doNetworkGet(d *Daemon, name string) (api.Network, error) {
 	n.Config = map[string]string{}
 
 	// Look for containers using the interface
-	cts, err := dbContainersList(d.db, cTypeRegular)
+	cts, err := db.ContainersList(d.db, db.CTypeRegular)
 	if err != nil {
 		return api.Network{}, err
 	}
 
 	for _, ct := range cts {
-		c, err := containerLoadByName(d, ct)
+		c, err := containerLoadByName(d.State(), ct)
 		if err != nil {
 			return api.Network{}, err
 		}
@@ -226,9 +230,10 @@ func doNetworkGet(d *Daemon, name string) (api.Network, error) {
 
 func networkDelete(d *Daemon, r *http.Request) Response {
 	name := mux.Vars(r)["name"]
+	state := d.State()
 
 	// Get the existing network
-	n, err := networkLoadByName(d, name)
+	n, err := networkLoadByName(state, name)
 	if err != nil {
 		return NotFound
 	}
@@ -250,6 +255,7 @@ func networkDelete(d *Daemon, r *http.Request) Response {
 func networkPost(d *Daemon, r *http.Request) Response {
 	name := mux.Vars(r)["name"]
 	req := api.NetworkPost{}
+	state := d.State()
 
 	// Parse the request
 	err := json.NewDecoder(r.Body).Decode(&req)
@@ -258,7 +264,7 @@ func networkPost(d *Daemon, r *http.Request) Response {
 	}
 
 	// Get the existing network
-	n, err := networkLoadByName(d, name)
+	n, err := networkLoadByName(state, name)
 	if err != nil {
 		return NotFound
 	}
@@ -274,7 +280,7 @@ func networkPost(d *Daemon, r *http.Request) Response {
 	}
 
 	// Check that the name isn't already in use
-	networks, err := networkGetInterfaces(d)
+	networks, err := networkGetInterfaces(d.db)
 	if err != nil {
 		return InternalError(err)
 	}
@@ -296,7 +302,7 @@ func networkPut(d *Daemon, r *http.Request) Response {
 	name := mux.Vars(r)["name"]
 
 	// Get the existing network
-	_, dbInfo, err := dbNetworkGet(d.db, name)
+	_, dbInfo, err := db.NetworkGet(d.db, name)
 	if err != nil {
 		return SmartError(err)
 	}
@@ -304,7 +310,7 @@ func networkPut(d *Daemon, r *http.Request) Response {
 	// Validate the ETag
 	etag := []interface{}{dbInfo.Name, dbInfo.Managed, dbInfo.Type, dbInfo.Description, dbInfo.Config}
 
-	err = etagCheck(r, etag)
+	err = util.EtagCheck(r, etag)
 	if err != nil {
 		return PreconditionFailed(err)
 	}
@@ -321,7 +327,7 @@ func networkPatch(d *Daemon, r *http.Request) Response {
 	name := mux.Vars(r)["name"]
 
 	// Get the existing network
-	_, dbInfo, err := dbNetworkGet(d.db, name)
+	_, dbInfo, err := db.NetworkGet(d.db, name)
 	if dbInfo != nil {
 		return SmartError(err)
 	}
@@ -329,7 +335,7 @@ func networkPatch(d *Daemon, r *http.Request) Response {
 	// Validate the ETag
 	etag := []interface{}{dbInfo.Name, dbInfo.Managed, dbInfo.Type, dbInfo.Description, dbInfo.Config}
 
-	err = etagCheck(r, etag)
+	err = util.EtagCheck(r, etag)
 	if err != nil {
 		return PreconditionFailed(err)
 	}
@@ -369,7 +375,7 @@ func doNetworkUpdate(d *Daemon, name string, oldConfig map[string]string, req ap
 	}
 
 	// Load the network
-	n, err := networkLoadByName(d, name)
+	n, err := networkLoadByName(d.State(), name)
 	if err != nil {
 		return NotFound
 	}
@@ -385,27 +391,27 @@ func doNetworkUpdate(d *Daemon, name string, oldConfig map[string]string, req ap
 var networkCmd = Command{name: "networks/{name}", get: networkGet, delete: networkDelete, post: networkPost, put: networkPut, patch: networkPatch}
 
 // The network structs and functions
-func networkLoadByName(d *Daemon, name string) (*network, error) {
-	id, dbInfo, err := dbNetworkGet(d.db, name)
+func networkLoadByName(s *state.State, name string) (*network, error) {
+	id, dbInfo, err := db.NetworkGet(s.DB, name)
 	if err != nil {
 		return nil, err
 	}
 
-	n := network{daemon: d, id: id, name: name, description: dbInfo.Description, config: dbInfo.Config}
+	n := network{state: s, id: id, name: name, description: dbInfo.Description, config: dbInfo.Config}
 
 	return &n, nil
 }
 
 func networkStartup(d *Daemon) error {
 	// Get a list of managed networks
-	networks, err := dbNetworks(d.db)
+	networks, err := db.Networks(d.db)
 	if err != nil {
 		return err
 	}
 
 	// Bring them all up
 	for _, name := range networks {
-		n, err := networkLoadByName(d, name)
+		n, err := networkLoadByName(d.State(), name)
 		if err != nil {
 			return err
 		}
@@ -420,9 +426,36 @@ func networkStartup(d *Daemon) error {
 	return nil
 }
 
+func networkShutdown(d *Daemon) error {
+	// Get a list of managed networks
+	networks, err := db.Networks(d.db)
+	if err != nil {
+		return err
+	}
+
+	// Bring them all up
+	for _, name := range networks {
+		n, err := networkLoadByName(d.State(), name)
+		if err != nil {
+			return err
+		}
+
+		if !n.IsRunning() {
+			continue
+		}
+
+		err = n.Stop()
+		if err != nil {
+			logger.Error("Failed to bring down network", log.Ctx{"err": err, "name": name})
+		}
+	}
+
+	return nil
+}
+
 type network struct {
 	// Properties
-	daemon      *Daemon
+	state       *state.State
 	id          int64
 	name        string
 	description string
@@ -441,13 +474,13 @@ func (n *network) IsRunning() bool {
 
 func (n *network) IsUsed() bool {
 	// Look for containers using the interface
-	cts, err := dbContainersList(n.daemon.db, cTypeRegular)
+	cts, err := db.ContainersList(n.state.DB, db.CTypeRegular)
 	if err != nil {
 		return true
 	}
 
 	for _, ct := range cts {
-		c, err := containerLoadByName(n.daemon, ct)
+		c, err := containerLoadByName(n.state, ct)
 		if err != nil {
 			return true
 		}
@@ -475,7 +508,7 @@ func (n *network) Delete() error {
 	}
 
 	// Remove the network from the database
-	err := dbNetworkDelete(n.daemon.db, n.name)
+	err := db.NetworkDelete(n.state.DB, n.name)
 	if err != nil {
 		return err
 	}
@@ -510,7 +543,7 @@ func (n *network) Rename(name string) error {
 	}
 
 	// Rename the database entry
-	err := dbNetworkRename(n.daemon.db, n.name, name)
+	err := db.NetworkRename(n.state.DB, n.name, name)
 	if err != nil {
 		return err
 	}
@@ -526,7 +559,7 @@ func (n *network) Rename(name string) error {
 
 func (n *network) Start() error {
 	// If we are in mock mode, just no-op.
-	if n.daemon.MockMode {
+	if n.state.OS.MockMode {
 		return nil
 	}
 
@@ -1160,7 +1193,7 @@ func (n *network) Start() error {
 		}
 
 		// Create a config file to contain additional config (and to prevent dnsmasq from reading /etc/dnsmasq.conf)
-		err = ioutil.WriteFile(shared.VarPath("networks", n.name, "dnsmasq.raw"), []byte(fmt.Sprintf("%s\n", n.config["raw.dnsmasq"])), 0)
+		err = ioutil.WriteFile(shared.VarPath("networks", n.name, "dnsmasq.raw"), []byte(fmt.Sprintf("%s\n", n.config["raw.dnsmasq"])), 0644)
 		if err != nil {
 			return err
 		}
@@ -1185,6 +1218,12 @@ func (n *network) Start() error {
 			break
 		}
 
+		// Check for dnsmasq
+		_, err := exec.LookPath("dnsmasq")
+		if err != nil {
+			return fmt.Errorf("dnsmasq is required for LXD managed bridges.")
+		}
+
 		// Start dnsmasq (occasionally races, try a few times)
 		output, err := shared.TryRunCommand(dnsmasqCmd[0], dnsmasqCmd[1:]...)
 		if err != nil {
@@ -1192,7 +1231,7 @@ func (n *network) Start() error {
 		}
 
 		// Update the static leases
-		err = networkUpdateStatic(n.daemon, n.name)
+		err = networkUpdateStatic(n.state, n.name)
 		if err != nil {
 			return err
 		}
@@ -1366,7 +1405,7 @@ func (n *network) Update(newNetwork api.NetworkPut) error {
 	n.description = newNetwork.Description
 
 	// Update the database
-	err = dbNetworkUpdate(n.daemon.db, n.name, n.description, n.config)
+	err = db.NetworkUpdate(n.state.DB, n.name, n.description, n.config)
 	if err != nil {
 		return err
 	}

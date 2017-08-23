@@ -9,6 +9,8 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"github.com/lxc/lxd/lxd/db"
+	"github.com/lxc/lxd/lxd/util"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/osarch"
@@ -17,14 +19,14 @@ import (
 func containerPatch(d *Daemon, r *http.Request) Response {
 	// Get the container
 	name := mux.Vars(r)["name"]
-	c, err := containerLoadByName(d, name)
+	c, err := containerLoadByName(d.State(), name)
 	if err != nil {
 		return NotFound
 	}
 
 	// Validate the ETag
 	etag := []interface{}{c.Architecture(), c.LocalConfig(), c.LocalDevices(), c.IsEphemeral(), c.Profiles()}
-	err = etagCheck(r, etag)
+	err = util.EtagCheck(r, etag)
 	if err != nil {
 		return PreconditionFailed(err)
 	}
@@ -99,7 +101,7 @@ func containerPatch(d *Daemon, r *http.Request) Response {
 	}
 
 	// Update container configuration
-	args := containerArgs{
+	args := db.ContainerArgs{
 		Architecture: architecture,
 		Description:  req.Description,
 		Config:       req.Config,

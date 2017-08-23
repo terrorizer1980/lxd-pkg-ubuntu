@@ -6,6 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lxc/lxd/lxd/db"
+	"github.com/lxc/lxd/lxd/state"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/logger"
 
@@ -97,7 +99,7 @@ func (slice containerAutostartList) Swap(i, j int) {
 
 func containersRestart(d *Daemon) error {
 	// Get all the containers
-	result, err := dbContainersList(d.db, cTypeRegular)
+	result, err := db.ContainersList(d.db, db.CTypeRegular)
 	if err != nil {
 		return err
 	}
@@ -105,7 +107,7 @@ func containersRestart(d *Daemon) error {
 	containers := []container{}
 
 	for _, name := range result {
-		c, err := containerLoadByName(d, name)
+		c, err := containerLoadByName(d.State(), name)
 		if err != nil {
 			return err
 		}
@@ -144,20 +146,20 @@ func containersShutdown(d *Daemon) error {
 	var wg sync.WaitGroup
 
 	// Get all the containers
-	results, err := dbContainersList(d.db, cTypeRegular)
+	results, err := db.ContainersList(d.db, db.CTypeRegular)
 	if err != nil {
 		return err
 	}
 
 	// Reset all container states
-	_, err = dbExec(d.db, "DELETE FROM containers_config WHERE key='volatile.last_state.power'")
+	_, err = db.Exec(d.db, "DELETE FROM containers_config WHERE key='volatile.last_state.power'")
 	if err != nil {
 		return err
 	}
 
 	for _, r := range results {
 		// Load the container
-		c, err := containerLoadByName(d, r)
+		c, err := containerLoadByName(d.State(), r)
 		if err != nil {
 			return err
 		}
@@ -194,17 +196,17 @@ func containersShutdown(d *Daemon) error {
 	return nil
 }
 
-func containerDeleteSnapshots(d *Daemon, cname string) error {
+func containerDeleteSnapshots(s *state.State, cname string) error {
 	logger.Debug("containerDeleteSnapshots",
 		log.Ctx{"container": cname})
 
-	results, err := dbContainerGetSnapshots(d.db, cname)
+	results, err := db.ContainerGetSnapshots(s.DB, cname)
 	if err != nil {
 		return err
 	}
 
 	for _, sname := range results {
-		sc, err := containerLoadByName(d, sname)
+		sc, err := containerLoadByName(s, sname)
 		if err != nil {
 			logger.Error(
 				"containerDeleteSnapshots: Failed to load the snapshotcontainer",
