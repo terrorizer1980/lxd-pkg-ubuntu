@@ -899,6 +899,14 @@ func autoUpdateImage(d *Daemon, op *operation, fingerprint string, id int, info 
 		return err
 	}
 
+	if info.Cached {
+		err = dbImageLastAccessInit(d.db, hash)
+		if err != nil {
+			logger.Error("Error setting cached flag", log.Ctx{"err": err, "fp": hash})
+			return err
+		}
+	}
+
 	err = dbImageLastAccessUpdate(d.db, hash, info.LastUsedAt)
 	if err != nil {
 		logger.Error("Error setting last use date", log.Ctx{"err": err, "fp": hash})

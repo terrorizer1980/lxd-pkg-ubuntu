@@ -29,6 +29,7 @@ import (
 var patches = []patch{
 	{name: "invalid_profile_names", run: patchInvalidProfileNames},
 	{name: "leftover_profile_config", run: patchLeftoverProfileConfig},
+	{name: "cached_images_update", run: patchCachedImagesUpdate},
 }
 
 type patch struct {
@@ -98,6 +99,30 @@ func patchInvalidProfileNames(name string, d *Daemon) error {
 		if strings.Contains(profile, "/") || shared.StringInSlice(profile, []string{".", ".."}) {
 			logger.Info("Removing unreachable profile (invalid name)", log.Ctx{"name": profile})
 			err := dbProfileDelete(d.db, profile)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func patchCachedImagesUpdate(name string, d *Daemon) error {
+	images, err := dbImagesGet(d.db, false)
+	if err != nil {
+		return err
+	}
+
+	for _, fp := range images {
+		id, image, err := dbImageGet(d.db, fp, false, true)
+		if err != nil {
+			return err
+		}
+
+		if image.Cached && !image.AutoUpdate && image.UpdateSource != nil {
+			stmt := `UPDATE images SET auto_update=1 WHERE id=?`
+			_, err := dbExec(d.db, stmt, id)
 			if err != nil {
 				return err
 			}
