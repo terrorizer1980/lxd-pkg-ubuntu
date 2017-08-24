@@ -6,7 +6,7 @@
 
 PKGDIR=debian/tmp
 VERSION=$(shell grep "var Version" $(CURDIR)/shared/version/flex.go | cut -d'"' -f2)
-DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
+include /usr/share/dpkg/default.mk
 
 # temporary build path (see http://golang.org/doc/code.html#GOPATH)
 export DH_GOPKG := github.com/lxc/lxd
@@ -121,6 +121,16 @@ override_dh_install:
 	dh_install
 
 override_dh_installinit:
+ifeq (,$(findstring $(DEB_DISTRIBUTION), trusty xenial zesty))
+	# Disable upstart integration on artful+
+	rm -f debian/lxd.upstart
+	cp debian/lxd.maintscript.in debian/lxd.maintscript
+else
+	# Enable upstart integration for backports
+	cp debian/lxd.upstart.in debian/lxd.upstart
+	sed -i "s#@LIBEXECDIR@#/usr/lib/${DEB_HOST_MULTIARCH}#g" debian/lxd.upstart
+	grep -v /etc/init debian/lxd.maintscript.in > debian/lxd.maintscript
+endif
 	# We handle starting and restarting things ourselves
 	dh_systemd_enable -plxd --name=lxd-containers lxd-containers.service
 	dh_installinit -plxd --no-start
@@ -129,7 +139,6 @@ override_dh_installinit:
 
 	# Update arch-specific paths
 	sed -i "s#@LIBEXECDIR@#/usr/lib/${DEB_HOST_MULTIARCH}#g" debian/lxd/lib/systemd/system/lxd.service
-	sed -i "s#@LIBEXECDIR@#/usr/lib/${DEB_HOST_MULTIARCH}#g" debian/lxd/etc/init/lxd.conf
 	sed -i "s#@LIBEXECDIR@#/usr/lib/${DEB_HOST_MULTIARCH}#g" debian/lxd/etc/init.d/lxd
 
 override_dh_systemd_start:
