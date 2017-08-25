@@ -1,8 +1,16 @@
-lxd (2.17-0ubuntu2) UNRELEASED; urgency=medium
+lxd (2.17-0ubuntu2) artful; urgency=medium
 
+  * Cherry-pick upstream fixes:
+    - 0001-network-Switch-to-a-directory-based-dhcp-host.patch
+    - 0002-network-Make-dnsmasq-quiet-when-not-in-debug-mode.patch
+    - 0003-shared-Fix-growing-of-buf-in-GroupId.patch
+    - 0004-Fix-live-migration-bad-URL-in-dumpsuccess.patch
+    - 0005-apparmor-Support-new-stacking-syntax.patch
+
+  [ Dimitri John Ledkov ]
   * Disable upstart integration on artful+.
 
- -- Dimitri John Ledkov <xnox@ubuntu.com>  Wed, 23 Aug 2017 15:35:42 +0100
+ -- Stéphane Graber <stgraber@ubuntu.com>  Fri, 25 Aug 2017 18:35:56 -0400
 
 lxd (2.17-0ubuntu1) artful; urgency=medium
 
