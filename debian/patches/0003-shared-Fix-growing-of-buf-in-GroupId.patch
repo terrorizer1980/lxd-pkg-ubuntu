@@ -1,0 +1,48 @@
+From ecd66e5db7273331c9f4a3c656111d78c684a657 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Thu, 24 Aug 2017 15:40:58 -0400
+Subject: shared: Fix growing of buf in GroupId
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Closes #3711
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ shared/util_linux.go | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/shared/util_linux.go b/shared/util_linux.go
+index 02f38082..33747f19 100644
+--- a/shared/util_linux.go
++++ b/shared/util_linux.go
+@@ -411,7 +411,6 @@ func GroupId(name string) (int, error) {
+ 	if buf == nil {
+ 		return -1, fmt.Errorf("allocation failed")
+ 	}
+-	defer C.free(buf)
+ 
+ 	cname := C.CString(name)
+ 	defer C.free(unsafe.Pointer(cname))
+@@ -422,7 +421,7 @@ again:
+ 		(*C.char)(buf),
+ 		bufSize,
+ 		&result)
+-	if rv < 0 {
++	if rv != 0 {
+ 		// OOM killer will take care of us if we end up doing this too
+ 		// often.
+ 		if errno == syscall.ERANGE {
+@@ -434,8 +433,11 @@ again:
+ 			buf = tmp
+ 			goto again
+ 		}
++
++		C.free(buf)
+ 		return -1, fmt.Errorf("failed group lookup: %s", syscall.Errno(rv))
+ 	}
++	C.free(buf)
+ 
+ 	if result == nil {
+ 		return -1, fmt.Errorf("unknown group %s", name)

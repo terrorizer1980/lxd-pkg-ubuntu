@@ -1,0 +1,62 @@
+From a055aaff699f9684f3aeafdfec6070fa6b052a07 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Thu, 24 Aug 2017 19:28:10 -0400
+Subject: Fix live migration (bad URL in dumpsuccess)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Closes #3715
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ client/lxd.go                  | 5 +----
+ lxd/main_migratedumpsuccess.go | 7 ++++---
+ 2 files changed, 5 insertions(+), 7 deletions(-)
+
+diff --git a/client/lxd.go b/client/lxd.go
+index 3473e317..12ccdee8 100644
+--- a/client/lxd.go
++++ b/client/lxd.go
+@@ -76,10 +76,7 @@ func (r *ProtocolLXD) RawQuery(method string, path string, data interface{}, ETa
+ //
+ // This should only be used by internal LXD tools.
+ func (r *ProtocolLXD) RawWebsocket(path string) (*websocket.Conn, error) {
+-	// Generate the URL
+-	url := fmt.Sprintf("%s%s", r.httpHost, path)
+-
+-	return r.rawWebsocket(url)
++	return r.websocket(path)
+ }
+ 
+ // Internal functions
+diff --git a/lxd/main_migratedumpsuccess.go b/lxd/main_migratedumpsuccess.go
+index 663e6f95..56fce2e1 100644
+--- a/lxd/main_migratedumpsuccess.go
++++ b/lxd/main_migratedumpsuccess.go
+@@ -2,7 +2,7 @@ package main
+ 
+ import (
+ 	"fmt"
+-	"net/url"
++	"strings"
+ 
+ 	"github.com/lxc/lxd/client"
+ 	"github.com/lxc/lxd/shared/api"
+@@ -18,13 +18,14 @@ func cmdMigrateDumpSuccess(args []string) error {
+ 		return err
+ 	}
+ 
+-	conn, err := c.RawWebsocket(fmt.Sprintf("/1.0/operations/%s/websocket?%s", args[1], url.Values{"secret": []string{args[2]}}))
++	url := fmt.Sprintf("%s/websocket?secret=%s", strings.TrimPrefix(args[1], "/1.0"), args[2])
++	conn, err := c.RawWebsocket(url)
+ 	if err != nil {
+ 		return err
+ 	}
+ 	conn.Close()
+ 
+-	resp, _, err := c.RawQuery("GET", fmt.Sprintf("/1.0/operations/%s/wait", args[1]), nil, "")
++	resp, _, err := c.RawQuery("GET", fmt.Sprintf("%s/wait", args[1]), nil, "")
+ 	if err != nil {
+ 		return err
+ 	}
