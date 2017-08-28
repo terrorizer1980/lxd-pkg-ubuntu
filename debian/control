@@ -37,7 +37,7 @@ Build-Depends: debhelper (>= 9),
                python3-lxc
 
 Package: lxd-client
-Architecture: any
+Architecture: amd64 arm64 armhf i386 ppc64el s390x
 Depends: ${misc:Depends}, ${shlibs:Depends}
 Built-Using: ${misc:Built-Using}
 Suggests: lxd
@@ -50,7 +50,7 @@ Description: Container hypervisor based on LXC - client
  This package contains the command line client.
 
 Package: lxd
-Architecture: any
+Architecture: amd64 arm64 armhf i386 ppc64el s390x
 Depends: acl,
          adduser,
          dnsmasq-base,
@@ -88,7 +88,7 @@ Description: Container hypervisor based on LXC - metapackage
  This is a dummy metapackage to install LXD and its client.
 
 Package: lxd-tools
-Architecture: any
+Architecture: amd64 arm64 armhf i386 ppc64el s390x
 Depends: ${misc:Depends}, ${shlibs:Depends}, python3, python3-lxc
 Built-Using: ${misc:Built-Using}
 Description: Container hypervisor based on LXC - extra tools
