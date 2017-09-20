@@ -1,3 +1,9 @@
+lxd (2.17-0ubuntu3) artful; urgency=medium
+
+  * No change rebuild for updated go-lxc.
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Tue, 19 Sep 2017 21:39:00 -0400
+
 lxd (2.17-0ubuntu2) artful; urgency=medium
 
   * Cherry-pick upstream fixes:
