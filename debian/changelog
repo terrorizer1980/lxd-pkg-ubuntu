@@ -1,3 +1,9 @@
+lxd (2.17-0ubuntu4) artful; urgency=medium
+
+  * No change rebuild for updated go-lxc.
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 20 Sep 2017 18:09:13 -0400
+
 lxd (2.17-0ubuntu3) artful; urgency=medium
 
   * No change rebuild for updated go-lxc.
