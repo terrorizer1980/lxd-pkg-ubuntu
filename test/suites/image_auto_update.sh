@@ -1,12 +1,4 @@
 test_image_auto_update() {
-  # XXX this test appears to be flaky when running on Jenkins
-  # against the LVM backend. Needs further investigation.
-  # shellcheck disable=2153
-  backend=$(storage_backend "$LXD_DIR")
-  if [ "${backend}" = "lvm" ]; then
-      return 0
-  fi
-
   if lxc image alias list | grep -q "^| testimage\s*|.*$"; then
       lxc image delete testimage
   fi
@@ -46,7 +38,7 @@ test_image_auto_update() {
   #
   # XXX: Since the auto-update logic runs asynchronously we need to wait
   #      a little bit before it actually completes.
-  retries=10
+  retries=600
   while [ "${retries}" != "0" ]; do
     if lxc image info "${fp1}" > /dev/null 2>&1; then
         sleep 2

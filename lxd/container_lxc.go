@@ -30,6 +30,7 @@ import (
 	"github.com/lxc/lxd/lxd/util"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
+	"github.com/lxc/lxd/shared/idmap"
 	"github.com/lxc/lxd/shared/logger"
 	"github.com/lxc/lxd/shared/osarch"
 
@@ -325,13 +326,14 @@ func containerLXCCreate(s *state.State, args db.ContainerArgs) (container, error
 	cStorage, err := storagePoolVolumeContainerCreateInit(s, storagePool, args.Name)
 	if err != nil {
 		c.Delete()
+		db.StoragePoolVolumeDelete(s.DB, args.Name, storagePoolVolumeTypeContainer, poolID)
 		logger.Error("Failed to initialize container storage", ctxMap)
 		return nil, err
 	}
 	c.storage = cStorage
 
 	// Setup initial idmap config
-	var idmap *shared.IdmapSet
+	var idmap *idmap.IdmapSet
 	base := int64(0)
 	if !c.IsPrivileged() {
 		idmap, base, err = findIdmap(
@@ -457,7 +459,7 @@ type containerLXC struct {
 	// Cache
 	c        *lxc.Container
 	state    *state.State
-	idmapset *shared.IdmapSet
+	idmapset *idmap.IdmapSet
 
 	// Storage
 	storage storage
@@ -544,7 +546,7 @@ func idmapSize(state *state.State, isolatedStr string, size string) (int64, erro
 
 var idmapLock sync.Mutex
 
-func parseRawIdmap(value string) ([]shared.IdmapEntry, error) {
+func parseRawIdmap(value string) ([]idmap.IdmapEntry, error) {
 	getRange := func(r string) (int64, int64, error) {
 		entries := strings.Split(r, "-")
 		if len(entries) > 2 {
@@ -570,7 +572,7 @@ func parseRawIdmap(value string) ([]shared.IdmapEntry, error) {
 		return base, size, nil
 	}
 
-	ret := shared.IdmapSet{}
+	ret := idmap.IdmapSet{}
 
 	for _, line := range strings.Split(value, "\n") {
 		if line == "" {
@@ -596,7 +598,7 @@ func parseRawIdmap(value string) ([]shared.IdmapEntry, error) {
 			return nil, fmt.Errorf("idmap ranges of different sizes %s", line)
 		}
 
-		entry := shared.IdmapEntry{
+		entry := idmap.IdmapEntry{
 			Hostid:   outsideBase,
 			Nsid:     insideBase,
 			Maprange: insideSize,
@@ -630,7 +632,7 @@ func parseRawIdmap(value string) ([]shared.IdmapEntry, error) {
 	return ret.Idmap, nil
 }
 
-func findIdmap(state *state.State, cName string, isolatedStr string, configBase string, configSize string, rawIdmap string) (*shared.IdmapSet, int64, error) {
+func findIdmap(state *state.State, cName string, isolatedStr string, configBase string, configSize string, rawIdmap string) (*idmap.IdmapSet, int64, error) {
 	isolated := false
 	if shared.IsTrue(isolatedStr) {
 		isolated = true
@@ -642,11 +644,14 @@ func findIdmap(state *state.State, cName string, isolatedStr string, configBase 
 	}
 
 	if !isolated {
-		newIdmapset := shared.IdmapSet{Idmap: make([]shared.IdmapEntry, len(state.OS.IdmapSet.Idmap))}
+		newIdmapset := idmap.IdmapSet{Idmap: make([]idmap.IdmapEntry, len(state.OS.IdmapSet.Idmap))}
 		copy(newIdmapset.Idmap, state.OS.IdmapSet.Idmap)
 
 		for _, ent := range rawMaps {
-			newIdmapset.AddSafe(ent)
+			err := newIdmapset.AddSafe(ent)
+			if err != nil && err == idmap.ErrHostIdIsSubId {
+				return nil, 0, err
+			}
 		}
 
 		return &newIdmapset, 0, nil
@@ -657,17 +662,20 @@ func findIdmap(state *state.State, cName string, isolatedStr string, configBase 
 		return nil, 0, err
 	}
 
-	mkIdmap := func(offset int64, size int64) *shared.IdmapSet {
-		set := &shared.IdmapSet{Idmap: []shared.IdmapEntry{
+	mkIdmap := func(offset int64, size int64) (*idmap.IdmapSet, error) {
+		set := &idmap.IdmapSet{Idmap: []idmap.IdmapEntry{
 			{Isuid: true, Nsid: 0, Hostid: offset, Maprange: size},
 			{Isgid: true, Nsid: 0, Hostid: offset, Maprange: size},
 		}}
 
 		for _, ent := range rawMaps {
-			set.AddSafe(ent)
+			err := set.AddSafe(ent)
+			if err != nil && err == idmap.ErrHostIdIsSubId {
+				return nil, err
+			}
 		}
 
-		return set
+		return set, nil
 	}
 
 	if configBase != "" {
@@ -676,7 +684,12 @@ func findIdmap(state *state.State, cName string, isolatedStr string, configBase 
 			return nil, 0, err
 		}
 
-		return mkIdmap(offset, size), offset, nil
+		set, err := mkIdmap(offset, size)
+		if err != nil && err == idmap.ErrHostIdIsSubId {
+			return nil, 0, err
+		}
+
+		return set, offset, nil
 	}
 
 	idmapLock.Lock()
@@ -689,7 +702,7 @@ func findIdmap(state *state.State, cName string, isolatedStr string, configBase 
 
 	offset := state.OS.IdmapSet.Idmap[0].Hostid + 65536
 
-	mapentries := shared.ByHostid{}
+	mapentries := idmap.ByHostid{}
 	for _, name := range cs {
 		/* Don't change our map Just Because. */
 		if name == cName {
@@ -722,7 +735,7 @@ func findIdmap(state *state.State, cName string, isolatedStr string, configBase 
 			return nil, 0, err
 		}
 
-		mapentries = append(mapentries, &shared.IdmapEntry{Hostid: int64(cBase), Maprange: cSize})
+		mapentries = append(mapentries, &idmap.IdmapEntry{Hostid: int64(cBase), Maprange: cSize})
 	}
 
 	sort.Sort(mapentries)
@@ -734,7 +747,12 @@ func findIdmap(state *state.State, cName string, isolatedStr string, configBase 
 				continue
 			}
 
-			return mkIdmap(offset, size), offset, nil
+			set, err := mkIdmap(offset, size)
+			if err != nil && err == idmap.ErrHostIdIsSubId {
+				return nil, 0, err
+			}
+
+			return set, offset, nil
 		}
 
 		if mapentries[i-1].Hostid+mapentries[i-1].Maprange > offset {
@@ -744,13 +762,23 @@ func findIdmap(state *state.State, cName string, isolatedStr string, configBase 
 
 		offset = mapentries[i-1].Hostid + mapentries[i-1].Maprange
 		if offset+size < mapentries[i].Hostid {
-			return mkIdmap(offset, size), offset, nil
+			set, err := mkIdmap(offset, size)
+			if err != nil && err == idmap.ErrHostIdIsSubId {
+				return nil, 0, err
+			}
+
+			return set, offset, nil
 		}
 		offset = mapentries[i].Hostid + mapentries[i].Maprange
 	}
 
 	if offset+size < state.OS.IdmapSet.Idmap[0].Hostid+state.OS.IdmapSet.Idmap[0].Maprange {
-		return mkIdmap(offset, size), offset, nil
+		set, err := mkIdmap(offset, size)
+		if err != nil && err == idmap.ErrHostIdIsSubId {
+			return nil, 0, err
+		}
+
+		return set, offset, nil
 	}
 
 	return nil, 0, fmt.Errorf("Not enough uid/gid available for the container.")
@@ -2834,14 +2862,16 @@ func (c *containerLXC) Delete() error {
 	if c.IsSnapshot() {
 		// Remove the snapshot
 		if c.storage != nil {
-			if err := c.storage.ContainerSnapshotDelete(c); err != nil {
+			err := c.storage.ContainerSnapshotDelete(c)
+			if err != nil {
 				logger.Warn("Failed to delete snapshot", log.Ctx{"name": c.Name(), "err": err})
 				return err
 			}
 		}
 	} else {
 		// Remove all snapshot
-		if err := containerDeleteSnapshots(c.state, c.Name()); err != nil {
+		err := containerDeleteSnapshots(c.state, c.Name())
+		if err != nil {
 			logger.Warn("Failed to delete snapshots", log.Ctx{"name": c.Name(), "err": err})
 			return err
 		}
@@ -2850,10 +2880,16 @@ func (c *containerLXC) Delete() error {
 		c.cleanup()
 
 		// Delete the container from disk
-		if shared.PathExists(c.Path()) && c.storage != nil {
-			if err := c.storage.ContainerDelete(c); err != nil {
-				logger.Error("Failed deleting container storage", log.Ctx{"name": c.Name(), "err": err})
-				return err
+		if c.storage != nil {
+			_, poolName := c.storage.GetContainerPoolInfo()
+			containerMountPoint := getContainerMountPoint(poolName, c.Name())
+			if shared.PathExists(c.Path()) ||
+				shared.PathExists(containerMountPoint) {
+				err := c.storage.ContainerDelete(c)
+				if err != nil {
+					logger.Error("Failed deleting container storage", log.Ctx{"name": c.Name(), "err": err})
+					return err
+				}
 			}
 		}
 	}
@@ -3360,7 +3396,7 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 	}
 
 	if shared.StringInSlice("security.idmap.isolated", changedConfig) || shared.StringInSlice("security.idmap.base", changedConfig) || shared.StringInSlice("security.idmap.size", changedConfig) || shared.StringInSlice("raw.idmap", changedConfig) || shared.StringInSlice("security.privileged", changedConfig) {
-		var idmap *shared.IdmapSet
+		var idmap *idmap.IdmapSet
 		base := int64(0)
 		if !c.IsPrivileged() {
 			// update the idmap
@@ -6851,7 +6887,7 @@ func (c *containerLXC) Id() int {
 	return c.id
 }
 
-func (c *containerLXC) IdmapSet() (*shared.IdmapSet, error) {
+func (c *containerLXC) IdmapSet() (*idmap.IdmapSet, error) {
 	var err error
 
 	if c.idmapset != nil {
@@ -6888,7 +6924,7 @@ func (c *containerLXC) LocalDevices() types.Devices {
 	return c.localDevices
 }
 
-func (c *containerLXC) idmapsetFromConfig(k string) (*shared.IdmapSet, error) {
+func (c *containerLXC) idmapsetFromConfig(k string) (*idmap.IdmapSet, error) {
 	lastJsonIdmap := c.LocalConfig()[k]
 
 	if lastJsonIdmap == "" {
@@ -6898,7 +6934,7 @@ func (c *containerLXC) idmapsetFromConfig(k string) (*shared.IdmapSet, error) {
 	return idmapsetFromString(lastJsonIdmap)
 }
 
-func (c *containerLXC) NextIdmapSet() (*shared.IdmapSet, error) {
+func (c *containerLXC) NextIdmapSet() (*idmap.IdmapSet, error) {
 	if c.localConfig["volatile.idmap.next"] != "" {
 		return c.idmapsetFromConfig("volatile.idmap.next")
 	} else if c.IsPrivileged() {
@@ -6910,7 +6946,7 @@ func (c *containerLXC) NextIdmapSet() (*shared.IdmapSet, error) {
 	return nil, fmt.Errorf("Unable to determine the idmap")
 }
 
-func (c *containerLXC) LastIdmapSet() (*shared.IdmapSet, error) {
+func (c *containerLXC) LastIdmapSet() (*idmap.IdmapSet, error) {
 	return c.idmapsetFromConfig("volatile.last_state.idmap")
 }
 

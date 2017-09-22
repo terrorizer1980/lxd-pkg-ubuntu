@@ -124,6 +124,8 @@ func api10Get(d *Daemon, r *http.Request) Response {
 			"storage_ceph_user_name",
 			"resource_limits",
 			"storage_volatile_initial_source",
+			"storage_ceph_force_osd_reuse",
+			"storage_block_filesystem_btrfs",
 		},
 		APIStatus:  "stable",
 		APIVersion: version.APIVersion,

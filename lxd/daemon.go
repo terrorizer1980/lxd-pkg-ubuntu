@@ -545,7 +545,7 @@ func (d *Daemon) Init() error {
 
 	if !d.os.MockMode {
 		/* Read the storage pools */
-		err = SetupStorageDriver(d, false)
+		err = SetupStorageDriver(d.State(), false)
 		if err != nil {
 			return err
 		}
@@ -557,7 +557,7 @@ func (d *Daemon) Init() error {
 		}
 
 		/* Setup the networks */
-		err = networkStartup(d)
+		err = networkStartup(d.State())
 		if err != nil {
 			return err
 		}
@@ -617,7 +617,7 @@ func (d *Daemon) Init() error {
 
 	if !d.os.MockMode {
 		/* Start the scheduler */
-		go deviceEventListener(d)
+		go deviceEventListener(d.State())
 
 		/* Setup the TLS authentication */
 		certf, keyf, err := readMyCert()
@@ -853,11 +853,13 @@ func (d *Daemon) Ready() error {
 		}
 	}()
 
+	s := d.State()
+
 	/* Restore containers */
-	containersRestart(d)
+	containersRestart(s)
 
 	/* Re-balance in case things changed while LXD was down */
-	deviceTaskBalance(d)
+	deviceTaskBalance(s)
 
 	close(d.readyChan)
 
@@ -1000,17 +1002,23 @@ func initializeDbObject(d *Daemon, path string) error {
 
 	// Apply any database update.
 	//
-	// NOTE: we use the postApply parameter to run a couple of
-	// legacy non-db updates that were introduced before the
+	// NOTE: we use the legacyPatches parameter to run a few
+	// legacy non-db updates that were in place before the
 	// patches mechanism was introduced in lxd/patches.go. The
 	// rest of non-db patches will be applied separately via
 	// patchesApplyAll. See PR #3322 for more details.
-	err = db.UpdatesApplyAll(d.db, true, func(version int) error {
-		if legacyPatch, ok := legacyPatches[version]; ok {
-			return legacyPatch(d)
+	legacy := map[int]*db.LegacyPatch{}
+	for i, patch := range legacyPatches {
+		legacy[i] = &db.LegacyPatch{
+			Hook: func() error {
+				return patch(d)
+			},
 		}
-		return nil
-	})
+	}
+	for _, i := range legacyPatchesNeedingDB {
+		legacy[i].NeedsDB = true
+	}
+	err = db.UpdatesApplyAll(d.db, true, legacy)
 	if err != nil {
 		return err
 	}

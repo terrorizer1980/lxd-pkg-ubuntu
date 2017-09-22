@@ -5,12 +5,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/gorilla/websocket"
 
 	"github.com/lxc/lxd/lxd/db"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
+	"github.com/lxc/lxd/shared/idmap"
 	"github.com/lxc/lxd/shared/logger"
 )
 
@@ -53,6 +55,8 @@ func (s *storageDir) StoragePoolCreate() error {
 
 	s.pool.Config["volatile.initial_source"] = s.pool.Config["source"]
 
+	poolMntPoint := getStoragePoolMountPoint(s.pool.Name)
+
 	source := s.pool.Config["source"]
 	if source == "" {
 		source = filepath.Join(shared.VarPath("storage-pools"), s.pool.Name)
@@ -60,10 +64,14 @@ func (s *storageDir) StoragePoolCreate() error {
 	} else {
 		cleanSource := filepath.Clean(source)
 		lxdDir := shared.VarPath()
-		poolMntPoint := getStoragePoolMountPoint(s.pool.Name)
-		if strings.HasPrefix(cleanSource, lxdDir) && cleanSource != poolMntPoint {
-			return fmt.Errorf("DIR storage pool requests in LXD directory \"%s\" are only valid under \"%s\"\n(e.g. source=%s)", shared.VarPath(), shared.VarPath("storage-pools"), poolMntPoint)
+		if strings.HasPrefix(cleanSource, lxdDir) &&
+			cleanSource != poolMntPoint {
+			return fmt.Errorf(`DIR storage pool requests in LXD `+
+				`directory "%s" are only valid under `+
+				`"%s"\n(e.g. source=%s)`, shared.VarPath(),
+				shared.VarPath("storage-pools"), poolMntPoint)
 		}
+		source = filepath.Clean(source)
 	}
 
 	revert := true
@@ -89,17 +97,25 @@ func (s *storageDir) StoragePoolCreate() error {
 		}
 	}
 
-	prefix := shared.VarPath("storage-pools")
-	if !strings.HasPrefix(source, prefix) {
-		// symlink from storage-pools to pool x
-		storagePoolSymlink := getStoragePoolMountPoint(s.pool.Name)
-		err := os.Symlink(source, storagePoolSymlink)
+	if !shared.PathExists(poolMntPoint) {
+		err := os.MkdirAll(poolMntPoint, 0711)
 		if err != nil {
 			return err
 		}
+		defer func() {
+			if !revert {
+				return
+			}
+			os.Remove(poolMntPoint)
+		}()
 	}
 
 	err := s.StoragePoolCheck()
+	if err != nil {
+		return err
+	}
+
+	_, err = s.StoragePoolMount()
 	if err != nil {
 		return err
 	}
@@ -116,6 +132,11 @@ func (s *storageDir) StoragePoolDelete() error {
 	source := s.pool.Config["source"]
 	if source == "" {
 		return fmt.Errorf("no \"source\" property found for the storage pool")
+	}
+
+	_, err := s.StoragePoolUmount()
+	if err != nil {
+		return err
 	}
 
 	if shared.PathExists(source) {
@@ -143,10 +164,105 @@ func (s *storageDir) StoragePoolDelete() error {
 }
 
 func (s *storageDir) StoragePoolMount() (bool, error) {
+	source := s.pool.Config["source"]
+	if source == "" {
+		return false, fmt.Errorf("no \"source\" property found for the storage pool")
+	}
+	cleanSource := filepath.Clean(source)
+	poolMntPoint := getStoragePoolMountPoint(s.pool.Name)
+	if cleanSource == poolMntPoint {
+		return true, nil
+	}
+
+	logger.Debugf("Mounting DIR storage pool \"%s\".", s.pool.Name)
+
+	poolMountLockID := getPoolMountLockID(s.pool.Name)
+	lxdStorageMapLock.Lock()
+	if waitChannel, ok := lxdStorageOngoingOperationMap[poolMountLockID]; ok {
+		lxdStorageMapLock.Unlock()
+		if _, ok := <-waitChannel; ok {
+			logger.Warnf("Received value over semaphore. This should not have happened.")
+		}
+		// Give the benefit of the doubt and assume that the other
+		// thread actually succeeded in mounting the storage pool.
+		return false, nil
+	}
+
+	lxdStorageOngoingOperationMap[poolMountLockID] = make(chan bool)
+	lxdStorageMapLock.Unlock()
+
+	removeLockFromMap := func() {
+		lxdStorageMapLock.Lock()
+		if waitChannel, ok := lxdStorageOngoingOperationMap[poolMountLockID]; ok {
+			close(waitChannel)
+			delete(lxdStorageOngoingOperationMap, poolMountLockID)
+		}
+		lxdStorageMapLock.Unlock()
+	}
+	defer removeLockFromMap()
+
+	mountSource := cleanSource
+	mountFlags := syscall.MS_BIND
+
+	err := syscall.Mount(mountSource, poolMntPoint, "", uintptr(mountFlags), "")
+	if err != nil {
+		logger.Errorf(`Failed to mount DIR storage pool "%s" onto `+
+			`"%s": %s`, mountSource, poolMntPoint, err)
+		return false, err
+	}
+
+	logger.Debugf("Mounted DIR storage pool \"%s\".", s.pool.Name)
+
 	return true, nil
 }
 
 func (s *storageDir) StoragePoolUmount() (bool, error) {
+	source := s.pool.Config["source"]
+	if source == "" {
+		return false, fmt.Errorf("no \"source\" property found for the storage pool")
+	}
+	cleanSource := filepath.Clean(source)
+	poolMntPoint := getStoragePoolMountPoint(s.pool.Name)
+	if cleanSource == poolMntPoint {
+		return true, nil
+	}
+
+	logger.Debugf("Unmounting DIR storage pool \"%s\".", s.pool.Name)
+
+	poolUmountLockID := getPoolUmountLockID(s.pool.Name)
+	lxdStorageMapLock.Lock()
+	if waitChannel, ok := lxdStorageOngoingOperationMap[poolUmountLockID]; ok {
+		lxdStorageMapLock.Unlock()
+		if _, ok := <-waitChannel; ok {
+			logger.Warnf("Received value over semaphore. This should not have happened.")
+		}
+		// Give the benefit of the doubt and assume that the other
+		// thread actually succeeded in unmounting the storage pool.
+		return false, nil
+	}
+
+	lxdStorageOngoingOperationMap[poolUmountLockID] = make(chan bool)
+	lxdStorageMapLock.Unlock()
+
+	removeLockFromMap := func() {
+		lxdStorageMapLock.Lock()
+		if waitChannel, ok := lxdStorageOngoingOperationMap[poolUmountLockID]; ok {
+			close(waitChannel)
+			delete(lxdStorageOngoingOperationMap, poolUmountLockID)
+		}
+		lxdStorageMapLock.Unlock()
+	}
+
+	defer removeLockFromMap()
+
+	if shared.IsMountPoint(poolMntPoint) {
+		err := syscall.Unmount(poolMntPoint, 0)
+		if err != nil {
+			return false, err
+		}
+	}
+
+	logger.Debugf("Unmounted DIR pool \"%s\".", s.pool.Name)
 	return true, nil
 }
 
@@ -674,14 +790,16 @@ func (s *storageDir) ContainerSnapshotCreateEmpty(snapshotContainer container) e
 	// Check if the symlink
 	// ${LXD_DIR}/snapshots/<source_container_name> -> ${POOL_PATH}/snapshots/<source_container_name>
 	// exists and if not create it.
-	sourceContainerName, _, _ := containerGetParentAndSnapshotName(targetContainerName)
-	sourceContainerSymlink := shared.VarPath("snapshots", sourceContainerName)
-	sourceContainerSymlinkTarget := getSnapshotMountPoint(s.pool.Name, sourceContainerName)
-	if !shared.PathExists(sourceContainerSymlink) {
-		err := os.Symlink(sourceContainerSymlinkTarget, sourceContainerSymlink)
-		if err != nil {
-			return err
-		}
+	targetContainerMntPoint = getSnapshotMountPoint(s.pool.Name,
+		targetContainerName)
+	sourceName, _, _ := containerGetParentAndSnapshotName(targetContainerName)
+	snapshotMntPointSymlinkTarget := shared.VarPath("storage-pools",
+		s.pool.Name, "snapshots", sourceName)
+	snapshotMntPointSymlink := shared.VarPath("snapshots", sourceName)
+	err = createSnapshotMountpoint(targetContainerMntPoint,
+		snapshotMntPointSymlinkTarget, snapshotMntPointSymlink)
+	if err != nil {
+		return err
 	}
 
 	revert = false
@@ -793,7 +911,7 @@ func (s *storageDir) MigrationSource(container container, containerOnly bool) (M
 	return rsyncMigrationSource(container, containerOnly)
 }
 
-func (s *storageDir) MigrationSink(live bool, container container, snapshots []*Snapshot, conn *websocket.Conn, srcIdmap *shared.IdmapSet, op *operation, containerOnly bool) error {
+func (s *storageDir) MigrationSink(live bool, container container, snapshots []*Snapshot, conn *websocket.Conn, srcIdmap *idmap.IdmapSet, op *operation, containerOnly bool) error {
 	return rsyncMigrationSink(live, container, snapshots, conn, srcIdmap, op, containerOnly)
 }
 

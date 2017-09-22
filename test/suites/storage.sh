@@ -21,7 +21,7 @@ test_storage() {
   lxc storage volume create "$storage_pool" "$storage_volume"
   if [ "$lxd_backend" != "dir" ] && [ "$lxd_backend" != "ceph" ]; then
     # Test resizing/applying quota to a storage volume.
-    lxc storage volume set "$storage_pool" "$storage_volume" size 500MB
+    lxc storage volume set "$storage_pool" "$storage_volume" size 200MB
     lxc storage volume unset "$storage_pool" "$storage_volume" size
   fi
   # Test setting description on a storage volume
@@ -202,6 +202,7 @@ test_storage() {
       lxc storage create "lxdtest-$(basename "${LXD_DIR}")-valid-lvm-pool-config-pool24" lvm rsync.bwlimit=1024
       lxc storage create "lxdtest-$(basename "${LXD_DIR}")-valid-lvm-pool-config-pool25" lvm volume.block.mount_options="rw,strictatime,discard"
       lxc storage set "lxdtest-$(basename "${LXD_DIR}")-valid-lvm-pool-config-pool25" volume.block.mount_options "rw,lazytime"
+      lxc storage create "lxdtest-$(basename "${LXD_DIR}")-valid-lvm-pool-config-pool26" lvm volume.block.filesystem=btrfs
     fi
 
     # Set default storage pool for image import.

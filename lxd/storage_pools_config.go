@@ -18,8 +18,9 @@ var storagePoolConfigKeys = map[string]func(value string) error{
 	"btrfs.mount_options": shared.IsAny,
 
 	// valid drivers: ceph
-	"ceph.cluster_name":  shared.IsAny,
-	"ceph.osd.pool_name": shared.IsAny,
+	"ceph.cluster_name":    shared.IsAny,
+	"ceph.osd.force_reuse": shared.IsBool,
+	"ceph.osd.pool_name":   shared.IsAny,
 	"ceph.osd.pg_num": func(value string) error {
 		if value == "" {
 			return nil
@@ -59,7 +60,7 @@ var storagePoolConfigKeys = map[string]func(value string) error{
 
 	// valid drivers: ceph, lvm
 	"volume.block.filesystem": func(value string) error {
-		return shared.IsOneOf(value, []string{"ext4", "xfs"})
+		return shared.IsOneOf(value, []string{"btrfs", "ext4", "xfs"})
 	},
 	"volume.block.mount_options": shared.IsAny,
 
@@ -83,7 +84,7 @@ var storagePoolConfigKeys = map[string]func(value string) error{
 	"rsync.bwlimit":  shared.IsAny,
 }
 
-func storagePoolValidateConfig(name string, driver string, config map[string]string) error {
+func storagePoolValidateConfig(name string, driver string, config map[string]string, oldConfig map[string]string) error {
 	err := func(value string) error {
 		return shared.IsOneOf(value, supportedStoragePoolDrivers)
 	}(driver)
@@ -109,6 +110,11 @@ func storagePoolValidateConfig(name string, driver string, config map[string]str
 	// Check whether the config properties for the driver container sane
 	// values.
 	for key, val := range config {
+		// Skip unchanged keys
+		if oldConfig != nil && oldConfig[key] == val {
+			continue
+		}
+
 		// User keys are not validated.
 		if strings.HasPrefix(key, "user.") {
 			continue

@@ -16,6 +16,7 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -26,8 +27,8 @@ import (
 
 // Container struct
 type Container struct {
-	container *C.struct_lxc_container
 	mu        sync.RWMutex
+	container *C.struct_lxc_container
 
 	verbosity Verbosity
 }
@@ -360,11 +361,6 @@ func (c *Container) Create(options TemplateOptions) error {
 		options.Backend = Directory
 	}
 
-	// unprivileged users are only allowed to use "download" template
-	if os.Geteuid() != 0 && options.Template != "download" {
-		return ErrTemplateNotAllowed
-	}
-
 	var args []string
 	if options.Template == "download" {
 		// required parameters
@@ -452,6 +448,7 @@ func (c *Container) Start() error {
 	return nil
 }
 
+// StartWithArgs starts the container using given arguments.
 func (c *Container) StartWithArgs(args []string) error {
 	if err := c.makeSure(isNotRunning); err != nil {
 		return err
@@ -470,6 +467,13 @@ func (c *Container) StartWithArgs(args []string) error {
 func (c *Container) Execute(args ...string) ([]byte, error) {
 	if err := c.makeSure(isNotDefined); err != nil {
 		return nil, err
+	}
+
+	// Deal with LXC 2.1's need of a defined container
+	if VersionAtLeast(2, 1, 0) {
+		os.MkdirAll(filepath.Join(c.ConfigPath(), c.Name()), 0700)
+		c.SaveConfigFile(filepath.Join(c.ConfigPath(), c.Name(), "config"))
+		defer os.RemoveAll(filepath.Join(c.ConfigPath(), c.Name()))
 	}
 
 	cargs := []string{"lxc-execute", "-n", c.Name(), "-P", c.ConfigPath(), "--"}
@@ -1178,6 +1182,7 @@ func (c *Container) RunCommandStatus(args []string, options AttachOptions) (int,
 	return ret, nil
 }
 
+// RunCommandNoWait runs the given command and returns without waiting it to finish.
 func (c *Container) RunCommandNoWait(args []string, options AttachOptions) (int, error) {
 	if len(args) == 0 {
 		return -1, ErrInsufficientNumberOfArguments
@@ -1591,6 +1596,7 @@ func (c *Container) Restore(opts RestoreOptions) error {
 	return nil
 }
 
+// Migrate migrates the container.
 func (c *Container) Migrate(cmd uint, opts MigrateOptions) error {
 	if err := c.makeSure(isNotDefined | isGreaterEqualThanLXC20); err != nil {
 		return err
@@ -1636,7 +1642,7 @@ func (c *Container) Migrate(cmd uint, opts MigrateOptions) error {
 
 	ret := C.int(C.go_lxc_migrate(c.container, C.uint(cmd), &copts, &extras))
 	if ret != 0 {
-		return fmt.Errorf("migration failed %d\n", ret)
+		return fmt.Errorf("migration failed %d", ret)
 	}
 
 	return nil

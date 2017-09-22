@@ -402,16 +402,16 @@ func networkLoadByName(s *state.State, name string) (*network, error) {
 	return &n, nil
 }
 
-func networkStartup(d *Daemon) error {
+func networkStartup(s *state.State) error {
 	// Get a list of managed networks
-	networks, err := db.Networks(d.db)
+	networks, err := db.Networks(s.DB)
 	if err != nil {
 		return err
 	}
 
 	// Bring them all up
 	for _, name := range networks {
-		n, err := networkLoadByName(d.State(), name)
+		n, err := networkLoadByName(s, name)
 		if err != nil {
 			return err
 		}
@@ -426,16 +426,16 @@ func networkStartup(d *Daemon) error {
 	return nil
 }
 
-func networkShutdown(d *Daemon) error {
+func networkShutdown(s *state.State) error {
 	// Get a list of managed networks
-	networks, err := db.Networks(d.db)
+	networks, err := db.Networks(s.DB)
 	if err != nil {
 		return err
 	}
 
 	// Bring them all up
 	for _, name := range networks {
-		n, err := networkLoadByName(d.State(), name)
+		n, err := networkLoadByName(s, name)
 		if err != nil {
 			return err
 		}
@@ -665,8 +665,19 @@ func (n *network) Start() error {
 				continue
 			}
 
+			unused := true
 			addrs, err := iface.Addrs()
-			if err == nil && len(addrs) != 0 {
+			if err == nil {
+				for _, addr := range addrs {
+					ip, _, err := net.ParseCIDR(addr.String())
+					if ip != nil && err == nil && ip.IsGlobalUnicast() {
+						unused = false
+						break
+					}
+				}
+			}
+
+			if !unused {
 				return fmt.Errorf("Only unconfigured network interfaces can be bridged")
 			}
 
@@ -724,11 +735,8 @@ func (n *network) Start() error {
 			}
 		}
 
-		// Workaround for broken DHCP clients
-		err = networkIptablesPrepend("ipv4", n.name, "mangle", "POSTROUTING", "-o", n.name, "-p", "udp", "--dport", "68", "-j", "CHECKSUM", "--checksum-fill")
-		if err != nil {
-			return err
-		}
+		// Attempt a workaround for broken DHCP clients
+		networkIptablesPrepend("ipv4", n.name, "mangle", "POSTROUTING", "-o", n.name, "-p", "udp", "--dport", "68", "-j", "CHECKSUM", "--checksum-fill")
 
 		// Allow forwarding
 		if n.config["bridge.mode"] == "fan" || n.config["ipv4.routing"] == "" || shared.IsTrue(n.config["ipv4.routing"]) {
@@ -768,6 +776,18 @@ func (n *network) Start() error {
 		fmt.Sprintf("--pid-file=%s", shared.VarPath("networks", n.name, "dnsmasq.pid")),
 		"--except-interface=lo",
 		fmt.Sprintf("--interface=%s", n.name)}
+
+	if !debug {
+		// --quiet options are only supported on >2.67
+		v, err := networkGetDnsmasqVersion()
+		if err != nil {
+			return err
+		}
+		minVer, _ := version.NewDottedVersion("2.67")
+		if v.Compare(minVer) > 0 {
+			dnsmasqCmd = append(dnsmasqCmd, []string{"--quiet-dhcp", "--quiet-dhcp6", "--quiet-ra"}...)
+		}
+	}
 
 	// Configure IPv4
 	if !shared.StringInSlice(n.config["ipv4.address"], []string{"", "none"}) {
@@ -1199,14 +1219,6 @@ func (n *network) Start() error {
 		}
 		dnsmasqCmd = append(dnsmasqCmd, fmt.Sprintf("--conf-file=%s", shared.VarPath("networks", n.name, "dnsmasq.raw")))
 
-		// Create DHCP hosts file
-		if !shared.PathExists(shared.VarPath("networks", n.name, "dnsmasq.hosts")) {
-			err = ioutil.WriteFile(shared.VarPath("networks", n.name, "dnsmasq.hosts"), []byte(""), 0644)
-			if err != nil {
-				return err
-			}
-		}
-
 		// Attempt to drop privileges
 		for _, user := range []string{"lxd", "nobody"} {
 			_, err := shared.UserId(user)
@@ -1216,6 +1228,14 @@ func (n *network) Start() error {
 
 			dnsmasqCmd = append(dnsmasqCmd, []string{"-u", user}...)
 			break
+		}
+
+		// Create DHCP hosts directory
+		if !shared.PathExists(shared.VarPath("networks", n.name, "dnsmasq.hosts")) {
+			err = os.MkdirAll(shared.VarPath("networks", n.name, "dnsmasq.hosts"), 0755)
+			if err != nil {
+				return err
+			}
 		}
 
 		// Check for dnsmasq

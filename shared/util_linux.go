@@ -19,7 +19,7 @@ import (
 	"github.com/lxc/lxd/shared/logger"
 )
 
-// #cgo LDFLAGS: -lutil -lpthread -lacl
+// #cgo LDFLAGS: -lutil -lpthread
 /*
 #define _GNU_SOURCE
 #include <errno.h>
@@ -36,7 +36,6 @@ import (
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/un.h>
-#include <sys/acl.h>
 
 #ifndef AT_SYMLINK_FOLLOW
 #define AT_SYMLINK_FOLLOW    0x400
@@ -129,71 +128,6 @@ void create_pipe(int *master, int *slave) {
 	*slave = pipefd[1];
 }
 
-int shiftowner(char *basepath, char *path, int uid, int gid) {
-	struct stat sb;
-	int fd, r;
-	char fdpath[PATH_MAX];
-	char realpath[PATH_MAX];
-
-	fd = open(path, O_PATH|O_NOFOLLOW);
-	if (fd < 0 ) {
-		perror("Failed open");
-		return 1;
-	}
-
-	r = sprintf(fdpath, "/proc/self/fd/%d", fd);
-	if (r < 0) {
-		perror("Failed sprintf");
-		close(fd);
-		return 1;
-	}
-
-	r = readlink(fdpath, realpath, PATH_MAX);
-	if (r < 0) {
-		perror("Failed readlink");
-		close(fd);
-		return 1;
-	}
-
-	if (strlen(realpath) < strlen(basepath)) {
-		printf("Invalid path, source (%s) is outside of basepath (%s).\n", realpath, basepath);
-		close(fd);
-		return 1;
-	}
-
-	if (strncmp(realpath, basepath, strlen(basepath))) {
-		printf("Invalid path, source (%s) is outside of basepath (%s).\n", realpath, basepath);
-		close(fd);
-		return 1;
-	}
-
-	r = fstat(fd, &sb);
-	if (r < 0) {
-		perror("Failed fstat");
-		close(fd);
-		return 1;
-	}
-
-	r = fchownat(fd, "", uid, gid, AT_EMPTY_PATH|AT_SYMLINK_NOFOLLOW);
-	if (r < 0) {
-		perror("Failed chown");
-		close(fd);
-		return 1;
-	}
-
-	if (!S_ISLNK(sb.st_mode)) {
-		r = chmod(fdpath, sb.st_mode);
-		if (r < 0) {
-			perror("Failed chmod");
-			close(fd);
-			return 1;
-		}
-	}
-
-	close(fd);
-	return 0;
-}
-
 int get_poll_revents(int lfd, int timeout, int flags, int *revents, int *saved_errno)
 {
 	int ret;
@@ -239,83 +173,6 @@ func GetPollRevents(fd int, timeout int, flags int) (int, int, error) {
 	return int(ret), int(revents), err
 }
 
-func ShiftOwner(basepath string, path string, uid int, gid int) error {
-	cbasepath := C.CString(basepath)
-	defer C.free(unsafe.Pointer(cbasepath))
-
-	cpath := C.CString(path)
-	defer C.free(unsafe.Pointer(cpath))
-
-	r := C.shiftowner(cbasepath, cpath, C.int(uid), C.int(gid))
-	if r != 0 {
-		return fmt.Errorf("Failed to change ownership of: %s", path)
-	}
-	return nil
-}
-
-func ShiftACL(path string, shiftIds func(uid int64, gid int64) (int64, int64)) error {
-	finfo, err := os.Lstat(path)
-	if err != nil {
-		return err
-	}
-	if finfo.Mode()&os.ModeSymlink != 0 {
-		return nil
-	}
-
-	cpath := C.CString(path)
-	defer C.free(unsafe.Pointer(cpath))
-
-	acl := C.acl_get_file(cpath, C.ACL_TYPE_ACCESS)
-	if acl == nil {
-		return nil
-	}
-	defer C.acl_free(unsafe.Pointer(acl))
-
-	for entryId := C.ACL_FIRST_ENTRY; ; entryId = C.ACL_NEXT_ENTRY {
-		var ent C.acl_entry_t
-		var tag C.acl_tag_t
-		updateACL := false
-
-		ret := C.acl_get_entry(acl, C.int(entryId), &ent)
-		if ret != 1 {
-			break
-		}
-
-		ret = C.acl_get_tag_type(ent, &tag)
-		if ret == -1 {
-			return fmt.Errorf("Failed to change ACLs on %s", path)
-		}
-
-		idp := (*C.id_t)(C.acl_get_qualifier(ent))
-		if idp == nil {
-			continue
-		}
-
-		var newId int64
-		switch tag {
-		case C.ACL_USER:
-			newId, _ = shiftIds((int64)(*idp), -1)
-			updateACL = true
-
-		case C.ACL_GROUP:
-			_, newId = shiftIds(-1, (int64)(*idp))
-			updateACL = true
-		}
-
-		if updateACL {
-			ret = C.acl_set_qualifier(ent, unsafe.Pointer(&newId))
-			if ret == -1 {
-				return fmt.Errorf("Failed to change ACLs on %s", path)
-			}
-			ret = C.acl_set_file(cpath, C.ACL_TYPE_ACCESS, acl)
-			if ret == -1 {
-				return fmt.Errorf("Failed to change ACLs on %s", path)
-			}
-		}
-	}
-	return nil
-}
-
 func OpenPty(uid, gid int64) (master *os.File, slave *os.File, err error) {
 	fd_master := C.int(-1)
 	fd_slave := C.int(-1)
@@ -355,12 +212,12 @@ func UserId(name string) (int, error) {
 	var pw C.struct_passwd
 	var result *C.struct_passwd
 
-	bufSize := C.size_t(C.sysconf(C._SC_GETPW_R_SIZE_MAX))
+	bufSize := C.sysconf(C._SC_GETPW_R_SIZE_MAX)
 	if bufSize < 0 {
 		bufSize = 4096
 	}
 
-	buf := C.malloc(bufSize)
+	buf := C.malloc(C.size_t(bufSize))
 	if buf == nil {
 		return -1, fmt.Errorf("allocation failed")
 	}
@@ -373,14 +230,14 @@ again:
 	rv, errno := C.getpwnam_r(cname,
 		&pw,
 		(*C.char)(buf),
-		bufSize,
+		C.size_t(bufSize),
 		&result)
 	if rv < 0 {
 		// OOM killer will take care of us if we end up doing this too
 		// often.
 		if errno == syscall.ERANGE {
 			bufSize *= 2
-			tmp := C.realloc(buf, bufSize)
+			tmp := C.realloc(buf, C.size_t(bufSize))
 			if tmp == nil {
 				return -1, fmt.Errorf("allocation failed")
 			}
@@ -402,16 +259,15 @@ func GroupId(name string) (int, error) {
 	var grp C.struct_group
 	var result *C.struct_group
 
-	bufSize := C.size_t(C.sysconf(C._SC_GETGR_R_SIZE_MAX))
+	bufSize := C.sysconf(C._SC_GETGR_R_SIZE_MAX)
 	if bufSize < 0 {
 		bufSize = 4096
 	}
 
-	buf := C.malloc(bufSize)
+	buf := C.malloc(C.size_t(bufSize))
 	if buf == nil {
 		return -1, fmt.Errorf("allocation failed")
 	}
-	defer C.free(buf)
 
 	cname := C.CString(name)
 	defer C.free(unsafe.Pointer(cname))
@@ -420,22 +276,25 @@ again:
 	rv, errno := C.getgrnam_r(cname,
 		&grp,
 		(*C.char)(buf),
-		bufSize,
+		C.size_t(bufSize),
 		&result)
-	if rv < 0 {
+	if rv != 0 {
 		// OOM killer will take care of us if we end up doing this too
 		// often.
 		if errno == syscall.ERANGE {
 			bufSize *= 2
-			tmp := C.realloc(buf, bufSize)
+			tmp := C.realloc(buf, C.size_t(bufSize))
 			if tmp == nil {
 				return -1, fmt.Errorf("allocation failed")
 			}
 			buf = tmp
 			goto again
 		}
+
+		C.free(buf)
 		return -1, fmt.Errorf("failed group lookup: %s", syscall.Errno(rv))
 	}
+	C.free(buf)
 
 	if result == nil {
 		return -1, fmt.Errorf("unknown group %s", name)
@@ -445,6 +304,14 @@ again:
 }
 
 // --- pure Go functions ---
+
+func Major(dev uint64) int {
+	return int(((dev >> 8) & 0xfff) | ((dev >> 32) & (0xfffff000)))
+}
+
+func Minor(dev uint64) int {
+	return int((dev & 0xff) | ((dev >> 12) & (0xffffff00)))
+}
 
 func GetFileStat(p string) (uid int, gid int, major int, minor int,
 	inode uint64, nlink int, err error) {
@@ -460,8 +327,8 @@ func GetFileStat(p string) (uid int, gid int, major int, minor int,
 	major = -1
 	minor = -1
 	if stat.Mode&syscall.S_IFBLK != 0 || stat.Mode&syscall.S_IFCHR != 0 {
-		major = int(stat.Rdev / 256)
-		minor = int(stat.Rdev % 256)
+		major = Major(stat.Rdev)
+		minor = Minor(stat.Rdev)
 	}
 
 	return
