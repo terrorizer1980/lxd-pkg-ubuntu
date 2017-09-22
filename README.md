@@ -9,6 +9,9 @@ and is built around a very powerful, yet pretty simple, REST API.
 To get a better idea of what LXD is and what it does, you can [try it online](https://linuxcontainers.org/lxd/try-it/)!  
 Then if you want to run it locally, take a look at our [getting started guide](https://linuxcontainers.org/lxd/getting-started-cli/).
 
+Release announcements can be found here: https://linuxcontainers.org/lxd/news/  
+And the release tarballs here: https://linuxcontainers.org/lxd/downloads/
+
 ## Status
 Type            | Service               | Status
 ---             | ---                   | ---
@@ -182,6 +185,16 @@ Yes. The easiest way to do that is using a privileged container to avoid file ow
 In order to run Docker inside a LXD container the `security.nesting` property of the container should be set to `true`.  
 
     lxc config set <container> security.nesting true
+
+Note that LXD containers cannot load kernel modules, so depending on your Docker configuration  
+you may need to have the needed extra kernel modules loaded by the host.
+
+You can do so by setting a comma seperate list of kernel modules that your container needs with:
+
+    lxc config set <container> linux.kernel_modules <modules>
+
+We have also received some reports that creating a "/.dockerenv" file in your container  
+can help Docker ignore some errors it's getting due to running in a nested environment.
 
 ## Hacking on LXD
 ### Directly using the REST API

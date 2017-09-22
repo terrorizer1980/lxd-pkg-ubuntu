@@ -402,16 +402,16 @@ func networkLoadByName(s *state.State, name string) (*network, error) {
 	return &n, nil
 }
 
-func networkStartup(d *Daemon) error {
+func networkStartup(s *state.State) error {
 	// Get a list of managed networks
-	networks, err := db.Networks(d.db)
+	networks, err := db.Networks(s.DB)
 	if err != nil {
 		return err
 	}
 
 	// Bring them all up
 	for _, name := range networks {
-		n, err := networkLoadByName(d.State(), name)
+		n, err := networkLoadByName(s, name)
 		if err != nil {
 			return err
 		}
@@ -426,16 +426,16 @@ func networkStartup(d *Daemon) error {
 	return nil
 }
 
-func networkShutdown(d *Daemon) error {
+func networkShutdown(s *state.State) error {
 	// Get a list of managed networks
-	networks, err := db.Networks(d.db)
+	networks, err := db.Networks(s.DB)
 	if err != nil {
 		return err
 	}
 
 	// Bring them all up
 	for _, name := range networks {
-		n, err := networkLoadByName(d.State(), name)
+		n, err := networkLoadByName(s, name)
 		if err != nil {
 			return err
 		}
@@ -665,8 +665,19 @@ func (n *network) Start() error {
 				continue
 			}
 
+			unused := true
 			addrs, err := iface.Addrs()
-			if err == nil && len(addrs) != 0 {
+			if err == nil {
+				for _, addr := range addrs {
+					ip, _, err := net.ParseCIDR(addr.String())
+					if ip != nil && err == nil && ip.IsGlobalUnicast() {
+						unused = false
+						break
+					}
+				}
+			}
+
+			if !unused {
 				return fmt.Errorf("Only unconfigured network interfaces can be bridged")
 			}
 
@@ -724,11 +735,8 @@ func (n *network) Start() error {
 			}
 		}
 
-		// Workaround for broken DHCP clients
-		err = networkIptablesPrepend("ipv4", n.name, "mangle", "POSTROUTING", "-o", n.name, "-p", "udp", "--dport", "68", "-j", "CHECKSUM", "--checksum-fill")
-		if err != nil {
-			return err
-		}
+		// Attempt a workaround for broken DHCP clients
+		networkIptablesPrepend("ipv4", n.name, "mangle", "POSTROUTING", "-o", n.name, "-p", "udp", "--dport", "68", "-j", "CHECKSUM", "--checksum-fill")
 
 		// Allow forwarding
 		if n.config["bridge.mode"] == "fan" || n.config["ipv4.routing"] == "" || shared.IsTrue(n.config["ipv4.routing"]) {
@@ -770,7 +778,15 @@ func (n *network) Start() error {
 		fmt.Sprintf("--interface=%s", n.name)}
 
 	if !debug {
-		dnsmasqCmd = append(dnsmasqCmd, []string{"--quiet-dhcp", "--quiet-dhcp6", "--quiet-ra"}...)
+		// --quiet options are only supported on >2.67
+		v, err := networkGetDnsmasqVersion()
+		if err != nil {
+			return err
+		}
+		minVer, _ := version.NewDottedVersion("2.67")
+		if v.Compare(minVer) > 0 {
+			dnsmasqCmd = append(dnsmasqCmd, []string{"--quiet-dhcp", "--quiet-dhcp6", "--quiet-ra"}...)
+		}
 	}
 
 	// Configure IPv4
@@ -1235,7 +1251,7 @@ func (n *network) Start() error {
 		}
 
 		// Update the static leases
-		err = networkUpdateStatic(n.state, n.name, "")
+		err = networkUpdateStatic(n.state, n.name)
 		if err != nil {
 			return err
 		}

@@ -1,5 +1,0 @@
-0001-network-Switch-to-a-directory-based-dhcp-host.patch
-0002-network-Make-dnsmasq-quiet-when-not-in-debug-mode.patch
-0003-shared-Fix-growing-of-buf-in-GroupId.patch
-0004-Fix-live-migration-bad-URL-in-dumpsuccess.patch
-0005-apparmor-Support-new-stacking-syntax.patch

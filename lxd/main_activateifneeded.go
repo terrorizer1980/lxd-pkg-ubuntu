@@ -7,10 +7,11 @@ import (
 	"github.com/lxc/lxd/client"
 	"github.com/lxc/lxd/lxd/db"
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/idmap"
 	"github.com/lxc/lxd/shared/logger"
 )
 
-func cmdActivateIfNeeded() error {
+func cmdActivateIfNeeded(args *Args) error {
 	// Only root should run this
 	if os.Geteuid() != 0 {
 		return fmt.Errorf("This must be run as root")
@@ -45,7 +46,7 @@ func cmdActivateIfNeeded() error {
 	}
 
 	// Load the idmap for unprivileged containers
-	d.os.IdmapSet, err = shared.DefaultIdmapSet()
+	d.os.IdmapSet, err = idmap.DefaultIdmapSet()
 	if err != nil {
 		return err
 	}

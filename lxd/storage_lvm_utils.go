@@ -15,6 +15,14 @@ import (
 
 func (s *storageLvm) lvExtend(lvPath string, lvSize int64, fsType string, fsMntPoint string, volumeType int, data interface{}) error {
 	lvSizeString := shared.GetByteSizeString(lvSize, 0)
+
+	if (lvSize / 1024) == 0 {
+		// Everything under a 1MB doesn't make sense. Even if lvextend
+		// won't freak out xfs or ext4 will.
+		return fmt.Errorf(`The size of the storage volume would be ` +
+			`less than 1MB`)
+	}
+
 	msg, err := shared.TryRunCommand(
 		"lvextend",
 		"-L", lvSizeString,
@@ -43,6 +51,9 @@ func (s *storageLvm) lvExtend(lvPath string, lvSize int64, fsType string, fsMntP
 		if ourMount {
 			defer s.StoragePoolVolumeUmount()
 		}
+	default:
+		return fmt.Errorf(`Resizing not implemented for storage `+
+			`volume type %d`, volumeType)
 	}
 
 	switch fsType {
@@ -64,6 +75,13 @@ func (s *storageLvm) lvExtend(lvPath string, lvSize int64, fsType string, fsMntP
 func (s *storageLvm) lvReduce(lvPath string, lvSize int64, fsType string, fsMntPoint string, volumeType int, data interface{}) error {
 	var err error
 	var msg string
+
+	if (lvSize / 1024) == 0 {
+		// Everything under a 1MB doesn't make sense. Even if lvreduce
+		// won't freak out xfs or ext4 will.
+		return fmt.Errorf(`The size of the storage volume would be ` +
+			`less than 1MB`)
+	}
 
 	lvSizeString := strconv.FormatInt(lvSize, 10)
 	switch fsType {
@@ -90,6 +108,9 @@ func (s *storageLvm) lvReduce(lvPath string, lvSize int64, fsType string, fsMntP
 			if !ourMount {
 				defer s.StoragePoolVolumeMount()
 			}
+		default:
+			return fmt.Errorf(`Resizing not implemented for `+
+				`storage volume type %d`, volumeType)
 		}
 
 		msg, err = shared.TryRunCommand("e2fsck", "-f", "-y", lvPath)
@@ -316,6 +337,23 @@ func (s *storageLvm) copyContainerThinpool(target container, source container, r
 	if err != nil {
 		logger.Errorf("Error creating snapshot LV for copy: %s.", err)
 		return err
+	}
+
+	// Generate a new xfs's UUID
+	LVFilesystem := s.getLvmFilesystem()
+	poolName := s.getOnDiskPoolName()
+	containerName := target.Name()
+	containerLvmName := containerNameToLVName(containerName)
+	containerLvDevPath := getLvmDevPath(poolName,
+		storagePoolVolumeAPIEndpointContainers, containerLvmName)
+	if LVFilesystem == "xfs" {
+		msg, err := xfsGenerateNewUUID(containerLvDevPath)
+		if err != nil {
+			logger.Errorf(`Failed to create new xfs UUID for `+
+				`container "%s" on storage pool "%s": %s`,
+				containerName, s.pool.Name, msg)
+			return err
+		}
 	}
 
 	return nil
@@ -752,18 +790,6 @@ func lvmLVRename(vgName string, oldName string, newName string) error {
 	return nil
 }
 
-func xfsGenerateNewUUID(lvpath string) error {
-	output, err := shared.RunCommand(
-		"xfs_admin",
-		"-U", "generate",
-		lvpath)
-	if err != nil {
-		return fmt.Errorf("Error generating new UUID: %v\noutput:'%s'", err, output)
-	}
-
-	return nil
-}
-
 func containerNameToLVName(containerName string) string {
 	lvName := strings.Replace(containerName, "-", "--", -1)
 	return strings.Replace(lvName, shared.SnapshotDelimiter, "-", -1)
@@ -800,17 +826,7 @@ func lvmCreateLv(vgName string, thinPoolName string, lvName string, lvFsType str
 
 	fsPath := getLvmDevPath(vgName, volumeType, lvName)
 
-	switch lvFsType {
-	case "xfs":
-		output, err = shared.TryRunCommand("mkfs.xfs", fsPath)
-	default:
-		// default = ext4
-		output, err = shared.TryRunCommand(
-			"mkfs.ext4",
-			"-E", "nodiscard,lazy_itable_init=0,lazy_journal_init=0",
-			fsPath)
-	}
-
+	output, err = makeFSType(fsPath, lvFsType, nil)
 	if err != nil {
 		logger.Errorf("Filesystem creation failed: %s.", output)
 		return fmt.Errorf("Error making filesystem on image LV: %v", err)

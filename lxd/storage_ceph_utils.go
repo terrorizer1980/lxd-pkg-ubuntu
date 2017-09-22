@@ -133,6 +133,12 @@ func cephRBDVolumeMap(clusterName string, poolName string, volumeName string,
 		return "", err
 	}
 
+	idx := strings.Index(devPath, "/dev/rbd")
+	if idx < 0 {
+		return "", fmt.Errorf("Failed to detect mapped device path")
+	}
+
+	devPath = devPath[idx:]
 	return strings.TrimSpace(devPath), nil
 }
 
@@ -372,14 +378,15 @@ func cephRBDSnapshotListClones(clusterName string, poolName string,
 // creating a sparse copy of a container or when LXD updated an image and the
 // image still has dependent container clones.
 func cephRBDVolumeMarkDeleted(clusterName string, poolName string,
-	volumeName string, volumeType string, userName string) error {
+	volumeType string, oldVolumeName string, newVolumeName string,
+	userName string) error {
 	_, err := shared.RunCommand(
 		"rbd",
 		"--id", userName,
 		"--cluster", clusterName,
 		"mv",
-		fmt.Sprintf("%s/%s_%s", poolName, volumeType, volumeName),
-		fmt.Sprintf("%s/zombie_%s_%s", poolName, volumeType, volumeName))
+		fmt.Sprintf("%s/%s_%s", poolName, volumeType, oldVolumeName),
+		fmt.Sprintf("%s/zombie_%s_%s", poolName, volumeType, newVolumeName))
 	if err != nil {
 		return err
 	}
@@ -708,12 +715,12 @@ func (s *storageCeph) copyWithoutSnapshotsFull(target container,
 		return err
 	}
 
-	ourMount, err := s.ContainerMount(target)
+	ourMount, err := target.StorageStart()
 	if err != nil {
 		return err
 	}
 	if ourMount {
-		defer s.ContainerUmount(target.Name(), targetContainerMountPoint)
+		defer target.StorageStop()
 	}
 
 	err = target.TemplateApply("copy")
@@ -785,7 +792,7 @@ func (s *storageCeph) copyWithoutSnapshotsSparse(target container,
 		return err
 	}
 
-	_, err = cephRBDVolumeMap(s.ClusterName, s.OSDPoolName,
+	RBDDevPath, err := cephRBDVolumeMap(s.ClusterName, s.OSDPoolName,
 		targetContainerName, storagePoolVolumeTypeNameContainer,
 		s.UserName)
 	if err != nil {
@@ -793,6 +800,19 @@ func (s *storageCeph) copyWithoutSnapshotsSparse(target container,
 			`"%s" on storage pool "%s": %s`, targetContainerName,
 			s.pool.Name, err)
 		return err
+	}
+
+	// Generate a new xfs's UUID
+	RBDFilesystem := s.getRBDFilesystem()
+	if RBDFilesystem == "xfs" {
+		msg, err := xfsGenerateNewUUID(RBDDevPath)
+		if err != nil {
+			logger.Errorf(`Failed to generate new xfs UUID for `+
+				`RBD storage volume for container "%s" on `+
+				`storage pool "%s": %s`, targetContainerName,
+				s.pool.Name, msg)
+			return err
+		}
 	}
 
 	targetContainerMountPoint := getContainerMountPoint(s.pool.Name,
@@ -803,12 +823,12 @@ func (s *storageCeph) copyWithoutSnapshotsSparse(target container,
 		return err
 	}
 
-	ourMount, err := s.ContainerMount(target)
+	ourMount, err := target.StorageStart()
 	if err != nil {
 		return err
 	}
 	if ourMount {
-		defer s.ContainerUmount(target.Name(), targetContainerMountPoint)
+		defer target.StorageStop()
 	}
 
 	err = target.TemplateApply("copy")
@@ -945,8 +965,10 @@ func cephContainerDelete(clusterName string, poolName string, volumeName string,
 				return 1
 			}
 
+			newVolumeName := fmt.Sprintf("%s_%s", volumeName,
+				uuid.NewRandom().String())
 			err := cephRBDVolumeMarkDeleted(clusterName, poolName,
-				volumeName, volumeType, userName)
+				volumeType, volumeName, newVolumeName, userName)
 			if err != nil {
 				logger.Errorf(`Failed to mark RBD storage `+
 					`volume "%s" as zombie: %s`, logEntry,
@@ -1485,4 +1507,161 @@ mapImage:
 	}
 
 	return strings.TrimSpace(devPath), 2
+}
+
+func (s *storageCeph) rbdShrink(path string, size int64, fsType string,
+	fsMntPoint string, volumeType int, volumeName string,
+	data interface{}) error {
+	var err error
+	var msg string
+
+	if (size / 1024) == 0 {
+		// Everything under a 1MB doesn't make sense. Even if rbd won't
+		// freak out xfs or ext4 will.
+		return fmt.Errorf(`The size of the storage pool would be ` +
+			`less than 1MB`)
+	}
+
+	volumeTypeName := ""
+	switch fsType {
+	case "xfs":
+		logger.Errorf("xfs filesystems cannot be shrunk: dump, mkfs, and restore are required")
+		return fmt.Errorf("xfs filesystems cannot be shrunk: dump, mkfs, and restore are required")
+	default:
+		// default = ext4
+		switch volumeType {
+		case storagePoolVolumeTypeContainer:
+			c := data.(container)
+			ourMount, err := c.StorageStop()
+			if err != nil {
+				return err
+			}
+			if !ourMount {
+				defer c.StorageStart()
+			}
+			volumeTypeName = storagePoolVolumeTypeNameContainer
+		case storagePoolVolumeTypeCustom:
+			ourMount, err := s.StoragePoolVolumeUmount()
+			if err != nil {
+				return err
+			}
+			if !ourMount {
+				defer s.StoragePoolVolumeMount()
+			}
+			volumeTypeName = storagePoolVolumeTypeNameCustom
+		default:
+			return fmt.Errorf(`Resizing not implemented for `+
+				`storage volume type %d`, volumeType)
+		}
+
+		msg, err = shared.TryRunCommand("e2fsck", "-f", "-y", path)
+		if err != nil {
+			return err
+		}
+
+		// don't assume resize2fs semantics are sane (because they
+		// aren't)
+		kbSize := size / 1024
+		ext4SizeString := strconv.FormatInt(kbSize, 10)
+		ext4SizeString += "K"
+		msg, err = shared.TryRunCommand("resize2fs", path, ext4SizeString)
+		if err != nil {
+			logger.Errorf(`Could not reduce underlying %s `+
+				`filesystem for RBD storage volume "%s": %s`,
+				fsType, path, msg)
+			return fmt.Errorf(`Could not reduce underlying %s `+
+				`filesystem for RBD storage volume "%s": %s`,
+				fsType, path, msg)
+		}
+	}
+
+	msg, err = shared.TryRunCommand(
+		"rbd",
+		"resize",
+		"--allow-shrink",
+		"--id", s.UserName,
+		"--cluster", s.ClusterName,
+		"--pool", s.OSDPoolName,
+		"--size", fmt.Sprintf("%dM", (size/1024/1024)),
+		fmt.Sprintf("%s_%s", volumeTypeName, volumeName))
+	if err != nil {
+		logger.Errorf(`Could not shrink RBD storage volume "%s": %s`,
+			path, msg)
+		return fmt.Errorf(`Could not shrink RBD storage volume "%s":
+			%s`, path, msg)
+	}
+
+	logger.Debugf("reduce underlying %s filesystem for LV \"%s\"", fsType, path)
+	return nil
+}
+
+func (s *storageCeph) rbdGrow(path string, size int64, fsType string,
+	fsMntPoint string, volumeType int, volumeName string,
+	data interface{}) error {
+
+	volumeTypeName := ""
+	switch volumeType {
+	case storagePoolVolumeTypeContainer:
+		c := data.(container)
+		ourMount, err := c.StorageStart()
+		if err != nil {
+			return err
+		}
+		if ourMount {
+			defer c.StorageStop()
+		}
+		volumeTypeName = storagePoolVolumeTypeNameContainer
+	case storagePoolVolumeTypeCustom:
+		ourMount, err := s.StoragePoolVolumeMount()
+		if err != nil {
+			return err
+		}
+		if ourMount {
+			defer s.StoragePoolVolumeUmount()
+		}
+		volumeTypeName = storagePoolVolumeTypeNameCustom
+	default:
+		return fmt.Errorf(`Resizing not implemented for storage `+
+			`volume type %d`, volumeType)
+	}
+
+	if (size / 1024) == 0 {
+		// Everything under a 1MB doesn't make sense. Even if rbd won't
+		// freak out xfs or ext4 will.
+		return fmt.Errorf(`The size of the storage pool would be ` +
+			`less than 1MB`)
+	}
+	msg, err := shared.TryRunCommand(
+		"rbd",
+		"resize",
+		"--id", s.UserName,
+		"--cluster", s.ClusterName,
+		"--pool", s.OSDPoolName,
+		"--size", fmt.Sprintf("%dM", (size/1024/1024)),
+		fmt.Sprintf("%s_%s", volumeTypeName, volumeName))
+	if err != nil {
+		logger.Errorf(`Could not extend RBD storage volume "%s": %s`,
+			path, msg)
+		return fmt.Errorf(`Could not extend RBD storage volume "%s":
+			%s`, path, msg)
+	}
+
+	switch fsType {
+	case "xfs":
+		msg, err = shared.TryRunCommand("xfs_growfs", fsMntPoint)
+	default:
+		// default = ext4
+		msg, err = shared.TryRunCommand("resize2fs", path)
+	}
+	if err != nil {
+		logger.Errorf(`Could not extend underlying %s `+
+			`filesystem for RBD storage volume "%s": %s`,
+			fsType, path, msg)
+		return fmt.Errorf(`Could not extend underlying %s `+
+			`filesystem for RBD storage volume "%s": %s`,
+			fsType, path, msg)
+	}
+
+	logger.Debugf("extended underlying %s filesystem for LV \"%s\"", fsType, path)
+	return nil
 }

@@ -225,7 +225,7 @@ func (s *storageCeph) StoragePoolCreate() error {
 		}
 	}()
 
-	ok := cephRBDVolumeExists(s.ClusterName, s.OSDPoolName, s.pool.Name,
+	ok := cephRBDVolumeExists(s.ClusterName, s.OSDPoolName, s.OSDPoolName,
 		"lxd", s.UserName)
 	s.pool.Config["volatile.pool.pristine"] = "false"
 	if !ok {
@@ -234,7 +234,7 @@ func (s *storageCeph) StoragePoolCreate() error {
 		// this to detect whether this osd pool is already in use by
 		// another LXD instance.
 		err = cephRBDVolumeCreate(s.ClusterName, s.OSDPoolName,
-			s.pool.Name, "lxd", "0", s.UserName)
+			s.OSDPoolName, "lxd", "0", s.UserName)
 		if err != nil {
 			logger.Errorf(`Failed to create RBD storage volume `+
 				`"%s" on storage pool "%s": %s`, s.pool.Name,
@@ -243,6 +243,18 @@ func (s *storageCeph) StoragePoolCreate() error {
 		}
 		logger.Debugf(`Created RBD storage volume "%s" on storage `+
 			`pool "%s"`, s.pool.Name, s.pool.Name)
+	} else {
+		msg := fmt.Sprintf(`CEPH OSD storage pool "%s" in cluster `+
+			`"%s" seems to be in use by another LXD instace`,
+			s.pool.Name, s.ClusterName)
+		if s.pool.Config["ceph.osd.force_reuse"] == "" ||
+			!shared.IsTrue(s.pool.Config["ceph.osd.force_reuse"]) {
+			msg += `. Set "ceph.osd.force_reuse=true" to force ` +
+				`LXD to reuse the pool`
+			logger.Errorf(msg)
+			return fmt.Errorf(msg)
+		}
+		logger.Warnf(msg)
 	}
 
 	logger.Infof(`Created CEPH OSD storage pool "%s" in cluster "%s"`,
@@ -405,7 +417,7 @@ func (s *storageCeph) StoragePoolVolumeCreate() error {
 		`"%s" on storage pool "%s"`, RBDFilesystem, s.volume.Name,
 		s.pool.Name)
 
-	msg, err := makeFSType(RBDDevPath, RBDFilesystem)
+	msg, err := makeFSType(RBDDevPath, RBDFilesystem, nil)
 	if err != nil {
 		logger.Errorf(`Failed to create filesystem type "%s" on `+
 			`device path "%s" for RBD storage volume "%s" on `+
@@ -441,6 +453,19 @@ func (s *storageCeph) StoragePoolVolumeCreate() error {
 				volumeMntPoint, s.volume.Name, s.pool.Name, err)
 		}
 	}()
+
+	// apply quota
+	if s.volume.Config["size"] != "" {
+		size, err := shared.ParseByteSizeString(s.volume.Config["size"])
+		if err != nil {
+			return err
+		}
+
+		err = s.StorageEntitySetQuota(storagePoolVolumeTypeCustom, size, nil)
+		if err != nil {
+			return err
+		}
+	}
 
 	logger.Debugf(`Created RBD storage volume "%s" on storage pool "%s"`,
 		s.volume.Name, s.pool.Name)
@@ -635,7 +660,38 @@ func (s *storageCeph) StoragePoolVolumeUmount() (bool, error) {
 }
 
 func (s *storageCeph) StoragePoolVolumeUpdate(writable *api.StorageVolumePut, changedConfig []string) error {
-	return fmt.Errorf("RBD storage volume properties cannot be changed")
+	logger.Infof(`Updating RBD storage volume "%s" on storage pool "%s"`,
+		s.volume.Name, s.pool.Name)
+
+	if !(shared.StringInSlice("block.mount_options", changedConfig) &&
+		len(changedConfig) == 1) &&
+		!(shared.StringInSlice("block.mount_options", changedConfig) &&
+			len(changedConfig) == 2 &&
+			shared.StringInSlice("size", changedConfig)) &&
+		!(shared.StringInSlice("size", changedConfig) &&
+			len(changedConfig) == 1) {
+		return fmt.Errorf("The properties \"%v\" cannot be changed",
+			changedConfig)
+	}
+
+	if shared.StringInSlice("size", changedConfig) {
+		// apply quota
+		if s.volume.Config["size"] != writable.Config["size"] {
+			size, err := shared.ParseByteSizeString(writable.Config["size"])
+			if err != nil {
+				return err
+			}
+
+			err = s.StorageEntitySetQuota(storagePoolVolumeTypeCustom, size, nil)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	logger.Infof(`Updated RBD storage volume "%s" on storage pool "%s"`,
+		s.volume.Name, s.pool.Name)
+	return nil
 }
 
 func (s *storageCeph) StoragePoolUpdate(writable *api.StoragePoolPut, changedConfig []string) error {
@@ -738,7 +794,7 @@ func (s *storageCeph) ContainerCreate(container container) error {
 		`for container "%s" on storage pool "%s"`, RBDFilesystem,
 		containerName, s.pool.Name)
 
-	msg, err := makeFSType(RBDDevPath, RBDFilesystem)
+	msg, err := makeFSType(RBDDevPath, RBDFilesystem, nil)
 	if err != nil {
 		logger.Errorf(`Failed to create filesystem type "%s" on `+
 			`device path "%s" for RBD storage volume for `+
@@ -864,8 +920,8 @@ func (s *storageCeph) ContainerCreateFromImage(container container, fingerprint 
 		}
 	}()
 
-	_, err = cephRBDVolumeMap(s.ClusterName, s.OSDPoolName, containerName,
-		storagePoolVolumeTypeNameContainer, s.UserName)
+	RBDDevPath, err := cephRBDVolumeMap(s.ClusterName, s.OSDPoolName,
+		containerName, storagePoolVolumeTypeNameContainer, s.UserName)
 	if err != nil {
 		logger.Errorf(`Failed to map RBD storage volume for container `+
 			`"%s"`, containerName)
@@ -887,6 +943,18 @@ func (s *storageCeph) ContainerCreateFromImage(container container, fingerprint 
 				`for container "%s": %s`, containerName, err)
 		}
 	}()
+
+	// Generate a new xfs's UUID
+	RBDFilesystem := s.getRBDFilesystem()
+	if RBDFilesystem == "xfs" {
+		msg, err := xfsGenerateNewUUID(RBDDevPath)
+		if err != nil {
+			logger.Errorf(`Failed to generate new xfs UUID for `+
+				`RBD storage volume for container "%s": %s`,
+				containerName, msg)
+			return err
+		}
+	}
 
 	privileged := container.IsPrivileged()
 	err = createContainerMountpoint(containerPoolVolumeMntPoint,
@@ -1304,6 +1372,11 @@ func (s *storageCeph) ContainerCopy(target container, source container,
 	}
 	if ourMount {
 		defer s.ContainerUmount(target.Name(), targetContainerMountPoint)
+	}
+
+	err = s.setUnprivUserACL(source, targetContainerMountPoint)
+	if err != nil {
+		return err
 	}
 
 	err = target.TemplateApply("copy")
@@ -2147,7 +2220,7 @@ func (s *storageCeph) ImageCreate(fingerprint string) error {
 
 		// get filesystem
 		RBDFilesystem := s.getRBDFilesystem()
-		msg, err := makeFSType(RBDDevPath, RBDFilesystem)
+		msg, err := makeFSType(RBDDevPath, RBDFilesystem, nil)
 		if err != nil {
 			logger.Errorf(`Failed to create filesystem "%s" for RBD `+
 				`storage volume for image "%s" on storage `+
@@ -2281,8 +2354,8 @@ func (s *storageCeph) ImageCreate(fingerprint string) error {
 			}
 
 			err := cephRBDVolumeMarkDeleted(s.ClusterName,
-				s.OSDPoolName, fingerprint,
-				storagePoolVolumeTypeNameImage, s.UserName)
+				s.OSDPoolName, storagePoolVolumeTypeNameImage,
+				fingerprint, fingerprint, s.UserName)
 			if err != nil {
 				logger.Warnf(`Failed to mark RBD storage `+
 					`volume for image "%s" on storage `+
@@ -2399,7 +2472,8 @@ func (s *storageCeph) ImageDelete(fingerprint string) error {
 
 		// mark deleted
 		err := cephRBDVolumeMarkDeleted(s.ClusterName, s.OSDPoolName,
-			fingerprint, storagePoolVolumeTypeNameImage, s.UserName)
+			storagePoolVolumeTypeNameImage, fingerprint,
+			fingerprint, s.UserName)
 		if err != nil {
 			logger.Errorf(`Failed to mark RBD storage volume for `+
 				`image "%s" on storage pool "%s" as zombie: %s`,
@@ -2488,5 +2562,82 @@ func (s *storageCeph) ImageUmount(fingerprint string) (bool, error) {
 }
 
 func (s *storageCeph) StorageEntitySetQuota(volumeType int, size int64, data interface{}) error {
-	return fmt.Errorf("RBD storage volume quota are not supported")
+	logger.Debugf(`Setting RBD quota for "%s"`, s.volume.Name)
+
+	if !shared.IntInSlice(volumeType, supportedVolumeTypes) {
+		return fmt.Errorf("Invalid storage type")
+	}
+
+	var ret int
+	var c container
+	fsType := s.getRBDFilesystem()
+	mountpoint := ""
+	RBDDevPath := ""
+	volumeName := ""
+	switch volumeType {
+	case storagePoolVolumeTypeContainer:
+		c = data.(container)
+		ctName := c.Name()
+		if c.IsRunning() {
+			msg := fmt.Sprintf(`Cannot resize RBD storage volume `+
+				`for container \"%s\" when it is running`,
+				ctName)
+			logger.Errorf(msg)
+			return fmt.Errorf(msg)
+		}
+
+		RBDDevPath, ret = getRBDMappedDevPath(s.ClusterName,
+			s.OSDPoolName, storagePoolVolumeTypeNameContainer,
+			s.volume.Name, true, s.UserName)
+		mountpoint = getContainerMountPoint(s.pool.Name, ctName)
+		volumeName = ctName
+	default:
+		RBDDevPath, ret = getRBDMappedDevPath(s.ClusterName,
+			s.OSDPoolName, storagePoolVolumeTypeNameCustom,
+			s.volume.Name, true, s.UserName)
+		mountpoint = getStoragePoolVolumeMountPoint(s.pool.Name,
+			s.volume.Name)
+		volumeName = s.volume.Name
+	}
+	if ret < 0 {
+		return fmt.Errorf("Failed to get mapped RBD path")
+	}
+
+	oldSize, err := shared.ParseByteSizeString(s.volume.Config["size"])
+	if err != nil {
+		return err
+	}
+
+	// The right disjunct just means that someone unset the size property in
+	// the container's config. We obviously cannot resize to 0.
+	if oldSize == size || size == 0 {
+		return nil
+	}
+
+	if size < oldSize {
+		err = s.rbdShrink(RBDDevPath, size, fsType, mountpoint,
+			volumeType, volumeName, data)
+	} else if size > oldSize {
+		err = s.rbdGrow(RBDDevPath, size, fsType, mountpoint,
+			volumeType, volumeName, data)
+	}
+	if err != nil {
+		return err
+	}
+
+	// Update the database
+	s.volume.Config["size"] = shared.GetByteSizeString(size, 0)
+	err = db.StoragePoolVolumeUpdate(
+		s.s.DB,
+		s.volume.Name,
+		volumeType,
+		s.poolID,
+		s.volume.Description,
+		s.volume.Config)
+	if err != nil {
+		return err
+	}
+
+	logger.Debugf(`Set RBD quota for "%s"`, s.volume.Name)
+	return nil
 }

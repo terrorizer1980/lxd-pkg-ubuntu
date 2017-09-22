@@ -186,12 +186,12 @@ func daemonConfigInit(db *sql.DB) error {
 		"core.trust_password":            {valueType: "string", hiddenValue: true, setter: daemonConfigSetPassword},
 
 		"images.auto_update_cached":    {valueType: "bool", defaultValue: "true"},
-		"images.auto_update_interval":  {valueType: "int", defaultValue: "6"},
+		"images.auto_update_interval":  {valueType: "int", defaultValue: "6", trigger: daemonConfigTriggerAutoUpdateInterval},
 		"images.compression_algorithm": {valueType: "string", validator: daemonConfigValidateCompression, defaultValue: "gzip"},
 		"images.remote_cache_expiry":   {valueType: "int", defaultValue: "10", trigger: daemonConfigTriggerExpiry},
 
 		// Keys deprecated since the implementation of the storage api.
-		"storage.lvm_fstype":           {valueType: "string", defaultValue: "ext4", validValues: []string{"ext4", "xfs"}, validator: storageDeprecatedKeys},
+		"storage.lvm_fstype":           {valueType: "string", defaultValue: "ext4", validValues: []string{"btrfs", "ext4", "xfs"}, validator: storageDeprecatedKeys},
 		"storage.lvm_mount_options":    {valueType: "string", defaultValue: "discard", validator: storageDeprecatedKeys},
 		"storage.lvm_thinpool_name":    {valueType: "string", defaultValue: "LXDPool", validator: storageDeprecatedKeys},
 		"storage.lvm_vg_name":          {valueType: "string", validator: storageDeprecatedKeys},
@@ -304,6 +304,11 @@ func daemonConfigSetProxy(d *Daemon, key string, value string) (string, error) {
 func daemonConfigTriggerExpiry(d *Daemon, key string, value string) {
 	// Trigger an image pruning run
 	d.pruneChan <- true
+}
+
+func daemonConfigTriggerAutoUpdateInterval(d *Daemon, key string, value string) {
+	// Reset the auto-update interval loop
+	d.resetAutoUpdateChan <- true
 }
 
 func daemonConfigValidateCompression(d *Daemon, key string, value string) error {

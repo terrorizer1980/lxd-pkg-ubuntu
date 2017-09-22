@@ -1,4 +1,4 @@
-package shared
+package idmap
 
 import (
 	"bufio"
@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/lxc/lxd/shared"
 )
 
 type IdRange struct {
@@ -307,7 +309,7 @@ func (m IdmapSet) ValidRanges() ([]*IdRange, error) {
 
 	// Sort the map
 	idmap := IdmapSet{}
-	err := DeepCopy(&m, &idmap)
+	err := shared.DeepCopy(&m, &idmap)
 	if err != nil {
 		return nil, err
 	}
@@ -342,6 +344,8 @@ func (m IdmapSet) ValidRanges() ([]*IdRange, error) {
 	return ranges, nil
 }
 
+var ErrHostIdIsSubId = fmt.Errorf("Host id is in the range of subids")
+
 /* AddSafe adds an entry to the idmap set, breaking apart any ranges that the
  * new idmap intersects with in the process.
  */
@@ -355,7 +359,7 @@ func (m *IdmapSet) AddSafe(i IdmapEntry) error {
 		}
 
 		if e.HostidsIntersect(i) {
-			return fmt.Errorf("can't map the same host ID twice")
+			return ErrHostIdIsSubId
 		}
 
 		added = true
@@ -397,7 +401,7 @@ func (m IdmapSet) ToLxcString() []string {
 	var lines []string
 	for _, e := range m.Idmap {
 		for _, l := range e.ToLxcString() {
-			if !StringInSlice(l+"\n", lines) {
+			if !shared.StringInSlice(l+"\n", lines) {
 				lines = append(lines, l+"\n")
 			}
 		}
@@ -478,7 +482,7 @@ func (set *IdmapSet) doUidshiftIntoContainer(dir string, testmode bool, how stri
 			return err
 		}
 
-		intUid, intGid, _, _, _, _, err := GetFileStat(path)
+		intUid, intGid, _, _, _, _, err := shared.GetFileStat(path)
 		if err != nil {
 			return err
 		}
@@ -510,7 +514,7 @@ func (set *IdmapSet) doUidshiftIntoContainer(dir string, testmode bool, how stri
 		return nil
 	}
 
-	if !PathExists(dir) {
+	if !shared.PathExists(dir) {
 		return fmt.Errorf("No such file or directory: %q", dir)
 	}
 
@@ -650,7 +654,7 @@ func DefaultIdmapSet() (*IdmapSet, error) {
 	// Check if shadow's uidmap tools are installed
 	newuidmap, _ := exec.LookPath("newuidmap")
 	newgidmap, _ := exec.LookPath("newgidmap")
-	if newuidmap != "" && newgidmap != "" && PathExists("/etc/subuid") && PathExists("/etc/subgid") {
+	if newuidmap != "" && newgidmap != "" && shared.PathExists("/etc/subuid") && shared.PathExists("/etc/subgid") {
 		// Parse the shadow uidmap
 		entries, err := getFromShadow("/etc/subuid", "root")
 		if err != nil {
@@ -788,7 +792,7 @@ func DefaultIdmapSet() (*IdmapSet, error) {
 func CurrentIdmapSet() (*IdmapSet, error) {
 	idmapset := new(IdmapSet)
 
-	if PathExists("/proc/self/uid_map") {
+	if shared.PathExists("/proc/self/uid_map") {
 		// Parse the uidmap
 		entries, err := getFromProc("/proc/self/uid_map")
 		if err != nil {
@@ -805,7 +809,7 @@ func CurrentIdmapSet() (*IdmapSet, error) {
 		idmapset.Idmap = Extend(idmapset.Idmap, e)
 	}
 
-	if PathExists("/proc/self/gid_map") {
+	if shared.PathExists("/proc/self/gid_map") {
 		// Parse the gidmap
 		entries, err := getFromProc("/proc/self/gid_map")
 		if err != nil {

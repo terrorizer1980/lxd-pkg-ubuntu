@@ -11,6 +11,7 @@ import (
 	"github.com/lxc/lxd/lxd/db"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
+	"github.com/lxc/lxd/shared/idmap"
 	"github.com/lxc/lxd/shared/logger"
 )
 
@@ -929,7 +930,7 @@ func (s *storageLvm) ContainerCreateFromImage(container container, fingerprint s
 	// Generate a new xfs's UUID
 	lvFsType := s.getLvmFilesystem()
 	if lvFsType == "xfs" {
-		err := xfsGenerateNewUUID(containerLvDevPath)
+		_, err := xfsGenerateNewUUID(containerLvDevPath)
 		if err != nil {
 			return err
 		}
@@ -1651,7 +1652,7 @@ func (s *storageLvm) MigrationSource(container container, containerOnly bool) (M
 	return rsyncMigrationSource(container, containerOnly)
 }
 
-func (s *storageLvm) MigrationSink(live bool, container container, snapshots []*Snapshot, conn *websocket.Conn, srcIdmap *shared.IdmapSet, op *operation, containerOnly bool) error {
+func (s *storageLvm) MigrationSink(live bool, container container, snapshots []*Snapshot, conn *websocket.Conn, srcIdmap *idmap.IdmapSet, op *operation, containerOnly bool) error {
 	return rsyncMigrationSink(live, container, snapshots, conn, srcIdmap, op, containerOnly)
 }
 

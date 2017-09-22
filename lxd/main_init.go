@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"net"
-	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -13,29 +12,18 @@ import (
 
 	"github.com/lxc/lxd/client"
 	"github.com/lxc/lxd/lxd/util"
+
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/cmd"
+	"github.com/lxc/lxd/shared/idmap"
 	"github.com/lxc/lxd/shared/logger"
 )
-
-// CmdInitArgs holds command line arguments for the "lxd init" command.
-type CmdInitArgs struct {
-	Auto                bool
-	Preseed             bool
-	StorageBackend      string
-	StorageCreateDevice string
-	StorageCreateLoop   int64
-	StorageDataset      string
-	NetworkPort         int64
-	NetworkAddress      string
-	TrustPassword       string
-}
 
 // CmdInit implements the "lxd init" command line.
 type CmdInit struct {
 	Context         *cmd.Context
-	Args            *CmdInitArgs
+	Args            *Args
 	RunningInUserns bool
 	SocketPath      string
 	PasswordReader  func(int) ([]byte, error)
@@ -686,11 +674,22 @@ func (cmd *CmdInit) askStorage(client lxd.ContainerServer, existingPools []strin
 		Config: map[string]string{},
 	}
 
-	defaultStorage := "dir"
-	if shared.StringInSlice("zfs", availableBackends) {
-		defaultStorage = "zfs"
+	backingFs, err := util.FilesystemDetect(shared.VarPath())
+	if err != nil {
+		backingFs = "dir"
 	}
+
+	defaultStorage := "dir"
+	if backingFs == "btrfs" && shared.StringInSlice("btrfs", availableBackends) {
+		defaultStorage = "btrfs"
+	} else if shared.StringInSlice("zfs", availableBackends) {
+		defaultStorage = "zfs"
+	} else if shared.StringInSlice("btrfs", availableBackends) {
+		defaultStorage = "btrfs"
+	}
+
 	for {
+		storage.LoopSize = -1
 		storage.Pool = cmd.Context.AskString("Name of the new storage pool [default=default]: ", "default", nil)
 		if shared.StringInSlice(storage.Pool, existingPools) {
 			fmt.Printf("The requested storage pool \"%s\" already exists. Please choose another name.\n", storage.Pool)
@@ -720,7 +719,14 @@ func (cmd *CmdInit) askStorage(client lxd.ContainerServer, existingPools []strin
 			break
 		}
 
-		storage.LoopSize = -1
+		// Optimization for btrfs on btrfs
+		if storage.Backend == "btrfs" && backingFs == "btrfs" {
+			if cmd.Context.AskBool(fmt.Sprintf("Would you like to create a new btrfs subvolume under %s (yes/no) [default=yes]: ", shared.VarPath("")), "yes") {
+				storage.Dataset = shared.VarPath("storage-pools", storage.Pool)
+				break
+			}
+		}
+
 		question := fmt.Sprintf("Create a new %s pool (yes/no) [default=yes]? ", strings.ToUpper(storage.Backend))
 		if cmd.Context.AskBool(question, "yes") {
 			if storage.Backend == "ceph" {
@@ -746,30 +752,23 @@ func (cmd *CmdInit) askStorage(client lxd.ContainerServer, existingPools []strin
 				}
 				storage.Device = cmd.Context.AskString("Path to the existing block device: ", "", deviceExists)
 			} else {
-				backingFs, err := util.FilesystemDetect(shared.VarPath())
-				if err == nil && storage.Backend == "btrfs" && backingFs == "btrfs" {
-					if cmd.Context.AskBool("Would you like to create a new subvolume for the BTRFS storage pool (yes/no) [default=yes]: ", "yes") {
-						storage.Dataset = shared.VarPath("storage-pools", storage.Pool)
-					}
-				} else {
-					st := syscall.Statfs_t{}
-					err := syscall.Statfs(shared.VarPath(), &st)
-					if err != nil {
-						return nil, fmt.Errorf("couldn't statfs %s: %s", shared.VarPath(), err)
-					}
-
-					/* choose 15 GB < x < 100GB, where x is 20% of the disk size */
-					defaultSize := uint64(st.Frsize) * st.Blocks / (1024 * 1024 * 1024) / 5
-					if defaultSize > 100 {
-						defaultSize = 100
-					}
-					if defaultSize < 15 {
-						defaultSize = 15
-					}
-
-					question := fmt.Sprintf("Size in GB of the new loop device (1GB minimum) [default=%dGB]: ", defaultSize)
-					storage.LoopSize = cmd.Context.AskInt(question, 1, -1, fmt.Sprintf("%d", defaultSize))
+				st := syscall.Statfs_t{}
+				err := syscall.Statfs(shared.VarPath(), &st)
+				if err != nil {
+					return nil, fmt.Errorf("couldn't statfs %s: %s", shared.VarPath(), err)
 				}
+
+				/* choose 15 GB < x < 100GB, where x is 20% of the disk size */
+				defaultSize := uint64(st.Frsize) * st.Blocks / (1024 * 1024 * 1024) / 5
+				if defaultSize > 100 {
+					defaultSize = 100
+				}
+				if defaultSize < 15 {
+					defaultSize = 15
+				}
+
+				question := fmt.Sprintf("Size in GB of the new loop device (1GB minimum) [default=%dGB]: ", defaultSize)
+				storage.LoopSize = cmd.Context.AskInt(question, 1, -1, fmt.Sprintf("%d", defaultSize))
 			}
 		} else {
 			if storage.Backend == "ceph" {
@@ -823,7 +822,7 @@ func (cmd *CmdInit) askDefaultPrivileged() int {
 	// Detect lack of uid/gid
 	defaultPrivileged := -1
 	needPrivileged := false
-	idmapset, err := shared.DefaultIdmapSet()
+	idmapset, err := idmap.DefaultIdmapSet()
 	if err != nil || len(idmapset.Idmap) == 0 || idmapset.Usable() != nil {
 		needPrivileged = true
 	}
@@ -970,21 +969,9 @@ type cmdInitBridgeParams struct {
 // some change, and that are passed around as parameters.
 type reverter func() error
 
-func cmdInit() error {
-	context := cmd.NewContext(os.Stdin, os.Stdout, os.Stderr)
-	args := &CmdInitArgs{
-		Auto:                *argAuto,
-		Preseed:             *argPreseed,
-		StorageBackend:      *argStorageBackend,
-		StorageCreateDevice: *argStorageCreateDevice,
-		StorageCreateLoop:   *argStorageCreateLoop,
-		StorageDataset:      *argStorageDataset,
-		NetworkPort:         *argNetworkPort,
-		NetworkAddress:      *argNetworkAddress,
-		TrustPassword:       *argTrustPassword,
-	}
+func cmdInit(args *Args) error {
 	command := &CmdInit{
-		Context:         context,
+		Context:         cmd.DefaultContext(),
 		Args:            args,
 		RunningInUserns: shared.RunningInUserNS(),
 		SocketPath:      "",

@@ -42,6 +42,9 @@ test_basic_usage() {
 
   # Re-import the image
   mv "${LXD_DIR}/${sum}.tar.xz" "${LXD_DIR}/testimage.tar.xz"
+  lxc image import "${LXD_DIR}/testimage.tar.xz" --alias testimage user.foo=bar
+  lxc image show testimage | grep -q "user.foo: bar"
+  lxc image delete testimage
   lxc image import "${LXD_DIR}/testimage.tar.xz" --alias testimage
   rm "${LXD_DIR}/testimage.tar.xz"
 
@@ -120,7 +123,7 @@ test_basic_usage() {
   lxc launch testimage baz
   # change the container filesystem so the resulting image is different
   lxc exec baz touch /somefile
-  lxc stop baz
+  lxc stop baz --force
   # publishing another image with same alias doesn't fail
   lxc publish baz --alias=foo-image
   lxc delete baz

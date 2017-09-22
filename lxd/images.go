@@ -24,6 +24,7 @@ import (
 	"gopkg.in/yaml.v2"
 
 	"github.com/lxc/lxd/lxd/db"
+	"github.com/lxc/lxd/lxd/state"
 	"github.com/lxc/lxd/lxd/util"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
@@ -182,11 +183,12 @@ func unpackImage(imagefname string, destpath string, sType storageType) error {
 func compressFile(path string, compress string) (string, error) {
 	reproducible := []string{"gzip"}
 
-	args := []string{path, "-c"}
+	args := []string{"-c"}
 	if shared.StringInSlice(compress, reproducible) {
 		args = append(args, "-n")
 	}
 
+	args = append(args, path)
 	cmd := exec.Command(compress, args...)
 
 	outfile, err := os.Create(path + ".compressed")
@@ -635,7 +637,7 @@ func imageCreateInPool(d *Daemon, info *api.Image, storagePool string) error {
 	}
 
 	// Initialize a new storage interface.
-	s, err := storagePoolInit(d, storagePool)
+	s, err := storagePoolInit(d.State(), storagePool)
 	if err != nil {
 		return err
 	}
@@ -963,7 +965,7 @@ func autoUpdateImage(d *Daemon, op *operation, id int, info *api.Image) error {
 		// If we do have optimized pools, make sure we remove
 		// the volumes associated with the image.
 		if poolName != "" {
-			err = doDeleteImageFromPool(d, fingerprint, poolName)
+			err = doDeleteImageFromPool(d.State(), fingerprint, poolName)
 			if err != nil {
 				logger.Error("Error deleting image from pool", log.Ctx{"err": err, "fp": fingerprint})
 			}
@@ -1030,7 +1032,7 @@ func pruneExpiredImages(d *Daemon) {
 		}
 
 		for _, pool := range poolNames {
-			err := doDeleteImageFromPool(d, fp, pool)
+			err := doDeleteImageFromPool(d.State(), fp, pool)
 			if err != nil {
 				logger.Debugf("Error deleting image %s from storage pool %: %s", fp, pool, err)
 				continue
@@ -1069,9 +1071,9 @@ func pruneExpiredImages(d *Daemon) {
 	logger.Infof("Done pruning expired images")
 }
 
-func doDeleteImageFromPool(d *Daemon, fingerprint string, storagePool string) error {
+func doDeleteImageFromPool(state *state.State, fingerprint string, storagePool string) error {
 	// Initialize a new storage interface.
-	s, err := storagePoolVolumeImageInit(d, storagePool, fingerprint)
+	s, err := storagePoolVolumeImageInit(state, storagePool, fingerprint)
 	if err != nil {
 		return err
 	}
@@ -1107,7 +1109,7 @@ func imageDelete(d *Daemon, r *http.Request) Response {
 		}
 
 		for _, pool := range pools {
-			err := doDeleteImageFromPool(d, imgInfo.Fingerprint, pool)
+			err := doDeleteImageFromPool(d.State(), imgInfo.Fingerprint, pool)
 			if err != nil {
 				return err
 			}
