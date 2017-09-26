@@ -8,3 +8,4 @@
 0008-shared-version-include-OS-architecture-and-possibly-.patch
 0009-Fix-uname-handling-on-some-architectures.patch
 0010-version-Only-include-kernel-version-not-build-id.patch
+0011-testhelpers-Only-build-when-running-tests.patch
