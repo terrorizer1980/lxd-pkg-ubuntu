@@ -2,14 +2,14 @@ Source: lxd
 Section: admin
 Priority: optional
 Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
-Standards-Version: 4.0.0
+Standards-Version: 4.1.0
 Homepage: https://linuxcontainers.org/
 Vcs-Git: https://github.com/lxc/lxd-pkg-ubuntu
 Vcs-Browser: https://github.com/lxc/lxd-pkg-ubuntu
 Build-Depends: debhelper (>= 9),
                dh-apparmor,
                dh-golang,
-               dh-systemd,
+               debhelper (>= 9.20160709) | dh-systemd,
                golang-go,
                golang-any-shared-dev,
                golang-go.crypto-dev,
