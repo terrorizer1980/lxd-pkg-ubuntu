@@ -1,3 +1,19 @@
+lxd (2.18-0ubuntu3) artful; urgency=medium
+
+  * Cherry-pick new user-agent handling from upstream:
+    - 0003-shared-util-extract-helper-to-get-uname.patch
+    - 0004-shared-util-add-helper-to-create-tempfiles.patch
+    - 0005-shared-osarch-add-missing-architecture-aliases.patch
+    - 0006-shared-osarch-add-function-for-parsing-etc-os-releas.patch
+    - 0007-shared-version-add-helper-to-get-platform-specific-v.patch
+    - 0008-shared-version-include-OS-architecture-and-possibly-.patch
+    - 0009-Fix-uname-handling-on-some-architectures.patch
+    - 0010-version-Only-include-kernel-version-not-build-id.patch
+  * Bump standards to 4.1.0
+    - Make dh-systemd build-dependency conditional on debhelper version
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Tue, 26 Sep 2017 11:07:55 -0400
+
 lxd (2.18-0ubuntu2) artful; urgency=medium
 
   * Cherry-pick some upstream fixes:
