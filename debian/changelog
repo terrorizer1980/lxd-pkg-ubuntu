@@ -9,6 +9,7 @@ lxd (2.18-0ubuntu3) artful; urgency=medium
     - 0008-shared-version-include-OS-architecture-and-possibly-.patch
     - 0009-Fix-uname-handling-on-some-architectures.patch
     - 0010-version-Only-include-kernel-version-not-build-id.patch
+    - 0011-Move-testhelpers-into-shared-osarch-for-now.patch
   * Bump standards to 4.1.0
     - Make dh-systemd build-dependency conditional on debhelper version
 
