@@ -1,0 +1,57 @@
+From 7cc3e3f74d4ca7bfa5a04a18696cdad6d77decd8 Mon Sep 17 00:00:00 2001
+From: Alberto Donato <alberto.donato@canonical.com>
+Date: Thu, 21 Sep 2017 10:48:22 +0200
+Subject: shared/util: add helper to create tempfiles
+
+Signed-off-by: Alberto Donato <alberto.donato@canonical.com>
+---
+ shared/testhelpers/tempfile.go | 19 +++++++++++++++++++
+ shared/util.go                 | 12 ++++++++++++
+ 2 files changed, 31 insertions(+)
+ create mode 100644 shared/testhelpers/tempfile.go
+
+diff --git a/shared/testhelpers/tempfile.go b/shared/testhelpers/tempfile.go
+new file mode 100644
+index 00000000..b1abebe7
+--- /dev/null
++++ b/shared/testhelpers/tempfile.go
+@@ -0,0 +1,19 @@
++package testhelpers
++
++import (
++	"os"
++
++	"github.com/stretchr/testify/suite"
++
++	"github.com/lxc/lxd/shared"
++)
++
++// WriteTempFile writes content to a temporary file.
++func WriteTempFile(s suite.Suite, dir string, prefix string, content string) (string, func()) {
++	filename, err := shared.WriteTempFile(dir, prefix, content)
++	if err != nil {
++		s.T().Fatalf("failed to create temporary file: %v", err)
++	}
++
++	return filename, func() { os.Remove(filename) }
++}
+diff --git a/shared/util.go b/shared/util.go
+index e49e8d05..260b32c8 100644
+--- a/shared/util.go
++++ b/shared/util.go
+@@ -857,3 +857,15 @@ func Round(x float64) int64 {
+ 
+ 	return int64(math.Floor(x + 0.5))
+ }
++
++// WriteTempFile creates a temp file with the specified content
++func WriteTempFile(dir string, prefix string, content string) (string, error) {
++	f, err := ioutil.TempFile(dir, prefix)
++	if err != nil {
++		return "", err
++	}
++	defer f.Close()
++
++	_, err = f.WriteString(content)
++	return f.Name(), err
++}

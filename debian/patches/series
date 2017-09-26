@@ -1,2 +1,10 @@
 0001-networks-Update-dnsmasq-on-container-renames.patch
 0002-network-Better-handle-dnsmasq-version-checks.patch
+0003-shared-util-extract-helper-to-get-uname.patch
+0004-shared-util-add-helper-to-create-tempfiles.patch
+0005-shared-osarch-add-missing-architecture-aliases.patch
+0006-shared-osarch-add-function-for-parsing-etc-os-releas.patch
+0007-shared-version-add-helper-to-get-platform-specific-v.patch
+0008-shared-version-include-OS-architecture-and-possibly-.patch
+0009-Fix-uname-handling-on-some-architectures.patch
+0010-version-Only-include-kernel-version-not-build-id.patch
