@@ -1,0 +1,27 @@
+From add37b5f76b2d12b0fcc5b3e63397e9e1214313f Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Fri, 6 Oct 2017 17:15:24 -0400
+Subject: networks: Fix renaming networks
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Closes #3912
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ lxd/networks.go | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/lxd/networks.go b/lxd/networks.go
+index 48adfe08..ad1b66ee 100644
+--- a/lxd/networks.go
++++ b/lxd/networks.go
+@@ -547,6 +547,7 @@ func (n *network) Rename(name string) error {
+ 	if err != nil {
+ 		return err
+ 	}
++	n.name = name
+ 
+ 	// Bring the network up
+ 	err = n.Start()

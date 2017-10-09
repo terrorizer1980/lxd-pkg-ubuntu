@@ -1,0 +1,29 @@
+From 8ad4fad9edc5d20694a575554f50ff385bbf6bf1 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Thu, 5 Oct 2017 18:23:43 -0400
+Subject: daemon: Fix handling of config triggers
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ lxd/daemon_config.go | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/lxd/daemon_config.go b/lxd/daemon_config.go
+index 35b63220..6b5ad738 100644
+--- a/lxd/daemon_config.go
++++ b/lxd/daemon_config.go
+@@ -133,6 +133,11 @@ func (k *daemonConfigKey) Set(d *Daemon, value string) error {
+ 		return err
+ 	}
+ 
++	// Run the trigger (if any)
++	if k.trigger != nil {
++		k.trigger(d, k.name(), value)
++	}
++
+ 	return nil
+ }
+ 

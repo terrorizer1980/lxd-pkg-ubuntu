@@ -9,3 +9,13 @@
 0009-Fix-uname-handling-on-some-architectures.patch
 0010-version-Only-include-kernel-version-not-build-id.patch
 0011-Move-testhelpers-into-shared-osarch-for-now.patch
+0012-Fix-bad-DB-schema-update-between-schema-30-and-31.patch
+0013-images-Respect-disabled-cache-expiry.patch
+0014-images-Store-UploadedAt-as-RFC3399.patch
+0015-patches-Convert-UploadedAt-to-RFC3399.patch
+0016-daemon-Fix-handling-of-config-triggers.patch
+0017-daemon-Don-t-update-images-while-pruning.patch
+0018-images-Actually-get-the-list-of-images-to-remove.patch
+0019-lxc-storage-Fix-remote-operations.patch
+0020-networks-Fix-renaming-networks.patch
+0021-support-canceling-with-parallel-downloads.patch

@@ -1,0 +1,34 @@
+From 02b40a67bc91887c80e2219a74847b09943ba29c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Thu, 5 Oct 2017 17:38:29 -0400
+Subject: images: Store UploadedAt as RFC3399
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ lxd/db/images.go | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/lxd/db/images.go b/lxd/db/images.go
+index b2d25992..9f6d00a6 100644
+--- a/lxd/db/images.go
++++ b/lxd/db/images.go
+@@ -462,14 +462,14 @@ func ImageInsert(db *sql.DB, fp string, fname string, sz int64, public bool, aut
+ 		autoUpdateInt = 1
+ 	}
+ 
+-	stmt, err := tx.Prepare(`INSERT INTO images (fingerprint, filename, size, public, auto_update, architecture, creation_date, expiry_date, upload_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, strftime("%s"))`)
++	stmt, err := tx.Prepare(`INSERT INTO images (fingerprint, filename, size, public, auto_update, architecture, creation_date, expiry_date, upload_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+ 	if err != nil {
+ 		tx.Rollback()
+ 		return err
+ 	}
+ 	defer stmt.Close()
+ 
+-	result, err := stmt.Exec(fp, fname, sz, publicInt, autoUpdateInt, arch, createdAt, expiresAt)
++	result, err := stmt.Exec(fp, fname, sz, publicInt, autoUpdateInt, arch, createdAt, expiresAt, time.Now().UTC())
+ 	if err != nil {
+ 		tx.Rollback()
+ 		return err
