@@ -19,3 +19,5 @@
 0019-lxc-storage-Fix-remote-operations.patch
 0020-networks-Fix-renaming-networks.patch
 0021-support-canceling-with-parallel-downloads.patch
+0022-network-do-not-update-limits-unconditionally.patch
+0023-dir-make-sure-pool-is-mounted.patch
