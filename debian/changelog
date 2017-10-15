@@ -1,3 +1,10 @@
+lxd (2.18-0ubuntu6) artful; urgency=medium
+
+  * Cherry-pick upstream bugfixes:
+    - 0024-dir-check-whether-pool-is-already-mounted.patch
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Sun, 15 Oct 2017 01:14:38 -0400
+
 lxd (2.18-0ubuntu5) artful; urgency=medium
 
   * Cherry-pick upstream bugfixes:
