@@ -1,3 +1,11 @@
+lxd (2.18-0ubuntu5) artful; urgency=medium
+
+  * Cherry-pick upstream bugfixes:
+    - 0022-network-do-not-update-limits-unconditionally.patch
+    - 0023-dir-make-sure-pool-is-mounted.patch
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Fri, 13 Oct 2017 14:11:15 -0400
+
 lxd (2.18-0ubuntu4) artful; urgency=medium
 
   * Cherry-pick upstream bugfixes:
