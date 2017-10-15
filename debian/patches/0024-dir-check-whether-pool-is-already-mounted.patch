@@ -1,0 +1,46 @@
+From ad9b877f7b2849d4e6759e7ba97225d670589941 Mon Sep 17 00:00:00 2001
+From: Christian Brauner <christian.brauner@ubuntu.com>
+Date: Sat, 14 Oct 2017 19:13:27 +0200
+Subject: dir: check whether pool is already mounted
+
+Closes #3938.
+
+Signed-off-by: Christian Brauner <christian.brauner@ubuntu.com>
+---
+ lxd/storage_dir.go | 16 +++++++++++-----
+ 1 file changed, 11 insertions(+), 5 deletions(-)
+
+diff --git a/lxd/storage_dir.go b/lxd/storage_dir.go
+index cc39b528..47348312 100644
+--- a/lxd/storage_dir.go
++++ b/lxd/storage_dir.go
+@@ -204,6 +204,10 @@ func (s *storageDir) StoragePoolMount() (bool, error) {
+ 	mountSource := cleanSource
+ 	mountFlags := syscall.MS_BIND
+ 
++	if shared.IsMountPoint(poolMntPoint) {
++		return false, nil
++	}
++
+ 	err := syscall.Mount(mountSource, poolMntPoint, "", uintptr(mountFlags), "")
+ 	if err != nil {
+ 		logger.Errorf(`Failed to mount DIR storage pool "%s" onto `+
+@@ -255,11 +259,13 @@ func (s *storageDir) StoragePoolUmount() (bool, error) {
+ 
+ 	defer removeLockFromMap()
+ 
+-	if shared.IsMountPoint(poolMntPoint) {
+-		err := syscall.Unmount(poolMntPoint, 0)
+-		if err != nil {
+-			return false, err
+-		}
++	if !shared.IsMountPoint(poolMntPoint) {
++		return false, nil
++	}
++
++	err := syscall.Unmount(poolMntPoint, 0)
++	if err != nil {
++		return false, err
+ 	}
+ 
+ 	logger.Debugf("Unmounted DIR pool \"%s\".", s.pool.Name)
