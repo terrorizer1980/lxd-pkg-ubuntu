@@ -11,8 +11,8 @@ include /usr/share/dpkg/default.mk
 # temporary build path (see http://golang.org/doc/code.html#GOPATH)
 export DH_GOPKG := github.com/lxc/lxd
 export GOPATH := $(CURDIR)/obj-$(DEB_BUILD_GNU_TYPE)
-export USE_EMBEDDED := false
-export USE_SHLIBS := true
+export USE_EMBEDDED := true
+export USE_SHLIBS := false
 
 ifeq ($(USE_SHLIBS), true)
 export DH_GOLANG_LINK_SHARED := 1

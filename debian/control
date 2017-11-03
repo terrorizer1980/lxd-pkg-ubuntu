@@ -2,7 +2,7 @@ Source: lxd
 Section: admin
 Priority: optional
 Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
-Standards-Version: 4.1.0
+Standards-Version: 4.1.1
 Homepage: https://linuxcontainers.org/
 Vcs-Git: https://github.com/lxc/lxd-pkg-ubuntu
 Vcs-Browser: https://github.com/lxc/lxd-pkg-ubuntu
@@ -11,24 +11,6 @@ Build-Depends: debhelper (>= 9),
                dh-golang,
                debhelper (>= 9.20160709) | dh-systemd,
                golang-go,
-               golang-any-shared-dev,
-               golang-go.crypto-dev,
-               golang-github-gorilla-context-dev,
-               golang-github-gorilla-mux-dev,
-               golang-github-gosexy-gettext-dev,
-               golang-github-mattn-go-colorable-dev,
-               golang-github-mattn-go-sqlite3-dev,
-               golang-github-olekukonko-tablewriter-dev,
-               golang-github-pborman-uuid-dev,
-               golang-gocapability-dev,
-               golang-gopkg-flosch-pongo2.v3-dev,
-               golang-gopkg-inconshreveable-log15.v2-dev,
-               golang-gopkg-lxc-go-lxc.v2-dev,
-               golang-gopkg-tomb.v2-dev,
-               golang-goprotobuf-dev,
-               golang-petname-dev,
-               golang-yaml.v2-dev,
-               golang-websocket-dev,
                help2man,
                libacl1-dev,
                libsqlite3-dev,
