@@ -43,6 +43,7 @@ type ContainerServer interface {
 
 	// Server functions
 	GetServer() (server *api.Server, ETag string, err error)
+	GetServerResources() (*api.Resources, error)
 	UpdateServer(server api.ServerPut, ETag string) (err error)
 	HasExtension(extension string) bool
 
@@ -139,6 +140,7 @@ type ContainerServer interface {
 	GetStoragePoolNames() (names []string, err error)
 	GetStoragePools() (pools []api.StoragePool, err error)
 	GetStoragePool(name string) (pool *api.StoragePool, ETag string, err error)
+	GetStoragePoolResources(name string) (resources *api.ResourcesStoragePool, err error)
 	CreateStoragePool(pool api.StoragePoolsPost) (err error)
 	UpdateStoragePool(name string, pool api.StoragePoolPut, ETag string) (err error)
 	DeleteStoragePool(name string) (err error)
@@ -150,6 +152,7 @@ type ContainerServer interface {
 	CreateStoragePoolVolume(pool string, volume api.StorageVolumesPost) (err error)
 	UpdateStoragePoolVolume(pool string, volType string, name string, volume api.StorageVolumePut, ETag string) (err error)
 	DeleteStoragePoolVolume(pool string, volType string, name string) (err error)
+	RenameStoragePoolVolume(pool string, volType string, name string, volume api.StorageVolumePost) (err error)
 
 	// Internal functions (for internal use)
 	RawQuery(method string, path string, data interface{}, queryETag string) (resp *api.Response, ETag string, err error)

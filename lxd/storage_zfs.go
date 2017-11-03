@@ -323,9 +323,12 @@ func (s *storageZfs) zfsPoolCreate() error {
 func (s *storageZfs) StoragePoolDelete() error {
 	logger.Infof("Deleting ZFS storage pool \"%s\".", s.pool.Name)
 
-	err := zfsFilesystemEntityDelete(s.pool.Config["source"], s.getOnDiskPoolName())
-	if err != nil {
-		return err
+	poolName := s.getOnDiskPoolName()
+	if zfsFilesystemEntityExists(poolName, "") {
+		err := zfsFilesystemEntityDelete(s.pool.Config["source"], poolName)
+		if err != nil {
+			return err
+		}
 	}
 
 	storagePoolMntPoint := getStoragePoolMountPoint(s.pool.Name)
@@ -403,9 +406,12 @@ func (s *storageZfs) StoragePoolVolumeDelete() error {
 	fs := fmt.Sprintf("custom/%s", s.volume.Name)
 	customPoolVolumeMntPoint := getStoragePoolVolumeMountPoint(s.pool.Name, s.volume.Name)
 
-	err := zfsPoolVolumeDestroy(s.getOnDiskPoolName(), fs)
-	if err != nil {
-		return err
+	poolName := s.getOnDiskPoolName()
+	if zfsFilesystemEntityExists(poolName, fs) {
+		err := zfsPoolVolumeDestroy(s.getOnDiskPoolName(), fs)
+		if err != nil {
+			return err
+		}
 	}
 
 	if shared.PathExists(customPoolVolumeMntPoint) {
@@ -415,7 +421,7 @@ func (s *storageZfs) StoragePoolVolumeDelete() error {
 		}
 	}
 
-	err = db.StoragePoolVolumeDelete(
+	err := db.StoragePoolVolumeDelete(
 		s.s.DB,
 		s.volume.Name,
 		storagePoolVolumeTypeCustom,
@@ -532,64 +538,53 @@ func (s *storageZfs) SetStoragePoolVolumeWritable(writable *api.StorageVolumePut
 	s.volume.StorageVolumePut = *writable
 }
 
-func (s *storageZfs) GetContainerPoolInfo() (int64, string) {
-	return s.poolID, s.pool.Name
+func (s *storageZfs) GetContainerPoolInfo() (int64, string, string) {
+	return s.poolID, s.pool.Name, s.getOnDiskPoolName()
 }
 
 func (s *storageZfs) StoragePoolUpdate(writable *api.StoragePoolPut, changedConfig []string) error {
-	logger.Infof("Updating ZFS storage pool \"%s\".", s.pool.Name)
+	logger.Infof(`Updating ZFS storage pool "%s"`, s.pool.Name)
 
-	if shared.StringInSlice("size", changedConfig) {
-		return fmt.Errorf("the \"size\" property cannot be changed")
+	changeable := changeableStoragePoolProperties["zfs"]
+	unchangeable := []string{}
+	for _, change := range changedConfig {
+		if !shared.StringInSlice(change, changeable) {
+			unchangeable = append(unchangeable, change)
+		}
 	}
 
-	if shared.StringInSlice("source", changedConfig) {
-		return fmt.Errorf("the \"source\" property cannot be changed")
-	}
-
-	if shared.StringInSlice("volume.size", changedConfig) {
-		return fmt.Errorf("the \"volume.size\" property cannot be changed")
-	}
-
-	if shared.StringInSlice("volume.block.mount_options", changedConfig) {
-		return fmt.Errorf("the \"volume.block.mount_options\" property cannot be changed")
-	}
-
-	if shared.StringInSlice("volume.block.filesystem", changedConfig) {
-		return fmt.Errorf("the \"volume.block.filesystem\" property cannot be changed")
-	}
-
-	if shared.StringInSlice("lvm.thinpool_name", changedConfig) {
-		return fmt.Errorf("the \"lvm.thinpool_name\" property cannot be changed")
-	}
-
-	if shared.StringInSlice("lvm.vg_name", changedConfig) {
-		return fmt.Errorf("the \"lvm.vg_name\" property cannot be changed")
-	}
-
-	if shared.StringInSlice("zfs.pool_name", changedConfig) {
-		return fmt.Errorf("the \"zfs.pool_name\" property cannot be changed")
+	if len(unchangeable) > 0 {
+		return updateStoragePoolError(unchangeable, "zfs")
 	}
 
 	// "rsync.bwlimit" requires no on-disk modifications.
+	// "volume.zfs.remove_snapshots" requires no on-disk modifications.
+	// "volume.zfs.use_refquota" requires no on-disk modifications.
 
-	logger.Infof("Updated ZFS storage pool \"%s\".", s.pool.Name)
+	logger.Infof(`Updated ZFS storage pool "%s"`, s.pool.Name)
 	return nil
 }
 
 func (s *storageZfs) StoragePoolVolumeUpdate(writable *api.StorageVolumePut, changedConfig []string) error {
-	logger.Infof("Updating ZFS storage volume \"%s\" on storage pool \"%s\".", s.volume.Name, s.pool.Name)
+	logger.Infof(`Updating ZFS storage volume "%s"`, s.pool.Name)
 
-	if shared.StringInSlice("block.mount_options", changedConfig) {
-		return fmt.Errorf("the \"block.mount_options\" property cannot be changed")
+	changeable := changeableStoragePoolVolumeProperties["zfs"]
+	unchangeable := []string{}
+	for _, change := range changedConfig {
+		if !shared.StringInSlice(change, changeable) {
+			unchangeable = append(unchangeable, change)
+		}
 	}
 
-	if shared.StringInSlice("block.filesystem", changedConfig) {
-		return fmt.Errorf("the \"block.filesystem\" property cannot be changed")
+	if len(unchangeable) > 0 {
+		return updateStoragePoolVolumeError(unchangeable, "zfs")
 	}
 
 	if shared.StringInSlice("size", changedConfig) {
-		// apply quota
+		if s.volume.Type != storagePoolVolumeTypeNameCustom {
+			return updateStoragePoolVolumeError([]string{"size"}, "zfs")
+		}
+
 		if s.volume.Config["size"] != writable.Config["size"] {
 			size, err := shared.ParseByteSizeString(writable.Config["size"])
 			if err != nil {
@@ -603,8 +598,36 @@ func (s *storageZfs) StoragePoolVolumeUpdate(writable *api.StorageVolumePut, cha
 		}
 	}
 
-	logger.Infof("Updated ZFS storage volume \"%s\" on storage pool \"%s\".", s.volume.Name, s.pool.Name)
+	logger.Infof(`Updated ZFS storage volume "%s"`, s.pool.Name)
 	return nil
+}
+
+func (s *storageZfs) StoragePoolVolumeRename(newName string) error {
+	logger.Infof(`Renaming ZFS storage volume on storage pool "%s" from "%s" to "%s`,
+		s.pool.Name, s.volume.Name, newName)
+
+	usedBy, err := storagePoolVolumeUsedByContainersGet(s.s, s.volume.Name, storagePoolVolumeTypeNameCustom)
+	if err != nil {
+		return err
+	}
+	if len(usedBy) > 0 {
+		return fmt.Errorf(`ZFS storage volume "%s" on storage pool "%s" is attached to containers`,
+			s.volume.Name, s.pool.Name)
+	}
+
+	oldPath := fmt.Sprintf("custom/%s", s.volume.Name)
+	newPath := fmt.Sprintf("custom/%s", newName)
+	poolName := s.getOnDiskPoolName()
+	err = zfsPoolVolumeRename(poolName, oldPath, newPath)
+	if err != nil {
+		return err
+	}
+
+	logger.Infof(`Renamed ZFS storage volume on storage pool "%s" from "%s" to "%s`,
+		s.pool.Name, s.volume.Name, newName)
+
+	return db.StoragePoolVolumeRename(s.s.DB, s.volume.Name, newName,
+		storagePoolVolumeTypeCustom, s.poolID)
 }
 
 // Things we don't need to care about
@@ -1233,8 +1256,8 @@ func (s *storageZfs) ContainerCopy(target container, source container, container
 		defer source.StorageStop()
 	}
 
-	_, sourcePool := source.Storage().GetContainerPoolInfo()
-	_, targetPool := target.Storage().GetContainerPoolInfo()
+	_, sourcePool, _ := source.Storage().GetContainerPoolInfo()
+	_, targetPool, _ := target.Storage().GetContainerPoolInfo()
 	if sourcePool != targetPool {
 		return fmt.Errorf("copying containers between different storage pools is not implemented")
 	}
@@ -1554,35 +1577,41 @@ func (s *storageZfs) ContainerSnapshotCreate(snapshotContainer container, source
 	return nil
 }
 
-func (s *storageZfs) ContainerSnapshotDelete(snapshotContainer container) error {
-	logger.Debugf("Deleting ZFS storage volume for snapshot \"%s\" on storage pool \"%s\".", s.volume.Name, s.pool.Name)
-
-	poolName := s.getOnDiskPoolName()
-
-	sourceContainerName, sourceContainerSnapOnlyName, _ := containerGetParentAndSnapshotName(snapshotContainer.Name())
+func zfsSnapshotDeleteInternal(poolName string, ctName string, onDiskPoolName string) error {
+	sourceContainerName, sourceContainerSnapOnlyName, _ := containerGetParentAndSnapshotName(ctName)
 	snapName := fmt.Sprintf("snapshot-%s", sourceContainerSnapOnlyName)
 
-	if zfsFilesystemEntityExists(poolName, fmt.Sprintf("containers/%s@%s", sourceContainerName, snapName)) {
-		removable, err := zfsPoolVolumeSnapshotRemovable(s.getOnDiskPoolName(), fmt.Sprintf("containers/%s", sourceContainerName), snapName)
+	if zfsFilesystemEntityExists(onDiskPoolName,
+		fmt.Sprintf("containers/%s@%s",
+			sourceContainerName, snapName)) {
+		removable, err := zfsPoolVolumeSnapshotRemovable(onDiskPoolName,
+			fmt.Sprintf("containers/%s",
+				sourceContainerName),
+			snapName)
+		if err != nil {
+			return err
+		}
+
 		if removable {
-			err = zfsPoolVolumeSnapshotDestroy(poolName, fmt.Sprintf("containers/%s", sourceContainerName), snapName)
-			if err != nil {
-				return err
-			}
+			err = zfsPoolVolumeSnapshotDestroy(onDiskPoolName,
+				fmt.Sprintf("containers/%s",
+					sourceContainerName),
+				snapName)
 		} else {
-			err = zfsPoolVolumeSnapshotRename(
-				poolName, fmt.Sprintf("containers/%s", sourceContainerName), snapName,
+			err = zfsPoolVolumeSnapshotRename(onDiskPoolName,
+				fmt.Sprintf("containers/%s",
+					sourceContainerName),
+				snapName,
 				fmt.Sprintf("copy-%s", uuid.NewRandom().String()))
-			if err != nil {
-				return err
-			}
+		}
+		if err != nil {
+			return err
 		}
 	}
 
 	// Delete the snapshot on its storage pool:
 	// ${POOL}/snapshots/<snapshot_name>
-	snapshotContainerName := snapshotContainer.Name()
-	snapshotContainerMntPoint := getSnapshotMountPoint(s.pool.Name, snapshotContainerName)
+	snapshotContainerMntPoint := getSnapshotMountPoint(poolName, ctName)
 	if shared.PathExists(snapshotContainerMntPoint) {
 		err := os.RemoveAll(snapshotContainerMntPoint)
 		if err != nil {
@@ -1593,7 +1622,7 @@ func (s *storageZfs) ContainerSnapshotDelete(snapshotContainer container) error 
 	// Check if we can remove the snapshot symlink:
 	// ${LXD_DIR}/snapshots/<container_name> -> ${POOL}/snapshots/<container_name>
 	// by checking if the directory is empty.
-	snapshotContainerPath := getSnapshotMountPoint(s.pool.Name, sourceContainerName)
+	snapshotContainerPath := getSnapshotMountPoint(poolName, sourceContainerName)
 	empty, _ := shared.PathIsEmpty(snapshotContainerPath)
 	if empty == true {
 		// Remove the snapshot directory for the container:
@@ -1628,6 +1657,19 @@ func (s *storageZfs) ContainerSnapshotDelete(snapshotContainer container) error 
 		if err != nil {
 			return err
 		}
+	}
+
+	return nil
+}
+
+func (s *storageZfs) ContainerSnapshotDelete(snapshotContainer container) error {
+	logger.Debugf("Deleting ZFS storage volume for snapshot \"%s\" on storage pool \"%s\".", s.volume.Name, s.pool.Name)
+
+	poolName := s.getOnDiskPoolName()
+	err := zfsSnapshotDeleteInternal(s.pool.Name, snapshotContainer.Name(),
+		poolName)
+	if err != nil {
+		return err
 	}
 
 	logger.Debugf("Deleted ZFS storage volume for snapshot \"%s\" on storage pool \"%s\".", s.volume.Name, s.pool.Name)
@@ -2315,4 +2357,40 @@ func (s *storageZfs) StorageEntitySetQuota(volumeType int, size int64, data inte
 
 	logger.Debugf(`Set ZFS quota for "%s"`, s.volume.Name)
 	return nil
+}
+
+func (s *storageZfs) StoragePoolResources() (*api.ResourcesStoragePool, error) {
+	poolName := s.getOnDiskPoolName()
+
+	totalBuf, err := zfsFilesystemEntityPropertyGet(poolName, "", "available")
+	if err != nil {
+		return nil, err
+	}
+
+	totalStr := string(totalBuf)
+	totalStr = strings.TrimSpace(totalStr)
+	total, err := strconv.ParseUint(totalStr, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+
+	usedBuf, err := zfsFilesystemEntityPropertyGet(poolName, "", "used")
+	if err != nil {
+		return nil, err
+	}
+
+	usedStr := string(usedBuf)
+	usedStr = strings.TrimSpace(usedStr)
+	used, err := strconv.ParseUint(usedStr, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+
+	res := api.ResourcesStoragePool{}
+	res.Space.Total = total
+	res.Space.Used = used
+
+	// Inode allocation is dynamic so no use in reporting them.
+
+	return &res, nil
 }

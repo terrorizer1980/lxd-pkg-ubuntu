@@ -636,6 +636,12 @@ func (d *Daemon) Init() error {
 			MinVersion:   tls.VersionTLS12,
 			MaxVersion:   tls.VersionTLS12,
 			CipherSuites: []uint16{
+				tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+				tls.TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA,
+				tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+				tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,
+				tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+				tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
 				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 				tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA},
 			PreferServerCipherSuites: true,
@@ -797,12 +803,10 @@ func (d *Daemon) Ready() error {
 	/* Prune images */
 	d.pruneChan = make(chan bool)
 	go func() {
-		pruneExpiredImages(d)
 		for {
 			timer := time.NewTimer(24 * time.Hour)
-			timeChan := timer.C
 			select {
-			case <-timeChan:
+			case <-timer.C:
 				/* run once per day */
 				pruneExpiredImages(d)
 			case <-d.pruneChan:
@@ -812,6 +816,9 @@ func (d *Daemon) Ready() error {
 			}
 		}
 	}()
+
+	// Do an initial pruning run before we start updating images
+	pruneExpiredImages(d)
 
 	/* Auto-update images */
 	d.resetAutoUpdateChan = make(chan bool)
@@ -827,10 +834,9 @@ func (d *Daemon) Ready() error {
 			interval := daemonConfig["images.auto_update_interval"].GetInt64()
 			if interval > 0 {
 				timer := time.NewTimer(time.Duration(interval) * time.Hour)
-				timeChan := timer.C
 
 				select {
-				case <-timeChan:
+				case <-timer.C:
 					autoUpdateImages(d)
 				case <-d.resetAutoUpdateChan:
 					timer.Stop()

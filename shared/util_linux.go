@@ -4,12 +4,13 @@
 package shared
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -334,15 +335,34 @@ func GetFileStat(p string) (uid int, gid int, major int, minor int,
 	return
 }
 
-func IsMountPoint(name string) bool {
-	_, err := exec.LookPath("mountpoint")
-	if err == nil {
-		_, err = RunCommand("mountpoint", "-q", name)
-		if err != nil {
-			return false
-		}
+func parseMountinfo(name string) int {
+	f, err := os.Open("/proc/self/mountinfo")
+	if err != nil {
+		return -1
+	}
+	defer f.Close()
 
-		return true
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		tokens := strings.Fields(line)
+		if len(tokens) < 5 {
+			return -1
+		}
+		cleanPath := filepath.Clean(tokens[4])
+		cleanName := filepath.Clean(name)
+		if cleanPath == cleanName {
+			return 1
+		}
+	}
+
+	return 0
+}
+
+func IsMountPoint(name string) bool {
+	ret := parseMountinfo(name)
+	if ret >= 0 {
+		return (ret == 1)
 	}
 
 	stat, err := os.Stat(name)
@@ -768,4 +788,79 @@ func GetErrno(err error) (errno error, iserrno bool) {
 	}
 
 	return nil, false
+}
+
+// Utsname returns the same info as syscall.Utsname, as strings
+type Utsname struct {
+	Sysname    string
+	Nodename   string
+	Release    string
+	Version    string
+	Machine    string
+	Domainname string
+}
+
+// Uname returns Utsname as strings
+func Uname() (*Utsname, error) {
+	/*
+	 * Based on: https://groups.google.com/forum/#!topic/golang-nuts/Jel8Bb-YwX8
+	 * there is really no better way to do this, which is
+	 * unfortunate. Also, we ditch the more accepted CharsToString
+	 * version in that thread, since it doesn't seem as portable,
+	 * viz. github issue #206.
+	 */
+
+	uname := syscall.Utsname{}
+	err := syscall.Uname(&uname)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Utsname{
+		Sysname:    intArrayToString(uname.Sysname),
+		Nodename:   intArrayToString(uname.Nodename),
+		Release:    intArrayToString(uname.Release),
+		Version:    intArrayToString(uname.Version),
+		Machine:    intArrayToString(uname.Machine),
+		Domainname: intArrayToString(uname.Domainname),
+	}, nil
+}
+
+func intArrayToString(arr interface{}) string {
+	slice := reflect.ValueOf(arr)
+	s := ""
+	for i := 0; i < slice.Len(); i++ {
+		val := slice.Index(i)
+		valInt := int64(-1)
+
+		switch val.Kind() {
+		case reflect.Int:
+		case reflect.Int8:
+			valInt = int64(val.Int())
+		case reflect.Uint:
+		case reflect.Uint8:
+			valInt = int64(val.Uint())
+		default:
+			continue
+		}
+
+		if valInt == 0 {
+			break
+		}
+
+		s += string(byte(valInt))
+	}
+
+	return s
+}
+
+func Statvfs(path string) (*syscall.Statfs_t, error) {
+	var st syscall.Statfs_t
+
+	err := syscall.Statfs(path, &st)
+	if err != nil {
+		return nil, err
+	}
+
+	return &st, nil
 }

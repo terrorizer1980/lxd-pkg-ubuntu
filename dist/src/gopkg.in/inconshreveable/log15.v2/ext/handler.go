@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	log "gopkg.in/inconshreveable/log15.v2"
+	log "github.com/inconshreveable/log15"
 )
 
 // EscalateErrHandler wraps another handler and passes all records through

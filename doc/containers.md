@@ -1,22 +1,24 @@
 # Container configuration
 ## Properties
 The following are direct container properties and can't be part of a profile:
- - name
- - architecture
+
+ - `name`
+ - `architecture`
 
 Name is the container name and can only be changed by renaming the container.
 
 ## Key/value configuration
 The key/value configuration is namespaced with the following namespaces
 currently supported:
- - boot (boot related options, timing, dependencies, ...)
- - environment (environment variables)
- - image (copy of the image properties at time of creation)
- - limits (resource limits)
- - raw (raw container configuration overrides)
- - security (security policies)
- - user (storage for user properties, searchable)
- - volatile (used internally by LXD to store settings that are specific to a specific container instance)
+
+ - `boot` (boot related options, timing, dependencies, ...)
+ - `environment` (environment variables)
+ - `image` (copy of the image properties at time of creation)
+ - `limits` (resource limits)
+ - `raw` (raw container configuration overrides)
+ - `security` (security policies)
+ - `user` (storage for user properties, searchable)
+ - `volatile` (used internally by LXD to store settings that are specific to a specific container instance)
 
 The currently supported keys are:
 
@@ -31,6 +33,7 @@ limits.cpu                           | string    | - (all)       | yes          
 limits.cpu.allowance                 | string    | 100%          | yes           | -                                    | How much of the CPU can be used. Can be a percentage (e.g. 50%) for a soft limit or hard a chunk of time (25ms/100ms)
 limits.cpu.priority                  | integer   | 10 (maximum)  | yes           | -                                    | CPU scheduling priority compared to other containers sharing the same CPUs (overcommit) (integer between 0 and 10)
 limits.disk.priority                 | integer   | 5 (medium)    | yes           | -                                    | When under load, how much priority to give to the container's I/O requests (integer between 0 and 10)
+limits.kernel.\*                     | string    | -             | no            | kernel\_limits                       | This limits kernel resources per container (e.g. number of open files)
 limits.memory                        | string    | - (all)       | yes           | -                                    | Percentage of the host's memory or fixed value in bytes (supports kB, MB, GB, TB, PB and EB suffixes)
 limits.memory.enforce                | string    | hard          | yes           | -                                    | If hard, container can't exceed its memory limit. If soft, the container can exceed its memory limit when extra host memory is available.
 limits.memory.swap                   | boolean   | true          | yes           | -                                    | Whether to allow some of the container's memory to be swapped out to disk
@@ -86,7 +89,9 @@ backward compatibility).
 
 Those keys can be set using the lxc tool with:
 
-    lxc config set <container> <key> <value>
+```bash
+lxc config set <container> <key> <value>
+```
 
 Volatile keys can't be set by the user and can only be set directly against a container.
 
@@ -100,6 +105,7 @@ for a standard POSIX system to work. These aren't visible in container or
 profile configuration and may not be overriden.
 
 Those includes:
+
  - `/dev/null` (character device)
  - `/dev/zero` (character device)
  - `/dev/full` (character device)
@@ -126,12 +132,15 @@ is overriden by the new definition.
 
 Device entries are added to a container through:
 
-    lxc config device add <container> <name> <type> [key=value]...
+```bash
+lxc config device add <container> <name> <type> [key=value]...
+```
 
 or to a profile with:
 
-    lxc profile device add <profile> <name> <type> [key=value]...
-
+```bash
+lxc profile device add <profile> <name> <type> [key=value]...
+```
 
 ## Device types
 LXD supports the following device types:
@@ -156,10 +165,11 @@ It can be added in a profile being applied after the profile it originated from 
 
 ### Type: nic
 LXD supports different kind of network devices:
- - physical: Straight physical device passthrough from the host. The targeted device will vanish from the host and appear in the container.
- - bridged: Uses an existing bridge on the host and creates a virtual device pair to connect the host bridge to the container.
- - macvlan: Sets up a new network device based on an existing one but using a different MAC address.
- - p2p: Creates a virtual device pair, putting one side in the container and leaving the other side on the host.
+
+ - `physical`: Straight physical device passthrough from the host. The targeted device will vanish from the host and appear in the container.
+ - `bridged`: Uses an existing bridge on the host and creates a virtual device pair to connect the host bridge to the container.
+ - `macvlan`: Sets up a new network device based on an existing one but using a different MAC address.
+ - `p2p`: Creates a virtual device pair, putting one side in the container and leaving the other side on the host.
 
 Different network interface types have different additional properties, the current list is:
 
@@ -180,7 +190,7 @@ ipv6.address            | string    | -                 | no        | bridged   
 security.mac\_filtering | boolean   | false             | no        | bridged                       | network                                | Prevent the container from spoofing another's MAC address
 
 #### bridged or macvlan for connection to physical network
-The "bridged" and "macvlan" interface types can both be used to connect
+The `bridged` and `macvlan` interface types can both be used to connect
 to an existing physical network.
 
 macvlan effectively lets you fork your physical NIC, getting a second
@@ -221,7 +231,7 @@ the average of the limits will be used.
 
 ### Type: unix-char
 Unix character device entries simply make the requested character device
-appear in the container's /dev and allow read/write operations to it.
+appear in the container's `/dev` and allow read/write operations to it.
 
 The following properties exist:
 
@@ -237,7 +247,7 @@ mode        | int       | 0660              |                                   
 
 ### Type: unix-block
 Unix block device entries simply make the requested block device
-appear in the container's /dev and allow read/write operations to it.
+appear in the container's `/dev` and allow read/write operations to it.
 
 The following properties exist:
 
@@ -282,3 +292,64 @@ uid         | int       | 0                 | no        | UID of the device owne
 gid         | int       | 0                 | no        | GID of the device owner in the container
 mode        | int       | 0660              | no        | Mode of the device in the container
 
+## Instance types
+LXD supports simple instance types. Those are represented as a string
+which can be passed at container creation time.
+
+There are three allowed syntaxes:
+
+ - `<instance type>`
+ - `<cloud>:<instance type>`
+ - `c<CPU>-m<RAM in GB>`
+
+For example, those 3 are equivalent:
+
+ - t2.micro
+ - aws:t2.micro
+ - c1-m1
+
+On the command line, this is passed like this:
+
+```bash
+lxc launch ubuntu:16.04 my-container -t t2.micro
+```
+
+The list of supported clouds and instance types can be found here:
+
+  https://github.com/dustinkirkland/instance-type
+
+## Resource limits via `limits.kernel.[limit name]`
+LXD exposes a generic namespaced key `limits.kernel.*` which can be used to set
+resource limits for a given container. It is generic in the sense that LXD will
+not perform any validation on the resource that is specified following the
+`limits.kernel.*` prefix. LXD cannot know about all the possible resources that
+a given kernel supports. Instead, LXD will simply pass down the corresponding
+resource key after the `limits.kernel.*` prefix and its value to the kernel.
+The kernel will do the appropriate validation. This allows users to specify any
+supported limit on their system. Some common limits are:
+
+Key                      | Resource          | Description
+:--                      | :---              | :----------
+limits.kernel.as         | RLIMIT_AS         | Maximum size of the process's virtual memory
+limits.kernel.core       | RLIMIT_CORE       | Maximum size of the process's coredump file
+limits.kernel.cpu        | RLIMIT_CPU        | Limit in seconds on the amount of cpu time the process can consume
+limits.kernel.data       | RLIMIT_DATA       | Maximum size of the process's data segment
+limits.kernel.fsize      | RLIMIT_FSIZE      | Maximum size of files the process may create
+limits.kernel.locks      | RLIMIT_LOCKS      | Limit on the number of file locks that this process may establish
+limits.kernel.memlock    | RLIMIT_MEMLOCK    | Limit on the number of bytes of memory that the process may lock in RAM
+limits.kernel.nice       | RLIMIT_NICE       | Maximum value to which the process's nice value can be raised
+limits.kernel.nofile     | RLIMIT_NOFILE     | Maximum number of open files for the process
+limits.kernel.nproc      | RLIMIT_NPROC      | Maximum number of processes that can be created for the user of the calling process
+limits.kernel.rtprio     | RLIMIT_RTPRIO     | Maximum value on the real-time-priority that maybe set for this process
+limits.kernel.sigpending | RLIMIT_SIGPENDING | Maximum number of signals that maybe queued for the user of the calling process
+
+A full list of all available limits can be found in the manpages for the
+`getrlimit(2)`/`setrlimit(2)` system calls. To specify a limit within the
+`limits.kernel.*` namespace use the resource name in lowercase without the
+`RLIMIT_` prefix, e.g.  `RLIMIT_NOFILE` should be specified as `nofile`.
+A limit is specified as two colon separated values which are either numeric or
+the word `unlimited` (e.g. `limits.kernel.nofile=1000:2000`). A single value can be
+used as a shortcut to set both soft and hard limit (e.g.
+`limits.kernel.nofile=3000`) to the same value. A resource with no explicitly
+configured limitation will be inherited from the process starting up the
+container. Note that this inheritance is not enforced by LXD but by the kernel.

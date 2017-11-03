@@ -49,6 +49,8 @@ var patches = []patch{
 	{name: "storage_zfs_volume_size", run: patchStorageZFSVolumeSize},
 	{name: "network_dnsmasq_hosts", run: patchNetworkDnsmasqHosts},
 	{name: "storage_api_dir_bind_mount", run: patchStorageApiDirBindMount},
+	{name: "fix_uploaded_at", run: patchFixUploadedAt},
+	{name: "storage_api_ceph_size_remove", run: patchStorageApiCephSizeRemove},
 }
 
 type patch struct {
@@ -2470,6 +2472,67 @@ func patchStorageApiDirBindMount(name string, d *Daemon) error {
 			return err
 		}
 
+	}
+
+	return nil
+}
+
+func patchFixUploadedAt(name string, d *Daemon) error {
+	images, err := db.ImagesGet(d.db, false)
+	if err != nil {
+		return err
+	}
+
+	for _, fingerprint := range images {
+		id, image, err := db.ImageGet(d.db, fingerprint, false, true)
+		if err != nil {
+			return err
+		}
+
+		_, err = db.Exec(d.db, "UPDATE images SET upload_date=? WHERE id=?", image.UploadedAt, id)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func patchStorageApiCephSizeRemove(name string, d *Daemon) error {
+	pools, err := db.StoragePools(d.db)
+	if err != nil && err == db.NoSuchObjectError {
+		// No pool was configured in the previous update. So we're on a
+		// pristine LXD instance.
+		return nil
+	} else if err != nil {
+		// Database is screwed.
+		logger.Errorf("Failed to query database: %s", err)
+		return err
+	}
+
+	for _, poolName := range pools {
+		_, pool, err := db.StoragePoolGet(d.db, poolName)
+		if err != nil {
+			logger.Errorf("Failed to query database: %s", err)
+			return err
+		}
+
+		// We only care about zfs and lvm.
+		if pool.Driver != "ceph" {
+			continue
+		}
+
+		// The "size" property does not make sense for ceph osd storage pools.
+		if pool.Config["size"] != "" {
+			pool.Config["size"] = ""
+		}
+
+		// Update the config in the database.
+		err = db.StoragePoolUpdate(d.db, poolName, pool.Description,
+			pool.Config)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil

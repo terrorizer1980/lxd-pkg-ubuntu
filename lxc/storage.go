@@ -16,11 +16,13 @@ import (
 	"github.com/lxc/lxd/lxc/config"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
+	"github.com/lxc/lxd/shared/gnuflag"
 	"github.com/lxc/lxd/shared/i18n"
 	"github.com/lxc/lxd/shared/termios"
 )
 
 type storageCmd struct {
+	resources bool
 }
 
 func (c *storageCmd) showByDefault() bool {
@@ -68,7 +70,7 @@ Manage storage pools and volumes.
 lxc storage list [<remote>:]
     List available storage pools.
 
-lxc storage show [<remote>:]<pool>
+lxc storage show [<remote>:]<pool> [--resources]
     Show details of a storage pool.
 
 lxc storage create [<remote>:]<pool> <driver> [key=value]...
@@ -98,6 +100,9 @@ lxc storage volume show [<remote>:]<pool> <volume>
 
 lxc storage volume create [<remote>:]<pool> <volume> [key=value]...
     Create a storage volume on a storage pool.
+
+lxc storage volume rename [<remote>:]<pool> <old name> <new name>
+    Rename a storage volume on a storage pool.
 
 lxc storage volume get [<remote>:]<pool> <volume> <key>
     Get storage volume configuration on a storage pool.
@@ -142,7 +147,9 @@ lxc storage volume show default container/data
     Will show the properties of the filesystem for a container called "data" in the "default" pool.`)
 }
 
-func (c *storageCmd) flags() {}
+func (c *storageCmd) flags() {
+	gnuflag.BoolVar(&c.resources, "resources", false, i18n.G("Show the resources available to the storage pool"))
+}
 
 func (c *storageCmd) run(conf *config.Config, args []string) error {
 	if len(args) < 1 {
@@ -157,105 +164,126 @@ func (c *storageCmd) run(conf *config.Config, args []string) error {
 		return errArgs
 	}
 
-	remote, sub, err := conf.ParseRemote(args[1])
-	if err != nil {
-		return err
-	}
-
-	client, err := conf.GetContainerServer(remote)
-	if err != nil {
-		return err
-	}
-
 	if args[0] == "volume" {
+		if len(args) < 3 {
+			return errArgs
+		}
+
+		remote, sub, err := conf.ParseRemote(args[2])
+		if err != nil {
+			return err
+		}
+
+		client, err := conf.GetContainerServer(remote)
+		if err != nil {
+			return err
+		}
+
 		switch args[1] {
 		case "attach":
 			if len(args) < 5 {
 				return errArgs
 			}
-			pool := args[2]
+			pool := sub
 			volume := args[3]
 			return c.doStoragePoolVolumeAttach(client, pool, volume, args[4:])
 		case "attach-profile":
 			if len(args) < 5 {
 				return errArgs
 			}
-			pool := args[2]
+			pool := sub
 			volume := args[3]
 			return c.doStoragePoolVolumeAttachProfile(client, pool, volume, args[4:])
 		case "create":
 			if len(args) < 4 {
 				return errArgs
 			}
-			pool := args[2]
+			pool := sub
 			volume := args[3]
 			return c.doStoragePoolVolumeCreate(client, pool, volume, args[4:])
 		case "delete":
 			if len(args) != 4 {
 				return errArgs
 			}
-			pool := args[2]
+			pool := sub
 			volume := args[3]
 			return c.doStoragePoolVolumeDelete(client, pool, volume)
 		case "detach":
 			if len(args) < 4 {
 				return errArgs
 			}
-			pool := args[2]
+			pool := sub
 			volume := args[3]
 			return c.doStoragePoolVolumeDetach(client, pool, volume, args[4:])
 		case "detach-profile":
 			if len(args) < 5 {
 				return errArgs
 			}
-			pool := args[2]
+			pool := sub
 			volume := args[3]
 			return c.doStoragePoolVolumeDetachProfile(client, pool, volume, args[4:])
 		case "edit":
 			if len(args) != 4 {
 				return errArgs
 			}
-			pool := args[2]
+			pool := sub
 			volume := args[3]
 			return c.doStoragePoolVolumeEdit(client, pool, volume)
 		case "get":
 			if len(args) < 4 {
 				return errArgs
 			}
-			pool := args[2]
+			pool := sub
 			volume := args[3]
 			return c.doStoragePoolVolumeGet(client, pool, volume, args[3:])
 		case "list":
 			if len(args) != 3 {
 				return errArgs
 			}
-			pool := args[2]
+			pool := sub
 			return c.doStoragePoolVolumesList(conf, remote, pool, args)
+		case "rename":
+			if len(args) != 5 {
+				return errArgs
+			}
+			pool := sub
+			volume := args[3]
+			return c.doStoragePoolVolumeRename(client, pool, volume, args)
 		case "set":
 			if len(args) < 4 {
 				return errArgs
 			}
-			pool := args[2]
+			pool := sub
 			volume := args[3]
 			return c.doStoragePoolVolumeSet(client, pool, volume, args[3:])
 		case "unset":
 			if len(args) < 4 {
 				return errArgs
 			}
-			pool := args[2]
+			pool := sub
 			volume := args[3]
 			return c.doStoragePoolVolumeSet(client, pool, volume, args[3:])
 		case "show":
 			if len(args) != 4 {
 				return errArgs
 			}
-			pool := args[2]
+			pool := sub
 			volume := args[3]
 			return c.doStoragePoolVolumeShow(client, pool, volume)
 		default:
 			return errArgs
 		}
 	} else {
+		remote, sub, err := conf.ParseRemote(args[1])
+		if err != nil {
+			return err
+		}
+
+		client, err := conf.GetContainerServer(remote)
+		if err != nil {
+			return err
+		}
+
 		pool := sub
 		switch args[0] {
 		case "create":
@@ -705,6 +733,22 @@ func (c *storageCmd) doStoragePoolShow(client lxd.ContainerServer, name string) 
 		return errArgs
 	}
 
+	if c.resources {
+		res, err := client.GetStoragePoolResources(name)
+		if err != nil {
+			return err
+		}
+
+		data, err := yaml.Marshal(&res)
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("%s", data)
+
+		return nil
+	}
+
 	pool, _, err := client.GetStoragePool(name)
 	if err != nil {
 		return err
@@ -948,5 +992,23 @@ func (c *storageCmd) doStoragePoolVolumeEdit(client lxd.ContainerServer, pool st
 		}
 		break
 	}
+	return nil
+}
+
+func (c *storageCmd) doStoragePoolVolumeRename(client lxd.ContainerServer, pool string, volume string, args []string) error {
+	// Parse the input
+	volName, volType := c.parseVolume(volume)
+
+	// Create the storage volume entry
+	vol := api.StorageVolumePost{}
+	vol.Name = args[4]
+
+	err := client.RenameStoragePoolVolume(pool, volType, volName, vol)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf(i18n.G(`Renamed storage volume from "%s" to "%s"`)+"\n", volName, vol.Name)
+
 	return nil
 }

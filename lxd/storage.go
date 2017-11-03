@@ -144,6 +144,7 @@ type storage interface {
 	StoragePoolDelete() error
 	StoragePoolMount() (bool, error)
 	StoragePoolUmount() (bool, error)
+	StoragePoolResources() (*api.ResourcesStoragePool, error)
 	StoragePoolUpdate(writable *api.StoragePoolPut, changedConfig []string) error
 	GetStoragePoolWritable() api.StoragePoolPut
 	SetStoragePoolWritable(writable *api.StoragePoolPut)
@@ -154,6 +155,7 @@ type storage interface {
 	StoragePoolVolumeMount() (bool, error)
 	StoragePoolVolumeUmount() (bool, error)
 	StoragePoolVolumeUpdate(writable *api.StorageVolumePut, changedConfig []string) error
+	StoragePoolVolumeRename(newName string) error
 	GetStoragePoolVolumeWritable() api.StorageVolumePut
 	SetStoragePoolVolumeWritable(writable *api.StorageVolumePut)
 
@@ -171,7 +173,7 @@ type storage interface {
 	ContainerRename(container container, newName string) error
 	ContainerRestore(container container, sourceContainer container) error
 	ContainerGetUsage(container container) (int64, error)
-	GetContainerPoolInfo() (int64, string)
+	GetContainerPoolInfo() (int64, string, string)
 	ContainerStorageReady(name string) bool
 
 	ContainerSnapshotCreate(target container, source container) error

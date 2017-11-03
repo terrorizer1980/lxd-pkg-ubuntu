@@ -240,7 +240,7 @@ func storagePoolVolumeUsedByGet(s *state.State, volumeName string, volumeTypeNam
 	}
 
 	if len(volumeUsedBy) == 0 && len(profiles) == 0 {
-		return []string{}, err
+		return []string{}, nil
 	}
 
 	for _, pName := range profiles {
@@ -302,13 +302,6 @@ func storagePoolVolumeDBCreate(s *state.State, poolName string, volumeName, volu
 		return err
 	}
 
-	// We currently only allow to create storage volumes of type
-	// storagePoolVolumeTypeCustom. So check, that nothing else was
-	// requested.
-	if volumeType != storagePoolVolumeTypeCustom {
-		return fmt.Errorf("currently not allowed to create storage volumes of type %s", volumeTypeName)
-	}
-
 	// Load storage pool the volume will be attached to.
 	poolID, poolStruct, err := db.StoragePoolGet(s.DB, poolName)
 	if err != nil {
@@ -364,7 +357,7 @@ func storagePoolVolumeCreateInternal(state *state.State, poolName string, volume
 		return err
 	}
 
-	poolID, _ := s.GetContainerPoolInfo()
+	poolID, _, _ := s.GetContainerPoolInfo()
 
 	// Create storage volume.
 	err = s.StoragePoolVolumeCreate()

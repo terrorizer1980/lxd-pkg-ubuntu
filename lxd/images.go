@@ -945,7 +945,7 @@ func autoUpdateImage(d *Daemon, op *operation, id int, info *api.Image) error {
 		if info.Cached {
 			err = db.ImageLastAccessInit(d.db, hash)
 			if err != nil {
-				logger.Error("Error moving aliases", log.Ctx{"err": err, "fp": hash})
+				logger.Error("Error setting cached flag", log.Ctx{"err": err, "fp": hash})
 				continue
 			}
 		}
@@ -1006,10 +1006,15 @@ func autoUpdateImage(d *Daemon, op *operation, id int, info *api.Image) error {
 }
 
 func pruneExpiredImages(d *Daemon) {
-	logger.Infof("Pruning expired images")
-
 	// Get the list of expired images.
 	expiry := daemonConfig["images.remote_cache_expiry"].GetInt64()
+
+	// Check if we're supposed to prune something
+	if expiry <= 0 {
+		return
+	}
+
+	logger.Infof("Pruning expired images")
 	images, err := db.ImagesGetExpired(d.db, expiry)
 	if err != nil {
 		logger.Error("Unable to retrieve the list of expired images", log.Ctx{"err": err})

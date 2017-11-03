@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"reflect"
-	"syscall"
 
 	"gopkg.in/lxc/go-lxc.v2"
 
@@ -49,11 +48,14 @@ var api10 = []Command{
 	certificateFingerprintCmd,
 	profilesCmd,
 	profileCmd,
+	serverResourceCmd,
 	storagePoolsCmd,
 	storagePoolCmd,
+	storagePoolResourcesCmd,
 	storagePoolVolumesCmd,
 	storagePoolVolumesTypeCmd,
 	storagePoolVolumeTypeCmd,
+	serverResourceCmd,
 }
 
 func api10Get(d *Daemon, r *http.Request) Response {
@@ -126,6 +128,9 @@ func api10Get(d *Daemon, r *http.Request) Response {
 			"storage_volatile_initial_source",
 			"storage_ceph_force_osd_reuse",
 			"storage_block_filesystem_btrfs",
+			"resources",
+			"kernel_limits",
+			"storage_api_volume_rename",
 		},
 		APIStatus:  "stable",
 		APIVersion: version.APIVersion,
@@ -140,40 +145,9 @@ func api10Get(d *Daemon, r *http.Request) Response {
 
 	srv.Auth = "trusted"
 
-	/*
-	 * Based on: https://groups.google.com/forum/#!topic/golang-nuts/Jel8Bb-YwX8
-	 * there is really no better way to do this, which is
-	 * unfortunate. Also, we ditch the more accepted CharsToString
-	 * version in that thread, since it doesn't seem as portable,
-	 * viz. github issue #206.
-	 */
-	uname := syscall.Utsname{}
-	if err := syscall.Uname(&uname); err != nil {
+	uname, err := shared.Uname()
+	if err != nil {
 		return InternalError(err)
-	}
-
-	kernel := ""
-	for _, c := range uname.Sysname {
-		if c == 0 {
-			break
-		}
-		kernel += string(byte(c))
-	}
-
-	kernelVersion := ""
-	for _, c := range uname.Release {
-		if c == 0 {
-			break
-		}
-		kernelVersion += string(byte(c))
-	}
-
-	kernelArchitecture := ""
-	for _, c := range uname.Machine {
-		if c == 0 {
-			break
-		}
-		kernelArchitecture += string(byte(c))
 	}
 
 	addresses, err := util.ListenAddresses(daemonConfig["core.https_address"].Get())
@@ -208,9 +182,9 @@ func api10Get(d *Daemon, r *http.Request) Response {
 		CertificateFingerprint: certificateFingerprint,
 		Driver:                 "lxc",
 		DriverVersion:          lxc.Version(),
-		Kernel:                 kernel,
-		KernelArchitecture:     kernelArchitecture,
-		KernelVersion:          kernelVersion,
+		Kernel:                 uname.Sysname,
+		KernelArchitecture:     uname.Machine,
+		KernelVersion:          uname.Release,
 		Server:                 "lxd",
 		ServerPid:              os.Getpid(),
 		ServerVersion:          version.Version}

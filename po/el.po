@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: lxd\n"
 "Report-Msgid-Bugs-To: lxc-devel@lists.linuxcontainers.org\n"
-"POT-Creation-Date: 2017-09-05 18:15+0200\n"
+"POT-Creation-Date: 2017-10-17 05:05+0200\n"
 "PO-Revision-Date: 2017-02-14 08:00+0000\n"
 "Last-Translator: Simos Xenitellis <simos.65@gmail.com>\n"
 "Language-Team: Greek <https://hosted.weblate.org/projects/linux-containers/"
@@ -19,7 +19,7 @@ msgstr ""
 "Plural-Forms: nplurals=2; plural=n != 1;\n"
 "X-Generator: Weblate 2.12-dev\n"
 
-#: lxc/storage.go:31
+#: lxc/storage.go:33
 msgid ""
 "### This is a yaml representation of a storage pool.\n"
 "### Any line starting with a '# will be ignored.\n"
@@ -36,7 +36,7 @@ msgid ""
 "###   zfs.pool_name: default"
 msgstr ""
 
-#: lxc/storage.go:48
+#: lxc/storage.go:50
 msgid ""
 "### This is a yaml representation of a storage volume.\n"
 "### Any line starting with a '# will be ignored.\n"
@@ -146,7 +146,7 @@ msgid ""
 "### Note that the name is shown but cannot be changed"
 msgstr ""
 
-#: lxc/image.go:183
+#: lxc/image.go:186
 #, c-format
 msgid "%s (%d more)"
 msgstr ""
@@ -170,19 +170,19 @@ msgstr ""
 msgid "'/' not allowed in snapshot name"
 msgstr ""
 
-#: lxc/profile.go:319
+#: lxc/profile.go:337
 msgid "(none)"
 msgstr ""
 
-#: lxc/image.go:227 lxc/image.go:1100
+#: lxc/image.go:230 lxc/image.go:1135
 msgid "ALIAS"
 msgstr ""
 
-#: lxc/image.go:228
+#: lxc/image.go:231
 msgid "ALIASES"
 msgstr ""
 
-#: lxc/image.go:232
+#: lxc/image.go:235
 msgid "ARCH"
 msgstr ""
 
@@ -203,30 +203,30 @@ msgstr ""
 msgid "Admin password for %s: "
 msgstr ""
 
-#: lxc/image.go:603
+#: lxc/image.go:622
 msgid "Aliases:"
 msgstr ""
 
-#: lxc/image.go:581 lxc/info.go:104
+#: lxc/image.go:600 lxc/info.go:122
 #, c-format
 msgid "Architecture: %s"
 msgstr ""
 
-#: lxc/image.go:612
+#: lxc/image.go:631
 #, c-format
 msgid "Auto update: %s"
 msgstr ""
 
-#: lxc/image.go:686
+#: lxc/image.go:706
 #, c-format
 msgid "Bad property: %s"
 msgstr ""
 
-#: lxc/info.go:197
+#: lxc/info.go:215
 msgid "Bytes received"
 msgstr ""
 
-#: lxc/info.go:198
+#: lxc/info.go:216
 msgid "Bytes sent"
 msgstr ""
 
@@ -234,11 +234,11 @@ msgstr ""
 msgid "COMMON NAME"
 msgstr ""
 
-#: lxc/info.go:161
+#: lxc/info.go:179
 msgid "CPU usage (in seconds)"
 msgstr ""
 
-#: lxc/info.go:165
+#: lxc/info.go:183
 #, fuzzy
 msgid "CPU usage:"
 msgstr "  Χρήση CPU:"
@@ -247,7 +247,7 @@ msgstr "  Χρήση CPU:"
 msgid "CREATED AT"
 msgstr ""
 
-#: lxc/image.go:611
+#: lxc/image.go:630
 #, c-format
 msgid "Cached: %s"
 msgstr ""
@@ -256,9 +256,13 @@ msgstr ""
 msgid "Can't pull a directory without --recursive"
 msgstr ""
 
-#: lxc/config.go:207 lxc/network.go:542
+#: lxc/config.go:207 lxc/network.go:560
 #, c-format
 msgid "Can't read from stdin: %s"
+msgstr ""
+
+#: lxc/rename.go:41
+msgid "Can't specify a different remote for rename."
 msgstr ""
 
 #: lxc/config.go:220
@@ -271,7 +275,7 @@ msgstr ""
 msgid "Can't unset key '%s', it's not currently set."
 msgstr ""
 
-#: lxc/network.go:468 lxc/profile.go:528 lxc/storage.go:625
+#: lxc/network.go:486 lxc/profile.go:546 lxc/storage.go:653
 msgid "Cannot provide container name to list"
 msgstr ""
 
@@ -284,7 +288,7 @@ msgstr ""
 msgid "Client certificate stored at server: "
 msgstr ""
 
-#: lxc/image.go:171 lxc/image.go:172 lxc/list.go:128 lxc/list.go:129
+#: lxc/image.go:174 lxc/image.go:175 lxc/list.go:128 lxc/list.go:129
 msgid "Columns"
 msgstr ""
 
@@ -296,8 +300,8 @@ msgstr ""
 msgid "Config key/value to apply to the new container"
 msgstr ""
 
-#: lxc/config.go:816 lxc/config.go:881 lxc/config.go:1331 lxc/image.go:1155
-#: lxc/network.go:418 lxc/profile.go:267 lxc/storage.go:576 lxc/storage.go:935
+#: lxc/config.go:816 lxc/config.go:881 lxc/config.go:1331 lxc/image.go:1190
+#: lxc/network.go:426 lxc/profile.go:275 lxc/storage.go:604 lxc/storage.go:979
 #, c-format
 msgid "Config parsing error: %s"
 msgstr ""
@@ -324,7 +328,7 @@ msgstr ""
 msgid "Copy a stateful container stateless"
 msgstr ""
 
-#: lxc/image.go:174
+#: lxc/image.go:177
 msgid "Copy aliases from source"
 msgstr ""
 
@@ -332,7 +336,7 @@ msgstr ""
 msgid "Copy the container without its snapshots"
 msgstr ""
 
-#: lxc/image.go:429
+#: lxc/image.go:448
 #, c-format
 msgid "Copying the image: %s"
 msgstr ""
@@ -345,7 +349,7 @@ msgstr ""
 msgid "Create any directories necessary"
 msgstr ""
 
-#: lxc/image.go:586 lxc/info.go:106
+#: lxc/image.go:605 lxc/info.go:124
 #, c-format
 msgid "Created: %s"
 msgstr ""
@@ -359,12 +363,12 @@ msgstr ""
 msgid "Creating the container"
 msgstr ""
 
-#: lxc/image.go:231 lxc/image.go:1102 lxc/list.go:463 lxc/network.go:507
-#: lxc/storage.go:654 lxc/storage.go:749
+#: lxc/image.go:234 lxc/image.go:1137 lxc/list.go:463 lxc/network.go:525
+#: lxc/storage.go:682 lxc/storage.go:793
 msgid "DESCRIPTION"
 msgstr ""
 
-#: lxc/storage.go:655
+#: lxc/storage.go:683
 msgid "DRIVER"
 msgstr ""
 
@@ -387,7 +391,7 @@ msgstr ""
 msgid "Device already exists: %s"
 msgstr ""
 
-#: lxc/image.go:1254
+#: lxc/image.go:1289
 msgid "Directory import is not available on this platform"
 msgstr ""
 
@@ -399,7 +403,7 @@ msgstr ""
 msgid "Disable stdin (reads from /dev/null)"
 msgstr ""
 
-#: lxc/info.go:154
+#: lxc/info.go:172
 #, fuzzy
 msgid "Disk usage:"
 msgstr "  Χρήση CPU:"
@@ -441,16 +445,16 @@ msgstr ""
 msgid "Event type to listen for"
 msgstr ""
 
-#: lxc/image.go:590
+#: lxc/image.go:609
 #, c-format
 msgid "Expires: %s"
 msgstr ""
 
-#: lxc/image.go:592
+#: lxc/image.go:611
 msgid "Expires: never"
 msgstr ""
 
-#: lxc/image.go:896
+#: lxc/image.go:921
 #, c-format
 msgid "Exporting the image: %s"
 msgstr ""
@@ -459,7 +463,7 @@ msgstr ""
 msgid "FILENAME"
 msgstr ""
 
-#: lxc/config.go:399 lxc/image.go:229 lxc/image.go:1101
+#: lxc/config.go:399 lxc/image.go:232 lxc/image.go:1136
 msgid "FINGERPRINT"
 msgstr ""
 
@@ -496,7 +500,7 @@ msgstr ""
 msgid "Fast mode (same as --columns=nsacPt)"
 msgstr ""
 
-#: lxc/image.go:579
+#: lxc/image.go:598
 #, c-format
 msgid "Fingerprint: %s"
 msgstr ""
@@ -517,7 +521,7 @@ msgstr ""
 msgid "Force using the local unix socket"
 msgstr ""
 
-#: lxc/image.go:177 lxc/list.go:130
+#: lxc/image.go:180 lxc/list.go:130
 msgid "Format (csv|json|table|yaml)"
 msgstr ""
 
@@ -549,24 +553,24 @@ msgstr ""
 msgid "Ignore the container state (only for start)"
 msgstr ""
 
-#: lxc/image.go:537
+#: lxc/image.go:556
 msgid "Image already up to date."
 msgstr ""
 
-#: lxc/image.go:443
+#: lxc/image.go:462
 msgid "Image copied successfully!"
 msgstr ""
 
-#: lxc/image.go:946
+#: lxc/image.go:981
 msgid "Image exported successfully!"
 msgstr ""
 
-#: lxc/image.go:753
+#: lxc/image.go:777
 #, c-format
 msgid "Image imported with fingerprint: %s"
 msgstr ""
 
-#: lxc/image.go:535
+#: lxc/image.go:554
 msgid "Image refreshed successfully!"
 msgstr ""
 
@@ -606,11 +610,11 @@ msgstr ""
 msgid "Invalid target %s"
 msgstr ""
 
-#: lxc/info.go:135
+#: lxc/info.go:153
 msgid "Ips:"
 msgstr ""
 
-#: lxc/image.go:175
+#: lxc/image.go:178
 msgid "Keep the image up to date after initial copy"
 msgstr ""
 
@@ -622,24 +626,24 @@ msgstr ""
 msgid "LXD socket not found; is LXD installed and running?"
 msgstr ""
 
-#: lxc/image.go:595
+#: lxc/image.go:614
 #, c-format
 msgid "Last used: %s"
 msgstr ""
 
-#: lxc/image.go:597
+#: lxc/image.go:616
 msgid "Last used: never"
 msgstr ""
 
-#: lxc/info.go:250
+#: lxc/info.go:268
 msgid "Log:"
 msgstr ""
 
-#: lxc/network.go:506
+#: lxc/network.go:524
 msgid "MANAGED"
 msgstr ""
 
-#: lxc/image.go:173
+#: lxc/image.go:176
 msgid "Make image public"
 msgstr ""
 
@@ -647,15 +651,15 @@ msgstr ""
 msgid "Make the image public"
 msgstr ""
 
-#: lxc/info.go:172
+#: lxc/info.go:190
 msgid "Memory (current)"
 msgstr ""
 
-#: lxc/info.go:176
+#: lxc/info.go:194
 msgid "Memory (peak)"
 msgstr ""
 
-#: lxc/info.go:188
+#: lxc/info.go:206
 #, fuzzy
 msgid "Memory usage:"
 msgstr "  Χρήση μνήμης:"
@@ -664,7 +668,7 @@ msgstr "  Χρήση μνήμης:"
 msgid "Missing summary."
 msgstr ""
 
-#: lxc/network.go:276 lxc/network.go:329 lxc/storage.go:374 lxc/storage.go:494
+#: lxc/network.go:284 lxc/network.go:337 lxc/storage.go:402 lxc/storage.go:522
 msgid "More than one device matches, specify the device name."
 msgstr ""
 
@@ -676,7 +680,7 @@ msgstr ""
 msgid "Move the container without its snapshots"
 msgstr ""
 
-#: lxc/image.go:1256
+#: lxc/image.go:1291
 msgid "Must run as root to import from directory"
 msgstr ""
 
@@ -684,40 +688,45 @@ msgstr ""
 msgid "Must supply container name for: "
 msgstr ""
 
-#: lxc/list.go:465 lxc/network.go:504 lxc/profile.go:555 lxc/remote.go:381
-#: lxc/storage.go:653 lxc/storage.go:748
+#: lxc/list.go:465 lxc/network.go:522 lxc/profile.go:573 lxc/remote.go:381
+#: lxc/storage.go:681 lxc/storage.go:792
 msgid "NAME"
 msgstr ""
 
-#: lxc/network.go:490 lxc/remote.go:355 lxc/remote.go:360
+#: lxc/network.go:508 lxc/remote.go:355 lxc/remote.go:360
 msgid "NO"
 msgstr ""
 
-#: lxc/info.go:99
+#: lxc/info.go:117
 #, c-format
 msgid "Name: %s"
 msgstr ""
 
-#: lxc/network.go:250
+#: lxc/network.go:258
 #, c-format
 msgid "Network %s created"
 msgstr ""
 
-#: lxc/network.go:366
+#: lxc/network.go:374
 #, c-format
 msgid "Network %s deleted"
+msgstr ""
+
+#: lxc/network.go:451
+#, c-format
+msgid "Network %s renamed to %s"
 msgstr ""
 
 #: lxc/init.go:143 lxc/init.go:144
 msgid "Network name"
 msgstr ""
 
-#: lxc/info.go:205
+#: lxc/info.go:223
 #, fuzzy
 msgid "Network usage:"
 msgstr "  Χρήση δικτύου:"
 
-#: lxc/image.go:176 lxc/publish.go:36
+#: lxc/image.go:179 lxc/publish.go:36
 msgid "New alias to define at target"
 msgstr ""
 
@@ -725,11 +734,11 @@ msgstr ""
 msgid "No certificate provided to add"
 msgstr ""
 
-#: lxc/network.go:285 lxc/network.go:338
+#: lxc/network.go:293 lxc/network.go:346
 msgid "No device found for this network"
 msgstr ""
 
-#: lxc/storage.go:383 lxc/storage.go:503
+#: lxc/storage.go:411 lxc/storage.go:531
 msgid "No device found for this storage volume."
 msgstr ""
 
@@ -737,7 +746,7 @@ msgstr ""
 msgid "No fingerprint specified."
 msgstr ""
 
-#: lxc/storage.go:327 lxc/storage.go:420
+#: lxc/storage.go:355 lxc/storage.go:448
 msgid "Only \"custom\" volumes can be attached to containers."
 msgstr ""
 
@@ -745,11 +754,11 @@ msgstr ""
 msgid "Only https URLs are supported for simplestreams"
 msgstr ""
 
-#: lxc/image.go:667
+#: lxc/image.go:687
 msgid "Only https:// is supported for remote image import."
 msgstr ""
 
-#: lxc/network.go:394 lxc/network.go:528
+#: lxc/network.go:402 lxc/network.go:546
 msgid "Only managed networks can be modified."
 msgstr ""
 
@@ -777,15 +786,15 @@ msgstr ""
 msgid "PROTOCOL"
 msgstr ""
 
-#: lxc/image.go:230 lxc/remote.go:384
+#: lxc/image.go:233 lxc/remote.go:384
 msgid "PUBLIC"
 msgstr ""
 
-#: lxc/info.go:199
+#: lxc/info.go:217
 msgid "Packets received"
 msgstr ""
 
-#: lxc/info.go:200
+#: lxc/info.go:218
 msgid "Packets sent"
 msgstr ""
 
@@ -797,7 +806,7 @@ msgstr ""
 msgid "Path to an alternate server directory"
 msgstr ""
 
-#: lxc/main.go:227
+#: lxc/main.go:228
 msgid "Pause containers."
 msgstr ""
 
@@ -805,17 +814,17 @@ msgstr ""
 msgid "Permission denied, are you in the lxd group?"
 msgstr ""
 
-#: lxc/info.go:117
+#: lxc/info.go:135
 #, c-format
 msgid "Pid: %d"
 msgstr ""
 
-#: lxc/network.go:419 lxc/profile.go:268 lxc/storage.go:577 lxc/storage.go:936
+#: lxc/network.go:427 lxc/profile.go:276 lxc/storage.go:605 lxc/storage.go:980
 msgid "Press enter to open the editor again"
 msgstr ""
 
 #: lxc/config.go:817 lxc/config.go:882 lxc/config.go:1332 lxc/config.go:1382
-#: lxc/image.go:1156
+#: lxc/image.go:1191
 msgid "Press enter to start the editor again"
 msgstr ""
 
@@ -835,46 +844,51 @@ msgstr ""
 msgid "Print verbose information"
 msgstr ""
 
-#: lxc/info.go:141
+#: lxc/info.go:159
 #, c-format
 msgid "Processes: %d"
 msgstr ""
 
-#: lxc/profile.go:344
+#: lxc/profile.go:362
 #, c-format
 msgid "Profile %s added to %s"
 msgstr ""
 
-#: lxc/profile.go:218
+#: lxc/profile.go:226
 #, c-format
 msgid "Profile %s created"
 msgstr ""
 
-#: lxc/profile.go:292
+#: lxc/profile.go:310
 #, c-format
 msgid "Profile %s deleted"
 msgstr ""
 
-#: lxc/profile.go:379
+#: lxc/profile.go:397
 #, c-format
 msgid "Profile %s removed from %s"
+msgstr ""
+
+#: lxc/profile.go:300
+#, c-format
+msgid "Profile %s renamed to %s"
 msgstr ""
 
 #: lxc/copy.go:37 lxc/copy.go:38 lxc/init.go:139 lxc/init.go:140
 msgid "Profile to apply to the new container"
 msgstr ""
 
-#: lxc/profile.go:321
+#: lxc/profile.go:339
 #, c-format
 msgid "Profiles %s applied to %s"
 msgstr ""
 
-#: lxc/info.go:115
+#: lxc/info.go:133
 #, c-format
 msgid "Profiles: %s"
 msgstr ""
 
-#: lxc/image.go:599
+#: lxc/image.go:618
 msgid "Properties:"
 msgstr ""
 
@@ -882,7 +896,7 @@ msgstr ""
 msgid "Public image server"
 msgstr ""
 
-#: lxc/image.go:582
+#: lxc/image.go:601
 #, c-format
 msgid "Public: %s"
 msgstr ""
@@ -891,7 +905,7 @@ msgstr ""
 msgid "Recursively push or pull files"
 msgstr ""
 
-#: lxc/image.go:509
+#: lxc/image.go:528
 #, c-format
 msgid "Refreshing the image: %s"
 msgstr ""
@@ -904,7 +918,7 @@ msgstr ""
 msgid "Remote operation canceled by user"
 msgstr ""
 
-#: lxc/info.go:101
+#: lxc/info.go:119
 #, c-format
 msgid "Remote: %s"
 msgstr ""
@@ -914,15 +928,20 @@ msgstr ""
 msgid "Remove %s (yes/no): "
 msgstr ""
 
+#: lxc/storage.go:1011
+#, c-format
+msgid "Renamed storage volume from \"%s\" to \"%s\""
+msgstr ""
+
 #: lxc/delete.go:36 lxc/delete.go:37
 msgid "Require user confirmation"
 msgstr ""
 
-#: lxc/info.go:138
+#: lxc/info.go:156
 msgid "Resources:"
 msgstr ""
 
-#: lxc/main.go:235
+#: lxc/main.go:236
 msgid "Restart containers."
 msgstr ""
 
@@ -931,7 +950,7 @@ msgstr ""
 msgid "Retrieving image: %s"
 msgstr ""
 
-#: lxc/image.go:233
+#: lxc/image.go:236
 msgid "SIZE"
 msgstr ""
 
@@ -939,7 +958,7 @@ msgstr ""
 msgid "SNAPSHOTS"
 msgstr ""
 
-#: lxc/storage.go:656
+#: lxc/storage.go:684
 msgid "SOURCE"
 msgstr ""
 
@@ -987,7 +1006,7 @@ msgstr ""
 msgid "Show client version"
 msgstr ""
 
-#: lxc/info.go:39
+#: lxc/info.go:40
 msgid "Show the container's last 100 log lines?"
 msgstr ""
 
@@ -995,12 +1014,20 @@ msgstr ""
 msgid "Show the expanded configuration"
 msgstr ""
 
-#: lxc/image.go:580
+#: lxc/info.go:41
+msgid "Show the resources available to the server"
+msgstr ""
+
+#: lxc/storage.go:151
+msgid "Show the resources available to the storage pool"
+msgstr ""
+
+#: lxc/image.go:599
 #, c-format
 msgid "Size: %.2fMB"
 msgstr ""
 
-#: lxc/info.go:219
+#: lxc/info.go:237
 msgid "Snapshots:"
 msgstr ""
 
@@ -1009,11 +1036,11 @@ msgstr ""
 msgid "Some containers failed to %s"
 msgstr ""
 
-#: lxc/image.go:614
+#: lxc/image.go:633
 msgid "Source:"
 msgstr ""
 
-#: lxc/main.go:245
+#: lxc/main.go:246
 msgid "Start containers."
 msgstr ""
 
@@ -1022,12 +1049,12 @@ msgstr ""
 msgid "Starting %s"
 msgstr ""
 
-#: lxc/info.go:109
+#: lxc/info.go:127
 #, c-format
 msgid "Status: %s"
 msgstr ""
 
-#: lxc/main.go:251
+#: lxc/main.go:252
 msgid "Stop containers."
 msgstr ""
 
@@ -1044,12 +1071,12 @@ msgstr ""
 msgid "Stopping the container failed: %s"
 msgstr ""
 
-#: lxc/storage.go:468
+#: lxc/storage.go:496
 #, c-format
 msgid "Storage pool %s created"
 msgstr ""
 
-#: lxc/storage.go:527
+#: lxc/storage.go:555
 #, c-format
 msgid "Storage pool %s deleted"
 msgstr ""
@@ -1058,12 +1085,12 @@ msgstr ""
 msgid "Storage pool name"
 msgstr ""
 
-#: lxc/storage.go:782
+#: lxc/storage.go:826
 #, c-format
 msgid "Storage volume %s created"
 msgstr ""
 
-#: lxc/storage.go:797
+#: lxc/storage.go:841
 #, c-format
 msgid "Storage volume %s deleted"
 msgstr ""
@@ -1072,15 +1099,15 @@ msgstr ""
 msgid "Store the container state (only for stop)"
 msgstr ""
 
-#: lxc/info.go:180
+#: lxc/info.go:198
 msgid "Swap (current)"
 msgstr ""
 
-#: lxc/info.go:184
+#: lxc/info.go:202
 msgid "Swap (peak)"
 msgstr ""
 
-#: lxc/list.go:470 lxc/network.go:505 lxc/storage.go:747
+#: lxc/list.go:470 lxc/network.go:523 lxc/storage.go:791
 msgid "TYPE"
 msgstr ""
 
@@ -1116,11 +1143,11 @@ msgstr ""
 msgid "The opposite of \"lxc pause\" is \"lxc start\"."
 msgstr ""
 
-#: lxc/network.go:290 lxc/network.go:343 lxc/storage.go:388 lxc/storage.go:508
+#: lxc/network.go:298 lxc/network.go:351 lxc/storage.go:416 lxc/storage.go:536
 msgid "The specified device doesn't exist"
 msgstr ""
 
-#: lxc/network.go:294 lxc/network.go:347
+#: lxc/network.go:302 lxc/network.go:355
 msgid "The specified device doesn't match the network"
 msgstr ""
 
@@ -1140,7 +1167,7 @@ msgstr ""
 msgid "Time to wait for the container before killing it"
 msgstr ""
 
-#: lxc/image.go:583
+#: lxc/image.go:602
 msgid "Timestamps:"
 msgstr ""
 
@@ -1165,7 +1192,7 @@ msgstr ""
 msgid "Transferring container: %s"
 msgstr ""
 
-#: lxc/image.go:692
+#: lxc/image.go:716
 #, c-format
 msgid "Transferring image: %s"
 msgstr ""
@@ -1175,15 +1202,15 @@ msgstr ""
 msgid "Try `lxc info --show-log %s` for more info"
 msgstr ""
 
-#: lxc/info.go:111
+#: lxc/info.go:129
 msgid "Type: ephemeral"
 msgstr ""
 
-#: lxc/info.go:113
+#: lxc/info.go:131
 msgid "Type: persistent"
 msgstr ""
 
-#: lxc/image.go:234
+#: lxc/image.go:237
 msgid "UPLOAD DATE"
 msgstr ""
 
@@ -1191,7 +1218,7 @@ msgstr ""
 msgid "URL"
 msgstr ""
 
-#: lxc/network.go:508 lxc/profile.go:556 lxc/storage.go:657 lxc/storage.go:750
+#: lxc/network.go:526 lxc/profile.go:574 lxc/storage.go:685 lxc/storage.go:794
 msgid "USED BY"
 msgstr ""
 
@@ -1204,7 +1231,7 @@ msgstr ""
 msgid "Unknown file type '%s'"
 msgstr ""
 
-#: lxc/image.go:588
+#: lxc/image.go:607
 #, c-format
 msgid "Uploaded: %s"
 msgstr ""
@@ -1498,6 +1525,9 @@ msgid ""
 "lxc image alias create [<remote>:]<alias> <fingerprint>\n"
 "    Create a new alias for an existing image.\n"
 "\n"
+"lxc image alias rename [<remote>:]<alias> <new-name>\n"
+"    Rename an alias.\n"
+"\n"
 "lxc image alias delete [<remote>:]<alias>\n"
 "    Delete an alias.\n"
 "\n"
@@ -1506,16 +1536,16 @@ msgid ""
 "image alias name."
 msgstr ""
 
-#: lxc/info.go:26
+#: lxc/info.go:27
 msgid ""
-"Usage: lxc info [<remote>:][<container>] [--show-log]\n"
+"Usage: lxc info [<remote>:][<container>] [--show-log] [--resources]\n"
 "\n"
 "Show container or server information.\n"
 "\n"
 "lxc info [<remote>:]<container> [--show-log]\n"
 "    For container information.\n"
 "\n"
-"lxc info [<remote>:]\n"
+"lxc info [<remote>:] [--resources]\n"
 "    For LXD server information."
 msgstr ""
 
@@ -1712,6 +1742,9 @@ msgid ""
 "lxc network edit [<remote>:]<network>\n"
 "    Edit network, either by launching external editor or reading STDIN.\n"
 "\n"
+"lxc network rename [<remote>:]<network> <new-name>\n"
+"    Rename a network.\n"
+"\n"
 "lxc network attach [<remote>:]<network> <container> [device name] [interface "
 "name]\n"
 "    Attach a network interface connecting the network to a specified "
@@ -1768,6 +1801,9 @@ msgid ""
 "\n"
 "lxc profile edit [<remote>:]<profile>\n"
 "    Edit profile, either by launching external editor or reading STDIN.\n"
+"\n"
+"lxc profile rename [<remote>:]<profile> <new-name>\n"
+"    Rename a profile.\n"
 "\n"
 "*Profile assignment*\n"
 "lxc profile assign [<remote>:]<container> <profiles>\n"
@@ -1866,6 +1902,14 @@ msgid ""
 "    Print the default remote."
 msgstr ""
 
+#: lxc/rename.go:18
+msgid ""
+"Usage: lxc rename [<remote>:]<container>[/<snapshot>] [<container>[/"
+"<snapshot>]]\n"
+"\n"
+"Rename a container or snapshot."
+msgstr ""
+
 #: lxc/restore.go:22
 msgid ""
 "Usage: lxc restore [<remote>:]<container> <snapshot> [--stateful]\n"
@@ -1896,7 +1940,7 @@ msgid ""
 "    Create a snapshot of \"u1\" called \"snap0\"."
 msgstr ""
 
-#: lxc/storage.go:62
+#: lxc/storage.go:64
 msgid ""
 "Usage: lxc storage <subcommand> [options]\n"
 "\n"
@@ -1906,7 +1950,7 @@ msgid ""
 "lxc storage list [<remote>:]\n"
 "    List available storage pools.\n"
 "\n"
-"lxc storage show [<remote>:]<pool>\n"
+"lxc storage show [<remote>:]<pool> [--resources]\n"
 "    Show details of a storage pool.\n"
 "\n"
 "lxc storage create [<remote>:]<pool> <driver> [key=value]...\n"
@@ -1937,6 +1981,9 @@ msgid ""
 "\n"
 "lxc storage volume create [<remote>:]<pool> <volume> [key=value]...\n"
 "    Create a storage volume on a storage pool.\n"
+"\n"
+"lxc storage volume rename [<remote>:]<pool> <old name> <new name>\n"
+"    Rename a storage volume on a storage pool.\n"
 "\n"
 "lxc storage volume get [<remote>:]<pool> <volume> <key>\n"
 "    Get storage volume configuration on a storage pool.\n"
@@ -2020,7 +2067,7 @@ msgstr ""
 msgid "Whether or not to snapshot the container's running state"
 msgstr ""
 
-#: lxc/network.go:492 lxc/remote.go:357 lxc/remote.go:362
+#: lxc/network.go:510 lxc/remote.go:357 lxc/remote.go:362
 msgid "YES"
 msgstr ""
 
@@ -2056,11 +2103,11 @@ msgstr ""
 msgid "didn't get any affected image, container or snapshot from server"
 msgstr ""
 
-#: lxc/image.go:574
+#: lxc/image.go:593
 msgid "disabled"
 msgstr ""
 
-#: lxc/image.go:576
+#: lxc/image.go:595
 msgid "enabled"
 msgstr ""
 
@@ -2074,7 +2121,7 @@ msgstr ""
 msgid "error: unknown command: %s"
 msgstr ""
 
-#: lxc/image.go:206 lxc/image.go:564 lxc/image.go:569
+#: lxc/image.go:209 lxc/image.go:583 lxc/image.go:588
 msgid "no"
 msgstr ""
 
@@ -2111,15 +2158,15 @@ msgstr ""
 msgid "remote %s is static and cannot be modified"
 msgstr ""
 
-#: lxc/info.go:230
+#: lxc/info.go:248
 msgid "stateful"
 msgstr ""
 
-#: lxc/info.go:232
+#: lxc/info.go:250
 msgid "stateless"
 msgstr ""
 
-#: lxc/info.go:226
+#: lxc/info.go:244
 #, c-format
 msgid "taken at %s"
 msgstr ""
@@ -2128,6 +2175,6 @@ msgstr ""
 msgid "wrong number of subcommand arguments"
 msgstr ""
 
-#: lxc/delete.go:45 lxc/image.go:204 lxc/image.go:566 lxc/image.go:571
+#: lxc/delete.go:45 lxc/image.go:207 lxc/image.go:585 lxc/image.go:590
 msgid "yes"
 msgstr ""
