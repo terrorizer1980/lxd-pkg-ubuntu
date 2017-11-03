@@ -96,6 +96,23 @@ func cephRBDVolumeExists(clusterName string, poolName string, volumeName string,
 	return true
 }
 
+// cephRBDVolumeSnapshotExists checks whether a given RBD snapshot exists.
+func cephRBDSnapshotExists(clusterName string, poolName string,
+	volumeName string, volumeType string, snapshotName string,
+	userName string) bool {
+	_, err := shared.RunCommand(
+		"rbd",
+		"--id", userName,
+		"--cluster", clusterName,
+		"--pool", poolName,
+		"info",
+		fmt.Sprintf("%s_%s@%s", volumeType, volumeName, snapshotName))
+	if err != nil {
+		return false
+	}
+	return true
+}
+
 // cephRBDVolumeDelete deletes an RBD storage volume.
 // - In case the RBD storage volume that is supposed to be deleted does not
 //   exist this command will still exit 0. This means that if the caller wants
@@ -379,14 +396,19 @@ func cephRBDSnapshotListClones(clusterName string, poolName string,
 // image still has dependent container clones.
 func cephRBDVolumeMarkDeleted(clusterName string, poolName string,
 	volumeType string, oldVolumeName string, newVolumeName string,
-	userName string) error {
+	userName string, suffix string) error {
+	deletedName := fmt.Sprintf("%s/zombie_%s_%s", poolName, volumeType,
+		newVolumeName)
+	if suffix != "" {
+		deletedName = fmt.Sprintf("%s_%s", deletedName, suffix)
+	}
 	_, err := shared.RunCommand(
 		"rbd",
 		"--id", userName,
 		"--cluster", clusterName,
 		"mv",
 		fmt.Sprintf("%s/%s_%s", poolName, volumeType, oldVolumeName),
-		fmt.Sprintf("%s/zombie_%s_%s", poolName, volumeType, newVolumeName))
+		deletedName)
 	if err != nil {
 		return err
 	}
@@ -405,14 +427,25 @@ func cephRBDVolumeMarkDeleted(clusterName string, poolName string,
 //   the pool but is marked as "zombie" it will unmark it as a zombie instead of
 //   creating another storage volume for the image.
 func cephRBDVolumeUnmarkDeleted(clusterName string, poolName string,
-	volumeName string, volumeType string, userName string) error {
+	volumeName string, volumeType string, userName string, oldSuffix string,
+	newSuffix string) error {
+	oldName := fmt.Sprintf("%s/zombie_%s_%s", poolName, volumeType, volumeName)
+	if oldSuffix != "" {
+		oldName = fmt.Sprintf("%s_%s", oldName, oldSuffix)
+	}
+
+	newName := fmt.Sprintf("%s/%s_%s", poolName, volumeType, volumeName)
+	if newSuffix != "" {
+		newName = fmt.Sprintf("%s_%s", newName, newSuffix)
+	}
+
 	_, err := shared.RunCommand(
 		"rbd",
 		"--id", userName,
 		"--cluster", clusterName,
 		"mv",
-		fmt.Sprintf("%s/zombie_%s_%s", poolName, volumeType, volumeName),
-		fmt.Sprintf("%s/%s_%s", poolName, volumeType, volumeName))
+		oldName,
+		newName)
 	if err != nil {
 		return err
 	}
@@ -968,7 +1001,8 @@ func cephContainerDelete(clusterName string, poolName string, volumeName string,
 			newVolumeName := fmt.Sprintf("%s_%s", volumeName,
 				uuid.NewRandom().String())
 			err := cephRBDVolumeMarkDeleted(clusterName, poolName,
-				volumeType, volumeName, newVolumeName, userName)
+				volumeType, volumeName, newVolumeName, userName,
+				"")
 			if err != nil {
 				logger.Errorf(`Failed to mark RBD storage `+
 					`volume "%s" as zombie: %s`, logEntry,
@@ -1522,59 +1556,24 @@ func (s *storageCeph) rbdShrink(path string, size int64, fsType string,
 			`less than 1MB`)
 	}
 
-	volumeTypeName := ""
-	switch fsType {
-	case "xfs":
-		logger.Errorf("xfs filesystems cannot be shrunk: dump, mkfs, and restore are required")
-		return fmt.Errorf("xfs filesystems cannot be shrunk: dump, mkfs, and restore are required")
-	default:
-		// default = ext4
-		switch volumeType {
-		case storagePoolVolumeTypeContainer:
-			c := data.(container)
-			ourMount, err := c.StorageStop()
-			if err != nil {
-				return err
-			}
-			if !ourMount {
-				defer c.StorageStart()
-			}
-			volumeTypeName = storagePoolVolumeTypeNameContainer
-		case storagePoolVolumeTypeCustom:
-			ourMount, err := s.StoragePoolVolumeUmount()
-			if err != nil {
-				return err
-			}
-			if !ourMount {
-				defer s.StoragePoolVolumeMount()
-			}
-			volumeTypeName = storagePoolVolumeTypeNameCustom
-		default:
-			return fmt.Errorf(`Resizing not implemented for `+
-				`storage volume type %d`, volumeType)
-		}
-
-		msg, err = shared.TryRunCommand("e2fsck", "-f", "-y", path)
-		if err != nil {
-			return err
-		}
-
-		// don't assume resize2fs semantics are sane (because they
-		// aren't)
-		kbSize := size / 1024
-		ext4SizeString := strconv.FormatInt(kbSize, 10)
-		ext4SizeString += "K"
-		msg, err = shared.TryRunCommand("resize2fs", path, ext4SizeString)
-		if err != nil {
-			logger.Errorf(`Could not reduce underlying %s `+
-				`filesystem for RBD storage volume "%s": %s`,
-				fsType, path, msg)
-			return fmt.Errorf(`Could not reduce underlying %s `+
-				`filesystem for RBD storage volume "%s": %s`,
-				fsType, path, msg)
-		}
+	cleanupFunc, err := shrinkVolumeFilesystem(s, volumeType, fsType, path, fsMntPoint, size, data)
+	if cleanupFunc != nil {
+		defer cleanupFunc()
+	}
+	if err != nil {
+		return err
 	}
 
+	volumeTypeName := ""
+	switch volumeType {
+	case storagePoolVolumeTypeContainer:
+		volumeTypeName = storagePoolVolumeTypeNameContainer
+	case storagePoolVolumeTypeCustom:
+		volumeTypeName = storagePoolVolumeTypeNameCustom
+	default:
+		return fmt.Errorf(`Resizing not implemented for `+
+			`storage volume type %d`, volumeType)
+	}
 	msg, err = shared.TryRunCommand(
 		"rbd",
 		"resize",
@@ -1646,22 +1645,34 @@ func (s *storageCeph) rbdGrow(path string, size int64, fsType string,
 			%s`, path, msg)
 	}
 
-	switch fsType {
-	case "xfs":
-		msg, err = shared.TryRunCommand("xfs_growfs", fsMntPoint)
-	default:
-		// default = ext4
-		msg, err = shared.TryRunCommand("resize2fs", path)
-	}
-	if err != nil {
-		logger.Errorf(`Could not extend underlying %s `+
-			`filesystem for RBD storage volume "%s": %s`,
-			fsType, path, msg)
-		return fmt.Errorf(`Could not extend underlying %s `+
-			`filesystem for RBD storage volume "%s": %s`,
-			fsType, path, msg)
+	return growFileSystem(fsType, path, fsMntPoint)
+}
+
+func parseCephSize(numStr string) (uint64, error) {
+	if numStr == "" {
+		return 0, fmt.Errorf("Empty string is not valid input")
 	}
 
-	logger.Debugf("extended underlying %s filesystem for LV \"%s\"", fsType, path)
-	return nil
+	lxdSuffix := "GB"
+	cephSuffix := numStr[(len(numStr) - 1):]
+	switch cephSuffix {
+	case "M":
+		lxdSuffix = "MB"
+	case "K":
+		lxdSuffix = "KB"
+	}
+
+	_, err := strconv.Atoi(cephSuffix)
+	if err != nil {
+		numStr = numStr[:(len(numStr) - 1)]
+		numStr = strings.TrimSpace(numStr)
+	}
+	numStr = fmt.Sprintf("%s%s", numStr, lxdSuffix)
+
+	size, err := shared.ParseByteSizeString(numStr)
+	if err != nil {
+		return 0, err
+	}
+
+	return uint64(size), nil
 }

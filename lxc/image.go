@@ -160,6 +160,9 @@ lxc image edit [<remote>:]<image>
 lxc image alias create [<remote>:]<alias> <fingerprint>
     Create a new alias for an existing image.
 
+lxc image alias rename [<remote>:]<alias> <new-name>
+    Rename an alias.
+
 lxc image alias delete [<remote>:]<alias>
     Delete an alias.
 
@@ -323,6 +326,22 @@ func (c *imageCmd) doImageAlias(conf *config.Config, args []string) error {
 		alias.Target = args[3]
 
 		return d.CreateImageAlias(alias)
+	case "rename":
+		/* alias rename [<remote>:]<alias> <newname> */
+		if len(args) < 4 {
+			return errArgs
+		}
+		remote, alias, err := conf.ParseRemote(args[2])
+		if err != nil {
+			return err
+		}
+
+		d, err := conf.GetContainerServer(remote)
+		if err != nil {
+			return err
+		}
+
+		return d.RenameImageAlias(alias, api.ImageAliasesEntryPost{Name: args[3]})
 	case "delete":
 		/* alias delete [<remote>:]<alias> */
 		if len(args) < 3 {
@@ -630,7 +649,7 @@ func (c *imageCmd) run(conf *config.Config, args []string) error {
 
 		for _, arg := range args[1:] {
 			split := strings.Split(arg, "=")
-			if len(split) == 1 || shared.PathExists(arg) {
+			if len(split) == 1 || shared.PathExists(shared.HostPath(arg)) {
 				if strings.HasSuffix(arg, ":") {
 					var err error
 					remote, _, err = conf.ParseRemote(arg)
@@ -657,6 +676,7 @@ func (c *imageCmd) run(conf *config.Config, args []string) error {
 			imageFile = args[1]
 			properties = properties[1:]
 		}
+		imageFile = shared.HostPath(filepath.Clean(imageFile))
 
 		d, err := conf.GetContainerServer(remote)
 		if err != nil {
@@ -881,6 +901,7 @@ func (c *imageCmd) run(conf *config.Config, args []string) error {
 				targetMeta = args[2]
 			}
 		}
+		targetMeta = shared.HostPath(targetMeta)
 		targetRootfs := targetMeta + ".root"
 
 		// Prepare the files
@@ -927,7 +948,7 @@ func (c *imageCmd) run(conf *config.Config, args []string) error {
 		// Rename files
 		if shared.IsDir(target) {
 			if resp.MetaName != "" {
-				err := os.Rename(targetMeta, filepath.Join(target, resp.MetaName))
+				err := os.Rename(targetMeta, shared.HostPath(filepath.Join(target, resp.MetaName)))
 				if err != nil {
 					os.Remove(targetMeta)
 					os.Remove(targetRootfs)
@@ -937,10 +958,20 @@ func (c *imageCmd) run(conf *config.Config, args []string) error {
 			}
 
 			if resp.RootfsSize > 0 && resp.RootfsName != "" {
-				err := os.Rename(targetRootfs, filepath.Join(target, resp.RootfsName))
+				err := os.Rename(targetRootfs, shared.HostPath(filepath.Join(target, resp.RootfsName)))
 				if err != nil {
 					os.Remove(targetMeta)
 					os.Remove(targetRootfs)
+					progress.Done("")
+					return err
+				}
+			}
+		} else if resp.RootfsSize == 0 && len(args) > 2 {
+			if resp.MetaName != "" {
+				extension := strings.SplitN(resp.MetaName, ".", 2)[1]
+				err := os.Rename(targetMeta, fmt.Sprintf("%s.%s", targetMeta, extension))
+				if err != nil {
+					os.Remove(targetMeta)
 					progress.Done("")
 					return err
 				}

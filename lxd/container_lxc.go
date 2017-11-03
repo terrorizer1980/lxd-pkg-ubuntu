@@ -154,6 +154,12 @@ func lxcSetConfigItem(c *lxc.Container, key string, value string) error {
 		}
 	}
 
+	if strings.HasPrefix(key, "lxc.prlimit.") {
+		if !lxc.VersionAtLeast(2, 1, 0) {
+			return fmt.Errorf(`Process limits require libxc >= 2.1`)
+		}
+	}
+
 	err := c.SetConfigItem(key, value)
 	if err != nil {
 		return fmt.Errorf("Failed to set LXC config: %s=%s", key, value)
@@ -196,6 +202,12 @@ func lxcValidConfig(rawLxc string) error {
 
 		if key == "lxc.ephemeral" {
 			return fmt.Errorf("Setting lxc.ephemeral is not allowed")
+		}
+
+		if strings.HasPrefix(key, "lxc.prlimit.") {
+			return fmt.Errorf(`Process limits should be set via ` +
+				`"limits.kernel.[limit name]" and not ` +
+				`directly via "lxc.prlimit.[limit name]"`)
 		}
 
 		networkKeyPrefix := "lxc.net."
@@ -1278,6 +1290,18 @@ func (c *containerLXC) initLXC() error {
 			}
 
 			err = lxcSetConfigItem(cc, "lxc.cgroup.pids.max", fmt.Sprintf("%d", valueInt))
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	// Setup process limits
+	for k, v := range c.expandedConfig {
+		if strings.HasPrefix(k, "limits.kernel.") {
+			prlimitSuffix := strings.TrimPrefix(k, "limits.kernel.")
+			prlimitKey := fmt.Sprintf("lxc.prlimit.%s", prlimitSuffix)
+			err = lxcSetConfigItem(cc, prlimitKey, v)
 			if err != nil {
 				return err
 			}
@@ -2881,7 +2905,7 @@ func (c *containerLXC) Delete() error {
 
 		// Delete the container from disk
 		if c.storage != nil {
-			_, poolName := c.storage.GetContainerPoolInfo()
+			_, poolName, _ := c.storage.GetContainerPoolInfo()
 			containerMountPoint := getContainerMountPoint(poolName, c.Name())
 			if shared.PathExists(c.Path()) ||
 				shared.PathExists(containerMountPoint) {
@@ -2905,7 +2929,7 @@ func (c *containerLXC) Delete() error {
 		// Get the name of the storage pool the container is attached to. This
 		// reverse-engineering works because container names are globally
 		// unique.
-		poolID, _ := c.storage.GetContainerPoolInfo()
+		poolID, _, _ := c.storage.GetContainerPoolInfo()
 
 		// Remove volume from storage pool.
 		err := db.StoragePoolVolumeDelete(c.state.DB, c.Name(), storagePoolVolumeTypeContainer, poolID)
@@ -2995,7 +3019,7 @@ func (c *containerLXC) Rename(newName string) error {
 	}
 
 	// Rename storage volume for the container.
-	poolID, _ := c.storage.GetContainerPoolInfo()
+	poolID, _, _ := c.storage.GetContainerPoolInfo()
 	err = db.StoragePoolVolumeRename(c.state.DB, oldName, newName, storagePoolVolumeTypeContainer, poolID)
 	if err != nil {
 		logger.Error("Failed renaming storage volume", ctxMap)

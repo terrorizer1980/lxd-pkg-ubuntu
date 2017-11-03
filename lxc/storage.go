@@ -16,11 +16,13 @@ import (
 	"github.com/lxc/lxd/lxc/config"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
+	"github.com/lxc/lxd/shared/gnuflag"
 	"github.com/lxc/lxd/shared/i18n"
 	"github.com/lxc/lxd/shared/termios"
 )
 
 type storageCmd struct {
+	resources bool
 }
 
 func (c *storageCmd) showByDefault() bool {
@@ -68,7 +70,7 @@ Manage storage pools and volumes.
 lxc storage list [<remote>:]
     List available storage pools.
 
-lxc storage show [<remote>:]<pool>
+lxc storage show [<remote>:]<pool> [--resources]
     Show details of a storage pool.
 
 lxc storage create [<remote>:]<pool> <driver> [key=value]...
@@ -98,6 +100,9 @@ lxc storage volume show [<remote>:]<pool> <volume>
 
 lxc storage volume create [<remote>:]<pool> <volume> [key=value]...
     Create a storage volume on a storage pool.
+
+lxc storage volume rename [<remote>:]<pool> <old name> <new name>
+    Rename a storage volume on a storage pool.
 
 lxc storage volume get [<remote>:]<pool> <volume> <key>
     Get storage volume configuration on a storage pool.
@@ -142,7 +147,9 @@ lxc storage volume show default container/data
     Will show the properties of the filesystem for a container called "data" in the "default" pool.`)
 }
 
-func (c *storageCmd) flags() {}
+func (c *storageCmd) flags() {
+	gnuflag.BoolVar(&c.resources, "resources", false, i18n.G("Show the resources available to the storage pool"))
+}
 
 func (c *storageCmd) run(conf *config.Config, args []string) error {
 	if len(args) < 1 {
@@ -235,6 +242,13 @@ func (c *storageCmd) run(conf *config.Config, args []string) error {
 			}
 			pool := sub
 			return c.doStoragePoolVolumesList(conf, remote, pool, args)
+		case "rename":
+			if len(args) != 5 {
+				return errArgs
+			}
+			pool := sub
+			volume := args[3]
+			return c.doStoragePoolVolumeRename(client, pool, volume, args)
 		case "set":
 			if len(args) < 4 {
 				return errArgs
@@ -719,6 +733,22 @@ func (c *storageCmd) doStoragePoolShow(client lxd.ContainerServer, name string) 
 		return errArgs
 	}
 
+	if c.resources {
+		res, err := client.GetStoragePoolResources(name)
+		if err != nil {
+			return err
+		}
+
+		data, err := yaml.Marshal(&res)
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("%s", data)
+
+		return nil
+	}
+
 	pool, _, err := client.GetStoragePool(name)
 	if err != nil {
 		return err
@@ -962,5 +992,23 @@ func (c *storageCmd) doStoragePoolVolumeEdit(client lxd.ContainerServer, pool st
 		}
 		break
 	}
+	return nil
+}
+
+func (c *storageCmd) doStoragePoolVolumeRename(client lxd.ContainerServer, pool string, volume string, args []string) error {
+	// Parse the input
+	volName, volType := c.parseVolume(volume)
+
+	// Create the storage volume entry
+	vol := api.StorageVolumePost{}
+	vol.Name = args[4]
+
+	err := client.RenameStoragePoolVolume(pool, volType, volName, vol)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf(i18n.G(`Renamed storage volume from "%s" to "%s"`)+"\n", volName, vol.Name)
+
 	return nil
 }

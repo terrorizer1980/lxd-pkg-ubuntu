@@ -76,8 +76,8 @@ func (s *storageMock) SetStoragePoolVolumeWritable(writable *api.StorageVolumePu
 	s.volume.StorageVolumePut = *writable
 }
 
-func (s *storageMock) GetContainerPoolInfo() (int64, string) {
-	return s.poolID, s.pool.Name
+func (s *storageMock) GetContainerPoolInfo() (int64, string, string) {
+	return s.poolID, s.pool.Name, s.pool.Name
 }
 
 func (s *storageMock) StoragePoolVolumeCreate() error {
@@ -97,6 +97,10 @@ func (s *storageMock) StoragePoolVolumeUmount() (bool, error) {
 }
 
 func (s *storageMock) StoragePoolVolumeUpdate(writable *api.StorageVolumePut, changedConfig []string) error {
+	return nil
+}
+
+func (s *storageMock) StoragePoolVolumeRename(newName string) error {
 	return nil
 }
 
@@ -217,4 +221,8 @@ func (s *storageMock) MigrationSink(live bool, container container, snapshots []
 
 func (s *storageMock) StorageEntitySetQuota(volumeType int, size int64, data interface{}) error {
 	return nil
+}
+
+func (s *storageMock) StoragePoolResources() (*api.ResourcesStoragePool, error) {
+	return &api.ResourcesStoragePool{}, nil
 }
