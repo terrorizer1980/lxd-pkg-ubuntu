@@ -6,7 +6,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"runtime/pprof"
-	"sync"
 	"syscall"
 	"time"
 
@@ -14,14 +13,14 @@ import (
 	"github.com/lxc/lxd/shared/logger"
 )
 
-func cmdDaemon() error {
+func cmdDaemon(args *Args) error {
 	// Only root should run this
 	if os.Geteuid() != 0 {
 		return fmt.Errorf("This must be run as root")
 	}
 
-	if *argCPUProfile != "" {
-		f, err := os.Create(*argCPUProfile)
+	if args.CPUProfile != "" {
+		f, err := os.Create(args.CPUProfile)
 		if err != nil {
 			fmt.Printf("Error opening cpu profile file: %s\n", err)
 			return nil
@@ -30,8 +29,8 @@ func cmdDaemon() error {
 		defer pprof.StopCPUProfile()
 	}
 
-	if *argMemProfile != "" {
-		go memProfiler(*argMemProfile)
+	if args.MemProfile != "" {
+		go memProfiler(args.MemProfile)
 	}
 
 	neededPrograms := []string{"setfacl", "rsync", "tar", "unsquashfs", "xz"}
@@ -42,18 +41,18 @@ func cmdDaemon() error {
 		}
 	}
 
-	if *argPrintGoroutinesEvery > 0 {
+	if args.PrintGoroutinesEvery > 0 {
 		go func() {
 			for {
-				time.Sleep(time.Duration(*argPrintGoroutinesEvery) * time.Second)
+				time.Sleep(time.Duration(args.PrintGoroutinesEvery) * time.Second)
 				logger.Debugf(logger.GetStack())
 			}
 		}()
 	}
 
-	d := &Daemon{
-		group:     *argGroup,
-		SetupMode: shared.PathExists(shared.VarPath(".setup_mode"))}
+	d := NewDaemon()
+	d.group = args.Group
+	d.SetupMode = shared.PathExists(shared.VarPath(".setup_mode"))
 	err := d.Init()
 	if err != nil {
 		if d != nil && d.db != nil {
@@ -62,46 +61,27 @@ func cmdDaemon() error {
 		return err
 	}
 
-	var ret error
-	var wg sync.WaitGroup
-	wg.Add(1)
+	ch := make(chan os.Signal)
+	signal.Notify(ch, syscall.SIGPWR)
+	signal.Notify(ch, syscall.SIGINT)
+	signal.Notify(ch, syscall.SIGQUIT)
+	signal.Notify(ch, syscall.SIGTERM)
 
-	go func() {
-		ch := make(chan os.Signal)
-		signal.Notify(ch, syscall.SIGPWR)
-		sig := <-ch
+	s := d.State()
+	select {
+	case sig := <-ch:
 
-		logger.Infof("Received '%s signal', shutting down containers.", sig)
+		if sig == syscall.SIGPWR {
+			logger.Infof("Received '%s signal', shutting down containers.", sig)
+			containersShutdown(s, d.Storage)
+		} else {
+			logger.Infof("Received '%s signal', exiting.", sig)
+		}
 
-		containersShutdown(d)
-
-		ret = d.Stop()
-		wg.Done()
-	}()
-
-	go func() {
-		<-d.shutdownChan
-
+	case <-d.shutdownChan:
 		logger.Infof("Asked to shutdown by API, shutting down containers.")
+		containersShutdown(s, d.Storage)
+	}
 
-		containersShutdown(d)
-
-		ret = d.Stop()
-		wg.Done()
-	}()
-
-	go func() {
-		ch := make(chan os.Signal)
-		signal.Notify(ch, syscall.SIGINT)
-		signal.Notify(ch, syscall.SIGQUIT)
-		signal.Notify(ch, syscall.SIGTERM)
-		sig := <-ch
-
-		logger.Infof("Received '%s signal', exiting.", sig)
-		ret = d.Stop()
-		wg.Done()
-	}()
-
-	wg.Wait()
-	return ret
+	return d.Stop()
 }

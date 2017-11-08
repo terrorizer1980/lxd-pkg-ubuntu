@@ -15,7 +15,7 @@ import (
 
 func containerFileHandler(d *Daemon, r *http.Request) Response {
 	name := mux.Vars(r)["name"]
-	c, err := containerLoadByName(d, name)
+	c, err := containerLoadByName(d.State(), d.Storage, name)
 	if err != nil {
 		return SmartError(err)
 	}
@@ -72,7 +72,7 @@ func containerFileGet(c container, path string, r *http.Request) Response {
 
 func containerFilePut(c container, path string, r *http.Request) Response {
 	// Extract file ownership and mode from headers
-	uid, gid, mode := shared.ParseLXDFileHeaders(r.Header)
+	uid, gid, mode, _, _ := shared.ParseLXDFileHeaders(r.Header)
 
 	// Write file content to a tempfile
 	temp, err := ioutil.TempFile("", "lxd_forkputfile_")

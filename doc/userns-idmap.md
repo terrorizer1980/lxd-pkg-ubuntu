@@ -22,15 +22,15 @@ User namespaces require a kernel >= 3.12, LXD will start even on older
 kernels but will refuse to start containers.
 
 # Allowed ranges
-On most hosts, LXD will check /etc/subuid and /etc/subgid for
+On most hosts, LXD will check `/etc/subuid` and `/etc/subgid` for
 allocations for the "lxd" user and on first start, set the default
 profile to use the first 65536 uids and gids from that range.
 
 If the range is shorter than 65536 (which includes no range at all),
 then LXD will fail to create or start any container until this is corrected.
 
-If some but not all of /etc/subuid, /etc/subgid, newuidmap (path lookup)
-and newgidmap (path lookup) can be found on the system, LXD will fail
+If some but not all of `/etc/subuid`, `/etc/subgid`, `newuidmap` (path lookup)
+and `newgidmap` (path lookup) can be found on the system, LXD will fail
 the startup of any container until this is corrected as this shows a
 broken shadow setup.
 
@@ -56,6 +56,10 @@ Containers with `security.idmap.size` set will have their id range set to this
 size. Isolated containers without this property set default to a id range of
 size 65536; this allows for POSIX compliance and a "nobody" user inside the
 container.
+
+To select a specific map, the `security.idmap.base` key will let you
+override the auto-detection mechanism and tell LXD what host uid/gid you
+want to use as the base for the container.
 
 These properties require a container reboot to take effect.
 

@@ -1,7 +1,1 @@
-0001-init-Allow-running-dpkg-reconfigure.patch
-0002-shared-cmd-Update-to-match-master.patch
-0003-Don-t-depend-on-testify-in-the-cmd-package.patch
-0004-Fix-for-older-gorilla-websocket-package.patch
-0005-Fix-regression-in-image-auto-update-logic.patch
-0006-lxd-images-Carry-old-cached-value-on-refresh.patch
-0007-Attempt-to-restore-the-auto_update-property.patch
+0001-Fix-for-older-gorilla-websocket-package.patch

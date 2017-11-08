@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/lxc/lxd"
+	"github.com/lxc/lxd/client"
+	"github.com/lxc/lxd/lxc/config"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/gnuflag"
 	"github.com/lxc/lxd/shared/i18n"
@@ -36,9 +37,7 @@ func (c *publishCmd) flags() {
 	gnuflag.BoolVar(&c.Force, "f", false, i18n.G("Stop the container if currently running"))
 }
 
-func (c *publishCmd) run(config *lxd.Config, args []string) error {
-	var cRemote string
-	var cName string
+func (c *publishCmd) run(conf *config.Config, args []string) error {
 	iName := ""
 	iRemote := ""
 	properties := map[string]string{}
@@ -48,12 +47,22 @@ func (c *publishCmd) run(config *lxd.Config, args []string) error {
 		return errArgs
 	}
 
-	cRemote, cName = config.ParseRemoteAndContainer(args[0])
+	cRemote, cName, err := conf.ParseRemote(args[0])
+	if err != nil {
+		return err
+	}
+
 	if len(args) >= 2 && !strings.Contains(args[1], "=") {
 		firstprop = 2
-		iRemote, iName = config.ParseRemoteAndContainer(args[1])
+		iRemote, iName, err = conf.ParseRemote(args[1])
+		if err != nil {
+			return err
+		}
 	} else {
-		iRemote, iName = config.ParseRemoteAndContainer("")
+		iRemote, iName, err = conf.ParseRemote("")
+		if err != nil {
+			return err
+		}
 	}
 
 	if cName == "" {
@@ -63,21 +72,21 @@ func (c *publishCmd) run(config *lxd.Config, args []string) error {
 		return fmt.Errorf(i18n.G("There is no \"image name\".  Did you want an alias?"))
 	}
 
-	d, err := lxd.NewClient(config, iRemote)
+	d, err := conf.GetContainerServer(iRemote)
 	if err != nil {
 		return err
 	}
 
 	s := d
 	if cRemote != iRemote {
-		s, err = lxd.NewClient(config, cRemote)
+		s, err = conf.GetContainerServer(cRemote)
 		if err != nil {
 			return err
 		}
 	}
 
 	if !shared.IsSnapshot(cName) {
-		ct, err := s.ContainerInfo(cName)
+		ct, etag, err := s.GetContainer(cName)
 		if err != nil {
 			return err
 		}
@@ -92,38 +101,57 @@ func (c *publishCmd) run(config *lxd.Config, args []string) error {
 
 			if ct.Ephemeral {
 				ct.Ephemeral = false
-				err := s.UpdateContainerConfig(cName, ct.Writable())
+				op, err := s.UpdateContainer(cName, ct.Writable(), etag)
+				if err != nil {
+					return err
+				}
+
+				err = op.Wait()
+				if err != nil {
+					return err
+				}
+
+				// Refresh the ETag
+				_, etag, err = s.GetContainer(cName)
 				if err != nil {
 					return err
 				}
 			}
 
-			resp, err := s.Action(cName, shared.Stop, -1, true, false)
+			req := api.ContainerStatePut{
+				Action:  string(shared.Stop),
+				Timeout: -1,
+				Force:   true,
+			}
+
+			op, err := s.UpdateContainerState(cName, req, "")
 			if err != nil {
 				return err
 			}
 
-			op, err := s.WaitFor(resp.Operation)
+			err = op.Wait()
 			if err != nil {
-				return err
-			}
-
-			if op.StatusCode == api.Failure {
 				return fmt.Errorf(i18n.G("Stopping container failed!"))
 			}
 
 			defer func() {
-				resp, err := s.Action(cName, shared.Start, -1, true, false)
+				req.Action = string(shared.Start)
+				op, err = s.UpdateContainerState(cName, req, "")
 				if err != nil {
 					return
 				}
 
-				s.WaitFor(resp.Operation)
+				op.Wait()
 			}()
 
 			if wasEphemeral {
 				ct.Ephemeral = true
-				err := s.UpdateContainerConfig(cName, ct.Writable())
+				op, err := s.UpdateContainer(cName, ct.Writable(), etag)
+				if err != nil {
+					return err
+				}
+
+				err = op.Wait()
 				if err != nil {
 					return err
 				}
@@ -139,8 +167,6 @@ func (c *publishCmd) run(config *lxd.Config, args []string) error {
 		properties[entry[0]] = entry[1]
 	}
 
-	var fp string
-
 	// We should only set the properties field if there actually are any.
 	// Otherwise we will only delete any existing properties on publish.
 	// This is something which only direct callers of the API are allowed to
@@ -149,28 +175,76 @@ func (c *publishCmd) run(config *lxd.Config, args []string) error {
 		properties = nil
 	}
 
-	// Optimized local publish
+	// Reformat aliases
+	aliases := []api.ImageAlias{}
+	for _, entry := range c.pAliases {
+		alias := api.ImageAlias{}
+		alias.Name = entry
+		aliases = append(aliases, alias)
+	}
+
+	// Create the image
+	req := api.ImagesPost{
+		Source: &api.ImagesPostSource{
+			Type: "container",
+			Name: cName,
+		},
+	}
+	req.Properties = properties
+
+	if shared.IsSnapshot(cName) {
+		req.Source.Type = "snapshot"
+	}
+
 	if cRemote == iRemote {
-		fp, err = d.ImageFromContainer(cName, c.makePublic, c.pAliases, properties)
+		req.Public = c.makePublic
+	}
+
+	op, err := s.CreateImage(req, nil)
+	if err != nil {
+		return err
+	}
+
+	err = op.Wait()
+	if err != nil {
+		return err
+	}
+
+	// Grab the fingerprint
+	fingerprint := op.Metadata["fingerprint"].(string)
+
+	// For remote publish, copy to target now
+	if cRemote != iRemote {
+		defer s.DeleteImage(fingerprint)
+
+		// Get the source image
+		image, _, err := s.GetImage(fingerprint)
 		if err != nil {
 			return err
 		}
-		fmt.Printf(i18n.G("Container published with fingerprint: %s")+"\n", fp)
-		return nil
+
+		// Image copy arguments
+		args := lxd.ImageCopyArgs{
+			Public: c.makePublic,
+		}
+
+		// Copy the image to the destination host
+		op, err := d.CopyImage(s, *image, &args)
+		if err != nil {
+			return err
+		}
+
+		err = op.Wait()
+		if err != nil {
+			return err
+		}
 	}
 
-	fp, err = s.ImageFromContainer(cName, false, nil, properties)
+	err = ensureImageAliases(d, aliases, fingerprint)
 	if err != nil {
 		return err
 	}
-	defer s.DeleteImage(fp)
-
-	err = s.CopyImage(fp, d, false, c.pAliases, c.makePublic, false, nil)
-	if err != nil {
-		return err
-	}
-
-	fmt.Printf(i18n.G("Container published with fingerprint: %s")+"\n", fp)
+	fmt.Printf(i18n.G("Container published with fingerprint: %s")+"\n", fingerprint)
 
 	return nil
 }

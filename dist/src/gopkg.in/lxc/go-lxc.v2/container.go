@@ -16,6 +16,7 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -26,8 +27,8 @@ import (
 
 // Container struct
 type Container struct {
-	container *C.struct_lxc_container
 	mu        sync.RWMutex
+	container *C.struct_lxc_container
 
 	verbosity Verbosity
 }
@@ -360,11 +361,6 @@ func (c *Container) Create(options TemplateOptions) error {
 		options.Backend = Directory
 	}
 
-	// unprivileged users are only allowed to use "download" template
-	if os.Geteuid() != 0 && options.Template != "download" {
-		return ErrTemplateNotAllowed
-	}
-
 	var args []string
 	if options.Template == "download" {
 		// required parameters
@@ -452,6 +448,7 @@ func (c *Container) Start() error {
 	return nil
 }
 
+// StartWithArgs starts the container using given arguments.
 func (c *Container) StartWithArgs(args []string) error {
 	if err := c.makeSure(isNotRunning); err != nil {
 		return err
@@ -470,6 +467,13 @@ func (c *Container) StartWithArgs(args []string) error {
 func (c *Container) Execute(args ...string) ([]byte, error) {
 	if err := c.makeSure(isNotDefined); err != nil {
 		return nil, err
+	}
+
+	// Deal with LXC 2.1's need of a defined container
+	if VersionAtLeast(2, 1, 0) {
+		os.MkdirAll(filepath.Join(c.ConfigPath(), c.Name()), 0700)
+		c.SaveConfigFile(filepath.Join(c.ConfigPath(), c.Name(), "config"))
+		defer os.RemoveAll(filepath.Join(c.ConfigPath(), c.Name()))
 	}
 
 	cargs := []string{"lxc-execute", "-n", c.Name(), "-P", c.ConfigPath(), "--"}
@@ -1178,6 +1182,7 @@ func (c *Container) RunCommandStatus(args []string, options AttachOptions) (int,
 	return ret, nil
 }
 
+// RunCommandNoWait runs the given command and returns without waiting it to finish.
 func (c *Container) RunCommandNoWait(args []string, options AttachOptions) (int, error) {
 	if len(args) == 0 {
 		return -1, ErrInsufficientNumberOfArguments
@@ -1279,16 +1284,21 @@ func (c *Container) InterfaceStats() (map[string]map[string]ByteSize, error) {
 
 	statistics := make(map[string]map[string]ByteSize)
 
-	for i := 0; i < len(c.ConfigItem("lxc.network")); i++ {
-		interfaceType := c.RunningConfigItem(fmt.Sprintf("lxc.network.%d.type", i))
+	netPrefix := "lxc.net"
+	if !VersionAtLeast(2, 1, 0) {
+		netPrefix = "lxc.network"
+	}
+
+	for i := 0; i < len(c.ConfigItem(netPrefix)); i++ {
+		interfaceType := c.RunningConfigItem(fmt.Sprintf("%s.%d.type", netPrefix, i))
 		if interfaceType == nil {
 			continue
 		}
 
 		if interfaceType[0] == "veth" {
-			interfaceName = c.RunningConfigItem(fmt.Sprintf("lxc.network.%d.veth.pair", i))[0]
+			interfaceName = c.RunningConfigItem(fmt.Sprintf("%s.%d.veth.pair", netPrefix, i))[0]
 		} else {
-			interfaceName = c.RunningConfigItem(fmt.Sprintf("lxc.network.%d.link", i))[0]
+			interfaceName = c.RunningConfigItem(fmt.Sprintf("%s.%d.link", netPrefix, i))[0]
 		}
 
 		for _, v := range []string{"rx", "tx"} {
@@ -1449,25 +1459,46 @@ func (c *Container) IPv6Addresses() ([]string, error) {
 
 // LogFile returns the name of the logfile.
 func (c *Container) LogFile() string {
+	if VersionAtLeast(2, 1, 0) {
+		return c.ConfigItem("lxc.log.file")[0]
+	}
+
 	return c.ConfigItem("lxc.logfile")[0]
 }
 
 // SetLogFile sets the name of the logfile.
 func (c *Container) SetLogFile(filename string) error {
-	if err := c.SetConfigItem("lxc.logfile", filename); err != nil {
+	var err error
+	if VersionAtLeast(2, 1, 0) {
+		err = c.SetConfigItem("lxc.log.file", filename)
+	} else {
+		err = c.SetConfigItem("lxc.logfile", filename)
+	}
+	if err != nil {
 		return err
 	}
+
 	return nil
 }
 
 // LogLevel returns the level of the logfile.
 func (c *Container) LogLevel() LogLevel {
+	if VersionAtLeast(2, 1, 0) {
+		return logLevelMap[c.ConfigItem("lxc.log.level")[0]]
+	}
+
 	return logLevelMap[c.ConfigItem("lxc.loglevel")[0]]
 }
 
 // SetLogLevel sets the level of the logfile.
 func (c *Container) SetLogLevel(level LogLevel) error {
-	if err := c.SetConfigItem("lxc.loglevel", level.String()); err != nil {
+	var err error
+	if VersionAtLeast(2, 1, 0) {
+		err = c.SetConfigItem("lxc.log.level", level.String())
+	} else {
+		err = c.SetConfigItem("lxc.loglevel", level.String())
+	}
+	if err != nil {
 		return err
 	}
 	return nil
@@ -1565,6 +1596,7 @@ func (c *Container) Restore(opts RestoreOptions) error {
 	return nil
 }
 
+// Migrate migrates the container.
 func (c *Container) Migrate(cmd uint, opts MigrateOptions) error {
 	if err := c.makeSure(isNotDefined | isGreaterEqualThanLXC20); err != nil {
 		return err
@@ -1610,7 +1642,7 @@ func (c *Container) Migrate(cmd uint, opts MigrateOptions) error {
 
 	ret := C.int(C.go_lxc_migrate(c.container, C.uint(cmd), &copts, &extras))
 	if ret != 0 {
-		return fmt.Errorf("migration failed %d\n", ret)
+		return fmt.Errorf("migration failed %d", ret)
 	}
 
 	return nil
@@ -1672,6 +1704,24 @@ func (c *Container) DetachInterfaceRename(source, target string) error {
 
 	if !bool(C.go_lxc_detach_interface(c.container, csource, ctarget)) {
 		return ErrDetachInterfaceFailed
+	}
+	return nil
+}
+
+// SetRunningConfigItem sets the value of the given config item in the
+// container's in-memory config.
+func (c *Container) SetRunningConfigItem(key string, value string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	ckey := C.CString(key)
+	defer C.free(unsafe.Pointer(ckey))
+
+	cvalue := C.CString(value)
+	defer C.free(unsafe.Pointer(cvalue))
+
+	if !bool(C.go_lxc_set_running_config_item(c.container, ckey, cvalue)) {
+		return ErrSettingConfigItemFailed
 	}
 	return nil
 }

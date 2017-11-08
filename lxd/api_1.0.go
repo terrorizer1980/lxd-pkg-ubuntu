@@ -6,10 +6,11 @@ import (
 	"net/http"
 	"os"
 	"reflect"
-	"syscall"
 
 	"gopkg.in/lxc/go-lxc.v2"
 
+	"github.com/lxc/lxd/lxd/db"
+	"github.com/lxc/lxd/lxd/util"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/osarch"
@@ -59,6 +60,8 @@ func api10Get(d *Daemon, r *http.Request) Response {
 		 */
 		APIExtensions: []string{
 			"id_map",
+			"id_map_base",
+			"resource_limits",
 		},
 		APIStatus:  "stable",
 		APIVersion: version.APIVersion,
@@ -67,49 +70,18 @@ func api10Get(d *Daemon, r *http.Request) Response {
 	}
 
 	// If untrusted, return now
-	if !d.isTrustedClient(r) {
+	if !util.IsTrustedClient(r, d.clientCerts) {
 		return SyncResponse(true, srv)
 	}
 
 	srv.Auth = "trusted"
 
-	/*
-	 * Based on: https://groups.google.com/forum/#!topic/golang-nuts/Jel8Bb-YwX8
-	 * there is really no better way to do this, which is
-	 * unfortunate. Also, we ditch the more accepted CharsToString
-	 * version in that thread, since it doesn't seem as portable,
-	 * viz. github issue #206.
-	 */
-	uname := syscall.Utsname{}
-	if err := syscall.Uname(&uname); err != nil {
+	uname, err := shared.Uname()
+	if err != nil {
 		return InternalError(err)
 	}
 
-	kernel := ""
-	for _, c := range uname.Sysname {
-		if c == 0 {
-			break
-		}
-		kernel += string(byte(c))
-	}
-
-	kernelVersion := ""
-	for _, c := range uname.Release {
-		if c == 0 {
-			break
-		}
-		kernelVersion += string(byte(c))
-	}
-
-	kernelArchitecture := ""
-	for _, c := range uname.Machine {
-		if c == 0 {
-			break
-		}
-		kernelArchitecture += string(byte(c))
-	}
-
-	addresses, err := d.ListenAddresses()
+	addresses, err := util.ListenAddresses(daemonConfig["core.https_address"].Get())
 	if err != nil {
 		return InternalError(err)
 	}
@@ -126,7 +98,7 @@ func api10Get(d *Daemon, r *http.Request) Response {
 
 	architectures := []string{}
 
-	for _, architecture := range d.architectures {
+	for _, architecture := range d.os.Architectures {
 		architectureName, err := osarch.ArchitectureName(architecture)
 		if err != nil {
 			return InternalError(err)
@@ -141,9 +113,9 @@ func api10Get(d *Daemon, r *http.Request) Response {
 		CertificateFingerprint: certificateFingerprint,
 		Driver:                 "lxc",
 		DriverVersion:          lxc.Version(),
-		Kernel:                 kernel,
-		KernelArchitecture:     kernelArchitecture,
-		KernelVersion:          kernelVersion,
+		Kernel:                 uname.Sysname,
+		KernelArchitecture:     uname.Machine,
+		KernelVersion:          uname.Release,
 		Storage:                d.Storage.GetStorageTypeName(),
 		StorageVersion:         d.Storage.GetStorageTypeVersion(),
 		Server:                 "lxd",
@@ -158,9 +130,9 @@ func api10Get(d *Daemon, r *http.Request) Response {
 }
 
 func api10Put(d *Daemon, r *http.Request) Response {
-	oldConfig, err := dbConfigValuesGet(d.db)
+	oldConfig, err := db.ConfigValuesGet(d.db)
 	if err != nil {
-		return InternalError(err)
+		return SmartError(err)
 	}
 
 	req := api.ServerPut{}

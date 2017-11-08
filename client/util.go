@@ -9,12 +9,13 @@ import (
 	"net/url"
 
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/cancel"
 	"github.com/lxc/lxd/shared/ioprogress"
 )
 
-func tlsHTTPClient(tlsClientCert string, tlsClientKey string, tlsServerCert string, proxy func(req *http.Request) (*url.URL, error)) (*http.Client, error) {
+func tlsHTTPClient(client *http.Client, tlsClientCert string, tlsClientKey string, tlsCA string, tlsServerCert string, insecureSkipVerify bool, proxy func(req *http.Request) (*url.URL, error)) (*http.Client, error) {
 	// Get the TLS configuration
-	tlsConfig, err := shared.GetTLSConfigMem(tlsClientCert, tlsClientKey, tlsServerCert)
+	tlsConfig, err := shared.GetTLSConfigMem(tlsClientCert, tlsClientKey, tlsCA, tlsServerCert, insecureSkipVerify)
 	if err != nil {
 		return nil, err
 	}
@@ -33,9 +34,10 @@ func tlsHTTPClient(tlsClientCert string, tlsClientKey string, tlsServerCert stri
 	}
 
 	// Define the http client
-	client := http.Client{
-		Transport: transport,
+	if client == nil {
+		client = &http.Client{}
 	}
+	client.Transport = transport
 
 	// Setup redirect policy
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
@@ -45,10 +47,10 @@ func tlsHTTPClient(tlsClientCert string, tlsClientKey string, tlsServerCert stri
 		return nil
 	}
 
-	return &client, nil
+	return client, nil
 }
 
-func unixHTTPClient(path string) (*http.Client, error) {
+func unixHTTPClient(client *http.Client, path string) (*http.Client, error) {
 	// Setup a Unix socket dialer
 	unixDial := func(network, addr string) (net.Conn, error) {
 		raddr, err := net.ResolveUnixAddr("unix", path)
@@ -66,9 +68,10 @@ func unixHTTPClient(path string) (*http.Client, error) {
 	}
 
 	// Define the http client
-	client := http.Client{
-		Transport: transport,
+	if client == nil {
+		client = &http.Client{}
 	}
+	client.Transport = transport
 
 	// Setup redirect policy
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
@@ -78,10 +81,10 @@ func unixHTTPClient(path string) (*http.Client, error) {
 		return nil
 	}
 
-	return &client, nil
+	return client, nil
 }
 
-func downloadFileSha256(httpClient *http.Client, useragent string, progress func(progress ProgressData), filename string, url string, hash string, target io.WriteSeeker) (int64, error) {
+func downloadFileSha256(httpClient *http.Client, useragent string, progress func(progress ProgressData), canceler *cancel.Canceler, filename string, url string, hash string, target io.WriteSeeker) (int64, error) {
 	// Always seek to the beginning
 	target.Seek(0, 0)
 
@@ -95,12 +98,13 @@ func downloadFileSha256(httpClient *http.Client, useragent string, progress func
 		req.Header.Set("User-Agent", useragent)
 	}
 
-	// Start the request
-	r, err := httpClient.Do(req)
+	// Perform the request
+	r, doneCh, err := cancel.CancelableDownload(canceler, httpClient, req)
 	if err != nil {
 		return -1, err
 	}
 	defer r.Body.Close()
+	defer close(doneCh)
 
 	if r.StatusCode != http.StatusOK {
 		return -1, fmt.Errorf("Unable to fetch %s: %s", url, r.Status)

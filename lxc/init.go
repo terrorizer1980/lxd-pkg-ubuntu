@@ -5,7 +5,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/lxc/lxd"
+	"github.com/lxc/lxd/client"
+	"github.com/lxc/lxd/lxc/config"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/gnuflag"
 	"github.com/lxc/lxd/shared/i18n"
@@ -60,9 +61,10 @@ func (f *profileList) Set(value string) error {
 var initRequestedEmptyProfiles bool
 
 type initCmd struct {
-	profArgs profileList
-	confArgs configList
-	ephem    bool
+	profArgs     profileList
+	confArgs     configList
+	ephem        bool
+	instanceType string
 }
 
 func (c *initCmd) showByDefault() bool {
@@ -71,7 +73,7 @@ func (c *initCmd) showByDefault() bool {
 
 func (c *initCmd) usage() string {
 	return i18n.G(
-		`Usage: lxc init [<remote>:]<image> [<remote>:][<name>] [--ephemeral|-e] [--profile|-p <profile>...] [--config|-c <key=value>...]
+		`Usage: lxc init [<remote>:]<image> [<remote>:][<name>] [--ephemeral|-e] [--profile|-p <profile>...] [--config|-c <key=value>...] [--type|-t <instance type>]
 
 Create containers from images.
 
@@ -136,29 +138,42 @@ func (c *initCmd) flags() {
 	gnuflag.Var(&c.profArgs, "p", i18n.G("Profile to apply to the new container"))
 	gnuflag.BoolVar(&c.ephem, "ephemeral", false, i18n.G("Ephemeral container"))
 	gnuflag.BoolVar(&c.ephem, "e", false, i18n.G("Ephemeral container"))
+	gnuflag.StringVar(&c.instanceType, "t", "", i18n.G("Instance type"))
 }
 
-func (c *initCmd) run(config *lxd.Config, args []string) error {
+func (c *initCmd) run(conf *config.Config, args []string) error {
+	_, _, err := c.create(conf, args)
+	return err
+}
+
+func (c *initCmd) create(conf *config.Config, args []string) (lxd.ContainerServer, string, error) {
 	if len(args) > 2 || len(args) < 1 {
-		return errArgs
+		return nil, "", errArgs
 	}
 
-	iremote, image := config.ParseRemoteAndContainer(args[0])
+	iremote, image, err := conf.ParseRemote(args[0])
+	if err != nil {
+		return nil, "", err
+	}
 
 	var name string
 	var remote string
 	if len(args) == 2 {
-		remote, name = config.ParseRemoteAndContainer(args[1])
+		remote, name, err = conf.ParseRemote(args[1])
+		if err != nil {
+			return nil, "", err
+		}
 	} else {
-		remote, name = config.ParseRemoteAndContainer("")
+		remote, name, err = conf.ParseRemote("")
+		if err != nil {
+			return nil, "", err
+		}
 	}
 
-	d, err := lxd.NewClient(config, remote)
+	d, err := conf.GetContainerServer(remote)
 	if err != nil {
-		return err
+		return nil, "", err
 	}
-
-	// TODO: implement the syntax for supporting other image types/remotes
 
 	/*
 	 * initRequestedEmptyProfiles means user requested empty
@@ -169,104 +184,123 @@ func (c *initCmd) run(config *lxd.Config, args []string) error {
 		profiles = append(profiles, p)
 	}
 
-	var resp *api.Response
 	if name == "" {
 		fmt.Printf(i18n.G("Creating the container") + "\n")
 	} else {
 		fmt.Printf(i18n.G("Creating %s")+"\n", name)
 	}
 
-	iremote, image = c.guessImage(config, d, remote, iremote, image)
+	// Get the image server and image info
+	iremote, image = c.guessImage(conf, d, remote, iremote, image)
+	var imgRemote lxd.ImageServer
+	var imgInfo *api.Image
 
-	if !initRequestedEmptyProfiles && len(profiles) == 0 {
-		resp, err = d.Init(name, iremote, image, nil, configMap, c.ephem)
+	// Connect to the image server
+	if iremote == remote {
+		imgRemote = d
 	} else {
-		resp, err = d.Init(name, iremote, image, &profiles, configMap, c.ephem)
+		imgRemote, err = conf.GetImageServer(iremote)
+		if err != nil {
+			return nil, "", err
+		}
 	}
+
+	// Deal with the default image
+	if image == "" {
+		image = "default"
+	}
+
+	// Setup container creation request
+	req := api.ContainersPost{
+		Name:         name,
+		InstanceType: c.instanceType,
+	}
+	req.Config = configMap
+	if !initRequestedEmptyProfiles && len(profiles) == 0 {
+		req.Profiles = nil
+	} else {
+		req.Profiles = profiles
+	}
+	req.Ephemeral = c.ephem
+
+	// Optimisation for simplestreams
+	if conf.Remotes[iremote].Protocol == "simplestreams" {
+		imgInfo = &api.Image{}
+		imgInfo.Fingerprint = image
+		imgInfo.Public = true
+		req.Source.Alias = image
+	} else {
+		// Attempt to resolve an image alias
+		alias, _, err := imgRemote.GetImageAlias(image)
+		if err == nil {
+			req.Source.Alias = image
+			image = alias.Target
+		}
+
+		// Get the image info
+		imgInfo, _, err = imgRemote.GetImage(image)
+		if err != nil {
+			return nil, "", err
+		}
+	}
+
+	// Create the container
+	op, err := d.CreateContainerFromImage(imgRemote, *imgInfo, req)
 	if err != nil {
-		return err
+		return nil, "", err
 	}
 
-	progress := ProgressRenderer{}
-	c.initProgressTracker(d, &progress, resp.Operation)
+	// Watch the background operation
+	progress := ProgressRenderer{Format: i18n.G("Retrieving image: %s")}
+	_, err = op.AddHandler(progress.UpdateOp)
+	if err != nil {
+		progress.Done("")
+		return nil, "", err
+	}
 
-	err = d.WaitForSuccess(resp.Operation)
+	err = cancelableWait(op, &progress)
+	if err != nil {
+		progress.Done("")
+		return nil, "", err
+	}
 	progress.Done("")
 
+	// Extract the container name
+	opInfo, err := op.GetTarget()
 	if err != nil {
-		return err
-	}
-	op, err := resp.MetadataAsOperation()
-	if err != nil {
-		return fmt.Errorf(i18n.G("didn't get any affected image, container or snapshot from server"))
+		return nil, "", err
 	}
 
-	containers, ok := op.Resources["containers"]
+	containers, ok := opInfo.Resources["containers"]
 	if !ok || len(containers) == 0 {
-		return fmt.Errorf(i18n.G("didn't get any affected image, container or snapshot from server"))
+		return nil, "", fmt.Errorf(i18n.G("didn't get any affected image, container or snapshot from server"))
 	}
 
 	if len(containers) == 1 && name == "" {
 		fields := strings.Split(containers[0], "/")
-		fmt.Printf(i18n.G("Container name is: %s")+"\n", fields[len(fields)-1])
+		name = fields[len(fields)-1]
+		fmt.Printf(i18n.G("Container name is: %s")+"\n", name)
 	}
-	return nil
+
+	return d, name, nil
 }
 
-func (c *initCmd) initProgressTracker(d *lxd.Client, progress *ProgressRenderer, operation string) {
-	progress.Format = i18n.G("Retrieving image: %s")
-	handler := func(msg interface{}) {
-		if msg == nil {
-			return
-		}
-
-		event := msg.(map[string]interface{})
-		if event["type"].(string) != "operation" {
-			return
-		}
-
-		if event["metadata"] == nil {
-			return
-		}
-
-		md := event["metadata"].(map[string]interface{})
-		if !strings.HasSuffix(operation, md["id"].(string)) {
-			return
-		}
-
-		if md["metadata"] == nil {
-			return
-		}
-
-		if api.StatusCode(md["status_code"].(float64)).IsFinal() {
-			return
-		}
-
-		opMd := md["metadata"].(map[string]interface{})
-		_, ok := opMd["download_progress"]
-		if ok {
-			progress.Update(opMd["download_progress"].(string))
-		}
-	}
-	go d.Monitor([]string{"operation"}, handler, nil)
-}
-
-func (c *initCmd) guessImage(config *lxd.Config, d *lxd.Client, remote string, iremote string, image string) (string, string) {
+func (c *initCmd) guessImage(conf *config.Config, d lxd.ContainerServer, remote string, iremote string, image string) (string, string) {
 	if remote != iremote {
 		return iremote, image
 	}
 
-	_, ok := config.Remotes[image]
+	_, ok := conf.Remotes[image]
 	if !ok {
 		return iremote, image
 	}
 
-	target := d.GetAlias(image)
-	if target != "" {
+	_, _, err := d.GetImageAlias(image)
+	if err == nil {
 		return iremote, image
 	}
 
-	_, err := d.GetImageInfo(image)
+	_, _, err = d.GetImage(image)
 	if err == nil {
 		return iremote, image
 	}

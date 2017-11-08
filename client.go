@@ -227,7 +227,7 @@ func connectViaUnix(c *Client, remote *RemoteConfig) error {
 }
 
 func connectViaHttp(c *Client, remote *RemoteConfig, clientCert, clientKey, serverCert string) error {
-	tlsconfig, err := shared.GetTLSConfigMem(clientCert, clientKey, serverCert)
+	tlsconfig, err := shared.GetTLSConfigMem(clientCert, clientKey, "", serverCert, false)
 	if err != nil {
 		return err
 	}
@@ -286,7 +286,7 @@ func NewClientFromInfo(info ConnectInfo) (*Client, error) {
 	}
 
 	if info.RemoteConfig.Protocol == "simplestreams" {
-		tlsconfig, err := shared.GetTLSConfig("", "", nil)
+		tlsconfig, err := shared.GetTLSConfig("", "", "", nil)
 		if err != nil {
 			return nil, err
 		}
@@ -1786,7 +1786,7 @@ func (c *Client) PullFile(container string, p string) (int64, int64, int, io.Rea
 		return 0, 0, 0, nil, err
 	}
 
-	uid, gid, mode := shared.ParseLXDFileHeaders(r.Header)
+	uid, gid, mode, _, _ := shared.ParseLXDFileHeaders(r.Header)
 
 	return uid, gid, mode, r.Body, nil
 }

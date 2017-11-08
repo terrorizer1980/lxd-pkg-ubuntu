@@ -7,15 +7,7 @@ import (
 	"github.com/lxc/lxd/client"
 )
 
-func cmdShutdown() error {
-	var timeout int
-
-	if *argTimeout == -1 {
-		timeout = 60
-	} else {
-		timeout = *argTimeout
-	}
-
+func cmdShutdown(args *Args) error {
 	c, err := lxd.ConnectLXDUnix("", nil)
 	if err != nil {
 		return err
@@ -38,11 +30,15 @@ func cmdShutdown() error {
 		close(chMonitor)
 	}()
 
-	select {
-	case <-chMonitor:
-		break
-	case <-time.After(time.Second * time.Duration(timeout)):
-		return fmt.Errorf("LXD still running after %ds timeout.", timeout)
+	if args.Timeout > 0 {
+		select {
+		case <-chMonitor:
+			break
+		case <-time.After(time.Second * time.Duration(args.Timeout)):
+			return fmt.Errorf("LXD still running after %ds timeout.", args.Timeout)
+		}
+	} else {
+		<-chMonitor
 	}
 
 	return nil

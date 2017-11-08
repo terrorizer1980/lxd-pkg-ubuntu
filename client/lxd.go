@@ -9,9 +9,14 @@ import (
 	"sync"
 
 	"github.com/gorilla/websocket"
+	"gopkg.in/macaroon-bakery.v2-unstable/bakery"
+	"gopkg.in/macaroon-bakery.v2-unstable/httpbakery"
 
+	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/logger"
+
+	neturl "net/url"
 )
 
 // ProtocolLXD represents a LXD API server
@@ -22,9 +27,70 @@ type ProtocolLXD struct {
 	eventListenersLock sync.Mutex
 
 	http            *http.Client
-	httpHost        string
-	httpUserAgent   string
 	httpCertificate string
+	httpHost        string
+	httpProtocol    string
+	httpUserAgent   string
+
+	bakeryClient         *httpbakery.Client
+	bakeryInteractor     httpbakery.Interactor
+	requireAuthenticated bool
+}
+
+// GetConnectionInfo returns the basic connection information used to interact with the server
+func (r *ProtocolLXD) GetConnectionInfo() (*ConnectionInfo, error) {
+	info := ConnectionInfo{}
+	info.Certificate = r.httpCertificate
+	info.Protocol = "lxd"
+
+	urls := []string{}
+	if r.httpProtocol == "https" {
+		urls = append(urls, r.httpHost)
+	}
+
+	if len(r.server.Environment.Addresses) > 0 {
+		for _, addr := range r.server.Environment.Addresses {
+			url := fmt.Sprintf("https://%s", addr)
+			if !shared.StringInSlice(url, urls) {
+				urls = append(urls, url)
+			}
+		}
+	}
+	info.Addresses = urls
+
+	return &info, nil
+}
+
+// GetHTTPClient returns the http client used for the connection. This can be used to set custom http options.
+func (r *ProtocolLXD) GetHTTPClient() (*http.Client, error) {
+	if r.http == nil {
+		return nil, fmt.Errorf("HTTP client isn't set, bad connection")
+	}
+
+	return r.http, nil
+}
+
+// Do performs a Request, using macaroon authentication if set.
+func (r *ProtocolLXD) do(req *http.Request) (*http.Response, error) {
+	if r.bakeryClient != nil {
+		r.addMacaroonHeaders(req)
+		return r.bakeryClient.Do(req)
+	}
+
+	return r.http.Do(req)
+}
+
+func (r *ProtocolLXD) addMacaroonHeaders(req *http.Request) {
+	req.Header.Set(httpbakery.BakeryProtocolHeader, fmt.Sprint(bakery.LatestVersion))
+
+	for _, cookie := range r.http.Jar.Cookies(req.URL) {
+		req.AddCookie(cookie)
+	}
+}
+
+// RequireAuthenticated sets whether we expect to be authenticated with the server
+func (r *ProtocolLXD) RequireAuthenticated(authenticated bool) {
+	r.requireAuthenticated = authenticated
 }
 
 // RawQuery allows directly querying the LXD API
@@ -41,19 +107,42 @@ func (r *ProtocolLXD) RawQuery(method string, path string, data interface{}, ETa
 //
 // This should only be used by internal LXD tools.
 func (r *ProtocolLXD) RawWebsocket(path string) (*websocket.Conn, error) {
-	// Generate the URL
-	url := fmt.Sprintf("%s%s", r.httpHost, path)
-
-	return r.rawWebsocket(url)
+	return r.websocket(path)
 }
 
 // Internal functions
+func (r *ProtocolLXD) parseResponse(resp *http.Response) (*api.Response, string, error) {
+	// Get the ETag
+	etag := resp.Header.Get("ETag")
+
+	// Decode the response
+	decoder := json.NewDecoder(resp.Body)
+	response := api.Response{}
+
+	err := decoder.Decode(&response)
+	if err != nil {
+		// Check the return value for a cleaner error
+		if resp.StatusCode != http.StatusOK {
+			return nil, "", fmt.Errorf("Failed to fetch %s: %s", resp.Request.URL.String(), resp.Status)
+		}
+
+		return nil, "", err
+	}
+
+	// Handle errors
+	if response.Type == api.ErrorResponse {
+		return nil, "", fmt.Errorf(response.Error)
+	}
+
+	return &response, etag, nil
+}
+
 func (r *ProtocolLXD) rawQuery(method string, url string, data interface{}, ETag string) (*api.Response, string, error) {
 	var req *http.Request
 	var err error
 
 	// Log the request
-	logger.Info("Sending request to LXD",
+	logger.Debug("Sending request to LXD",
 		"method", method,
 		"url", url,
 		"etag", ETag,
@@ -69,7 +158,8 @@ func (r *ProtocolLXD) rawQuery(method string, url string, data interface{}, ETag
 		}
 
 		// Some data to be sent along with the request
-		req, err = http.NewRequest(method, url, &buf)
+		// Use a reader since the request body needs to be seekable
+		req, err = http.NewRequest(method, url, bytes.NewReader(buf.Bytes()))
 		if err != nil {
 			return nil, "", err
 		}
@@ -97,36 +187,19 @@ func (r *ProtocolLXD) rawQuery(method string, url string, data interface{}, ETag
 		req.Header.Set("If-Match", ETag)
 	}
 
+	// Set the authentication header
+	if r.requireAuthenticated {
+		req.Header.Set("X-LXD-authenticated", "true")
+	}
+
 	// Send the request
-	resp, err := r.http.Do(req)
+	resp, err := r.do(req)
 	if err != nil {
 		return nil, "", err
 	}
 	defer resp.Body.Close()
 
-	// Get the ETag
-	etag := resp.Header.Get("ETag")
-
-	// Decode the response
-	decoder := json.NewDecoder(resp.Body)
-	response := api.Response{}
-
-	err = decoder.Decode(&response)
-	if err != nil {
-		// Check the return value for a cleaner error
-		if resp.StatusCode != http.StatusOK {
-			return nil, "", fmt.Errorf("Failed to fetch %s: %s", url, resp.Status)
-		}
-
-		return nil, "", err
-	}
-
-	// Handle errors
-	if response.Type == api.ErrorResponse {
-		return nil, "", fmt.Errorf(response.Error)
-	}
-
-	return &response, etag, nil
+	return r.parseResponse(resp)
 }
 
 func (r *ProtocolLXD) query(method string, path string, data interface{}, ETag string) (*api.Response, string, error) {
@@ -155,15 +228,29 @@ func (r *ProtocolLXD) queryStruct(method string, path string, data interface{}, 
 }
 
 func (r *ProtocolLXD) queryOperation(method string, path string, data interface{}, ETag string) (*Operation, string, error) {
+	// Attempt to setup an early event listener
+	listener, err := r.GetEvents()
+	if err != nil {
+		listener = nil
+	}
+
 	// Send the query
 	resp, etag, err := r.query(method, path, data, ETag)
 	if err != nil {
+		if listener != nil {
+			listener.Disconnect()
+		}
+
 		return nil, "", err
 	}
 
 	// Get to the operation
 	respOperation, err := resp.MetadataAsOperation()
 	if err != nil {
+		if listener != nil {
+			listener.Disconnect()
+		}
+
 		return nil, "", err
 	}
 
@@ -171,6 +258,7 @@ func (r *ProtocolLXD) queryOperation(method string, path string, data interface{
 	op := Operation{
 		Operation: *respOperation,
 		r:         r,
+		listener:  listener,
 		chActive:  make(chan bool),
 	}
 
@@ -197,6 +285,20 @@ func (r *ProtocolLXD) rawWebsocket(url string) (*websocket.Conn, error) {
 		headers.Set("User-Agent", r.httpUserAgent)
 	}
 
+	if r.requireAuthenticated {
+		headers.Set("X-LXD-authenticated", "true")
+	}
+
+	// Set macaroon headers if needed
+	if r.bakeryClient != nil {
+		u, err := neturl.Parse(r.httpHost) // use the http url, not the ws one
+		if err != nil {
+			return nil, err
+		}
+		req := &http.Request{URL: u, Header: headers}
+		r.addMacaroonHeaders(req)
+	}
+
 	// Establish the connection
 	conn, _, err := dialer.Dial(url, headers)
 	if err != nil {
@@ -219,4 +321,12 @@ func (r *ProtocolLXD) websocket(path string) (*websocket.Conn, error) {
 	}
 
 	return r.rawWebsocket(url)
+}
+
+func (r *ProtocolLXD) setupBakeryClient() {
+	r.bakeryClient = httpbakery.NewClient()
+	r.bakeryClient.Client = r.http
+	if r.bakeryInteractor != nil {
+		r.bakeryClient.AddInteractor(r.bakeryInteractor)
+	}
 }

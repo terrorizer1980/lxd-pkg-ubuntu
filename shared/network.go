@@ -41,9 +41,13 @@ func initTLSConfig() *tls.Config {
 		MinVersion: tls.VersionTLS12,
 		MaxVersion: tls.VersionTLS12,
 		CipherSuites: []uint16{
+			tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA,
 			tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 			tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,
+			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
+			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 			tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA},
 		PreferServerCipherSuites: true,
 	}
@@ -52,7 +56,10 @@ func initTLSConfig() *tls.Config {
 func finalizeTLSConfig(tlsConfig *tls.Config, tlsRemoteCert *x509.Certificate) {
 	// Trusted certificates
 	if tlsRemoteCert != nil {
-		caCertPool := x509.NewCertPool()
+		caCertPool := tlsConfig.RootCAs
+		if caCertPool == nil {
+			caCertPool = x509.NewCertPool()
+		}
 
 		// Make it a valid RootCA
 		tlsRemoteCert.IsCA = true
@@ -71,7 +78,7 @@ func finalizeTLSConfig(tlsConfig *tls.Config, tlsRemoteCert *x509.Certificate) {
 	tlsConfig.BuildNameToCertificate()
 }
 
-func GetTLSConfig(tlsClientCertFile string, tlsClientKeyFile string, tlsRemoteCert *x509.Certificate) (*tls.Config, error) {
+func GetTLSConfig(tlsClientCertFile string, tlsClientKeyFile string, tlsClientCAFile string, tlsRemoteCert *x509.Certificate) (*tls.Config, error) {
 	tlsConfig := initTLSConfig()
 
 	// Client authentication
@@ -84,13 +91,25 @@ func GetTLSConfig(tlsClientCertFile string, tlsClientKeyFile string, tlsRemoteCe
 		tlsConfig.Certificates = []tls.Certificate{cert}
 	}
 
+	if tlsClientCAFile != "" {
+		caCertificates, err := ioutil.ReadFile(tlsClientCAFile)
+		if err != nil {
+			return nil, err
+		}
+
+		caPool := x509.NewCertPool()
+		caPool.AppendCertsFromPEM(caCertificates)
+
+		tlsConfig.RootCAs = caPool
+	}
+
 	finalizeTLSConfig(tlsConfig, tlsRemoteCert)
 	return tlsConfig, nil
 }
 
-func GetTLSConfigMem(tlsClientCert string, tlsClientKey string, tlsRemoteCertPEM string) (*tls.Config, error) {
+func GetTLSConfigMem(tlsClientCert string, tlsClientKey string, tlsClientCA string, tlsRemoteCertPEM string, insecureSkipVerify bool) (*tls.Config, error) {
 	tlsConfig := initTLSConfig()
-
+	tlsConfig.InsecureSkipVerify = insecureSkipVerify
 	// Client authentication
 	if tlsClientCert != "" && tlsClientKey != "" {
 		cert, err := tls.X509KeyPair([]byte(tlsClientCert), []byte(tlsClientKey))
@@ -115,6 +134,14 @@ func GetTLSConfigMem(tlsClientCert string, tlsClientKey string, tlsRemoteCertPEM
 			return nil, err
 		}
 	}
+
+	if tlsClientCA != "" {
+		caPool := x509.NewCertPool()
+		caPool.AppendCertsFromPEM([]byte(tlsClientCA))
+
+		tlsConfig.RootCAs = caPool
+	}
+
 	finalizeTLSConfig(tlsConfig, tlsRemoteCert)
 
 	return tlsConfig, nil
@@ -203,6 +230,51 @@ func WebsocketRecvStream(w io.Writer, conn *websocket.Conn) chan bool {
 		}
 		ch <- true
 	}(w, conn)
+
+	return ch
+}
+
+func WebsocketProxy(source *websocket.Conn, target *websocket.Conn) chan bool {
+	forward := func(in *websocket.Conn, out *websocket.Conn, ch chan bool) {
+		for {
+			mt, r, err := in.NextReader()
+			if err != nil {
+				break
+			}
+
+			w, err := out.NextWriter(mt)
+			if err != nil {
+				break
+			}
+
+			_, err = io.Copy(w, r)
+			w.Close()
+			if err != nil {
+				break
+			}
+		}
+
+		ch <- true
+	}
+
+	chSend := make(chan bool)
+	go forward(source, target, chSend)
+
+	chRecv := make(chan bool)
+	go forward(target, source, chRecv)
+
+	ch := make(chan bool)
+	go func() {
+		select {
+		case <-chSend:
+		case <-chRecv:
+		}
+
+		source.Close()
+		target.Close()
+
+		ch <- true
+	}()
 
 	return ch
 }
@@ -308,4 +380,19 @@ func WebsocketMirror(conn *websocket.Conn, w io.WriteCloser, r io.ReadCloser, Re
 
 var WebsocketUpgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+// AllocatePort asks the kernel for a free open port that is ready to use
+func AllocatePort() (int, error) {
+	addr, err := net.ResolveTCPAddr("tcp", "localhost:0")
+	if err != nil {
+		return -1, err
+	}
+
+	l, err := net.ListenTCP("tcp", addr)
+	if err != nil {
+		return -1, err
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port, nil
 }

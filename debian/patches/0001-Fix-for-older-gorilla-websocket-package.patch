@@ -1,0 +1,28 @@
+From 1e164d18a4ab26f55f241c51447f8b529e7f88a1 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Wed, 24 May 2017 15:27:14 -0400
+Subject: Fix for older gorilla websocket package
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The Proxy property doesn't exist in the version of gorilla websocket
+present in Ubuntu 16.04.
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ client/lxd.go | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/client/lxd.go b/client/lxd.go
+index 6aef4cf1..6b57f2a2 100644
+--- a/client/lxd.go
++++ b/client/lxd.go
+@@ -277,7 +277,6 @@ func (r *ProtocolLXD) rawWebsocket(url string) (*websocket.Conn, error) {
+ 	dialer := websocket.Dialer{
+ 		NetDial:         httpTransport.Dial,
+ 		TLSClientConfig: httpTransport.TLSClientConfig,
+-		Proxy:           httpTransport.Proxy,
+ 	}
+ 
+ 	// Set the user agent

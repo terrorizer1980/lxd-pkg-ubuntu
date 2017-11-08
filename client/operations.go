@@ -16,8 +16,10 @@ type Operation struct {
 
 	r            *ProtocolLXD
 	listener     *EventListener
-	listenerLock sync.Mutex
-	chActive     chan bool
+	handlerReady bool
+	handlerLock  sync.Mutex
+
+	chActive chan bool
 }
 
 // AddHandler adds a function to be called whenever an event is received
@@ -29,8 +31,8 @@ func (op *Operation) AddHandler(function func(api.Operation)) (*EventTarget, err
 	}
 
 	// Make sure we're not racing with ourselves
-	op.listenerLock.Lock()
-	defer op.listenerLock.Unlock()
+	op.handlerLock.Lock()
+	defer op.handlerLock.Unlock()
 
 	// If we're done already, just return
 	if op.StatusCode.IsFinal() {
@@ -63,8 +65,8 @@ func (op *Operation) GetWebsocket(secret string) (*websocket.Conn, error) {
 // RemoveHandler removes a function to be called whenever an event is received
 func (op *Operation) RemoveHandler(target *EventTarget) error {
 	// Make sure we're not racing with ourselves
-	op.listenerLock.Lock()
-	defer op.listenerLock.Unlock()
+	op.handlerLock.Lock()
+	defer op.handlerLock.Unlock()
 
 	// If the listener is gone, just return
 	if op.listener == nil {
@@ -77,7 +79,7 @@ func (op *Operation) RemoveHandler(target *EventTarget) error {
 // Refresh pulls the current version of the operation and updates the struct
 func (op *Operation) Refresh() error {
 	// Don't bother with a manual update if we are listening for events
-	if op.listener != nil {
+	if op.handlerReady {
 		return nil
 	}
 
@@ -122,23 +124,27 @@ func (op *Operation) Wait() error {
 
 func (op *Operation) setupListener() error {
 	// Make sure we're not racing with ourselves
-	op.listenerLock.Lock()
-	defer op.listenerLock.Unlock()
+	op.handlerLock.Lock()
+	defer op.handlerLock.Unlock()
 
 	// We already have a listener setup
-	if op.listener != nil {
+	if op.handlerReady {
 		return nil
 	}
 
 	// Get a new listener
-	listener, err := op.r.GetEvents()
-	if err != nil {
-		return err
+	if op.listener == nil {
+		listener, err := op.r.GetEvents()
+		if err != nil {
+			return err
+		}
+
+		op.listener = listener
 	}
 
 	// Setup the handler
 	chReady := make(chan bool)
-	_, err = listener.AddHandler([]string{"operation"}, func(data interface{}) {
+	_, err := op.listener.AddHandler([]string{"operation"}, func(data interface{}) {
 		<-chReady
 
 		// Get an operation struct out of this data
@@ -148,8 +154,8 @@ func (op *Operation) setupListener() error {
 		}
 
 		// We don't want concurrency while processing events
-		op.listenerLock.Lock()
-		defer op.listenerLock.Unlock()
+		op.handlerLock.Lock()
+		defer op.handlerLock.Unlock()
 
 		// Check if we're done already (because of another event)
 		if op.listener == nil {
@@ -168,21 +174,62 @@ func (op *Operation) setupListener() error {
 		}
 	})
 	if err != nil {
-		listener.Disconnect()
+		op.listener.Disconnect()
+		op.listener = nil
+		close(op.chActive)
+		close(chReady)
+
 		return err
 	}
+
+	// Monitor event listener
+	go func() {
+		<-chReady
+
+		// We don't want concurrency while accessing the listener
+		op.handlerLock.Lock()
+
+		// Check if we're done already (because of another event)
+		listener := op.listener
+		if listener == nil {
+			op.handlerLock.Unlock()
+			return
+		}
+		op.handlerLock.Unlock()
+
+		// Wait for the listener or operation to be done
+		select {
+		case <-listener.chActive:
+			op.handlerLock.Lock()
+			if op.listener != nil {
+				op.Err = fmt.Sprintf("%v", listener.err)
+				close(op.chActive)
+			}
+			op.handlerLock.Unlock()
+		case <-op.chActive:
+			return
+		}
+	}()
 
 	// And do a manual refresh to avoid races
 	err = op.Refresh()
 	if err != nil {
-		listener.Disconnect()
+		op.listener.Disconnect()
+		op.listener = nil
+		close(op.chActive)
+		close(chReady)
+
 		return err
 	}
 
 	// Check if not done already
 	if op.StatusCode.IsFinal() {
-		listener.Disconnect()
+		op.listener.Disconnect()
+		op.listener = nil
 		close(op.chActive)
+
+		op.handlerReady = true
+		close(chReady)
 
 		if op.Err != "" {
 			return fmt.Errorf(op.Err)
@@ -192,7 +239,7 @@ func (op *Operation) setupListener() error {
 	}
 
 	// Start processing background updates
-	op.listener = listener
+	op.handlerReady = true
 	close(chReady)
 
 	return nil
@@ -223,4 +270,69 @@ func (op *Operation) extractOperation(data interface{}) *api.Operation {
 	}
 
 	return &newOp
+}
+
+// The RemoteOperation type represents an ongoing LXD operation between two servers
+type RemoteOperation struct {
+	targetOp *Operation
+
+	handlers []func(api.Operation)
+
+	chDone chan bool
+	chPost chan bool
+	err    error
+}
+
+// AddHandler adds a function to be called whenever an event is received
+func (op *RemoteOperation) AddHandler(function func(api.Operation)) (*EventTarget, error) {
+	var err error
+	var target *EventTarget
+
+	// Attach to the existing target operation
+	if op.targetOp != nil {
+		target, err = op.targetOp.AddHandler(function)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// Generate a mock EventTarget
+		target = &EventTarget{
+			function: func(interface{}) { function(api.Operation{}) },
+			types:    []string{"operation"},
+		}
+	}
+
+	// Add the handler to our list
+	op.handlers = append(op.handlers, function)
+
+	return target, nil
+}
+
+// CancelTarget attempts to cancel the target operation
+func (op *RemoteOperation) CancelTarget() error {
+	if op.targetOp == nil {
+		return fmt.Errorf("No associated target operation")
+	}
+
+	return op.targetOp.Cancel()
+}
+
+// GetTarget returns the target operation
+func (op *RemoteOperation) GetTarget() (*api.Operation, error) {
+	if op.targetOp == nil {
+		return nil, fmt.Errorf("No associated target operation")
+	}
+
+	return &op.targetOp.Operation, nil
+}
+
+// Wait lets you wait until the operation reaches a final state
+func (op *RemoteOperation) Wait() error {
+	<-op.chDone
+
+	if op.chPost != nil {
+		<-op.chPost
+	}
+
+	return op.err
 }

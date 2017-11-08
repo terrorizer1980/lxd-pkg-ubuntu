@@ -14,6 +14,7 @@ type Remote struct {
 	Addr     string `yaml:"addr"`
 	Public   bool   `yaml:"public"`
 	Protocol string `yaml:"protocol,omitempty"`
+	AuthType string `yaml:"auth_type,omitempty"`
 	Static   bool   `yaml:"-"`
 }
 
@@ -21,11 +22,16 @@ type Remote struct {
 func (c *Config) ParseRemote(raw string) (string, string, error) {
 	result := strings.SplitN(raw, ":", 2)
 	if len(result) == 1 {
-		return c.DefaultRemote, result[0], nil
+		return c.DefaultRemote, raw, nil
 	}
 
 	_, ok := c.Remotes[result[0]]
 	if !ok {
+		// Attempt to play nice with snapshots containing ":"
+		if shared.IsSnapshot(raw) && strings.Contains(result[0], "/") {
+			return c.DefaultRemote, raw, nil
+		}
+
 		return "", "", fmt.Errorf("The remote \"%s\" doesn't exist", result[0])
 	}
 
@@ -108,8 +114,18 @@ func (c *Config) GetImageServer(name string) (lxd.ImageServer, error) {
 		return d, nil
 	}
 
-	// HTTPs (LXD)
-	d, err := lxd.ConnectPublicLXD(remote.Addr, args)
+	// HTTPs (public LXD)
+	if remote.Public {
+		d, err := lxd.ConnectPublicLXD(remote.Addr, args)
+		if err != nil {
+			return nil, err
+		}
+
+		return d, nil
+	}
+
+	// HTTPs (private LXD)
+	d, err := lxd.ConnectLXD(remote.Addr, args)
 	if err != nil {
 		return nil, err
 	}
@@ -118,8 +134,15 @@ func (c *Config) GetImageServer(name string) (lxd.ImageServer, error) {
 }
 
 func (c *Config) getConnectionArgs(name string) (*lxd.ConnectionArgs, error) {
+	remote, _ := c.Remotes[name]
 	args := lxd.ConnectionArgs{
-		UserAgent: c.UserAgent,
+		UserAgent:      c.UserAgent,
+		AuthType:       remote.AuthType,
+		AuthInteractor: c.authInteractor,
+	}
+
+	if c.cookiejar != nil {
+		args.CookieJar = c.cookiejar
 	}
 
 	// Client certificate
@@ -140,6 +163,16 @@ func (c *Config) getConnectionArgs(name string) (*lxd.ConnectionArgs, error) {
 		}
 
 		args.TLSClientKey = string(content)
+	}
+
+	// Client CA
+	if shared.PathExists(c.ConfigPath("client.ca")) {
+		content, err := ioutil.ReadFile(c.ConfigPath("client.ca"))
+		if err != nil {
+			return nil, err
+		}
+
+		args.TLSCA = string(content)
 	}
 
 	// Server certificate

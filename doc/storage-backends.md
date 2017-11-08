@@ -26,6 +26,23 @@ using the new backend and converting older images to the new backend as needed.
 When the filesystem on the source and target hosts differs or when there is no faster way,  
 rsync is used to transfer the container content across.
 
+## I/O limits
+I/O limits in IOp/s or MB/s can be set on storage devices when attached to a container (see [Containers](containers.md)).
+
+Those are applied through the Linux `blkio` cgroup controller which makes it possible  
+to restrict I/O at the disk level (but nothing finer grained than that).
+
+Because those apply to a whole physical disk rather than a partition or path, the following restrictions apply:
+
+ - Limits will not apply to filesystems that are backed by virtual devices (e.g. device mapper).
+ - If a fileystem is backed by multiple block devices, each device will get the same limit.
+ - If the container is passed two disk devices that are each backed by the same disk,  
+   the limits of the two devices will be averaged.
+
+It's also worth noting that all I/O limits only apply to actual block device access,  
+so you will need to consider the filesystem's own overhead when setting limits.  
+This also means that access to cached data will not be affected by the limit.
+
 ## Notes
 ### Directory
 
@@ -38,7 +55,7 @@ rsync is used to transfer the container content across.
 
  - The btrfs backend is automatically used if /var/lib/lxd is on a btrfs filesystem.
  - Uses a subvolume per container, image and snapshot, creating btrfs snapshots when creating a new object.
- - When using for nesting, the host btrfs filesystem must be mounted with the "user\_subvol\_rm\_allowed" mount option.
+ - When using for nesting, the host btrfs filesystem must be mounted with the `user_subvol_rm_allowed` mount option.
  - btrfs supports storage quotas via qgroups. While btrfs qgroups are
    hierarchical, new subvolumes will not automatically be added to the qgroups
    of their parent subvolumes. This means that users can trivially escape any
@@ -48,16 +65,16 @@ rsync is used to transfer the container content across.
 
 ### LVM
 
- - A LVM VG must be created and then storage.lvm\_vg\_name set to point to it.
- - If a thinpool doesn't already exist, one will be created, the name of the thinpool can be set with storage.lvm\_thinpool\_name .
+ - A LVM VG must be created and then `storage.lvm_vg_name` set to point to it.
+ - If a thinpool doesn't already exist, one will be created, the name of the thinpool can be set with `storage.lvm_thinpool_name` .
  - Uses LVs for images, then LV snapshots for containers and container snapshots.
  - The filesystem used for the LVs is ext4 (can be configured to use xfs instead).
  - LVs are created with a default size of 10GiB (can be configured through).
 
 ### ZFS
 
- - LXD can use any zpool or part of a zpool. storage.zfs\_pool\_name must be set to the path to be used.
- - ZFS doesn't have to (and shouldn't be) mounted on /var/lib/lxd
+ - LXD can use any zpool or part of a zpool. `storage.zfs_pool_name` must be set to the path to be used.
+ - ZFS doesn't have to (and shouldn't be) mounted on `/var/lib/lxd`
  - Uses ZFS filesystems for images, then snapshots and clones to create containers and snapshots.
  - Due to the way copy-on-write works in ZFS, parent filesystems can't
    be removed until all children are gone. As a result, LXD will
@@ -81,11 +98,15 @@ rsync is used to transfer the container content across.
  - Note that LXD will assume it has full control over the zfs pool or dataset.
    It is recommended to not maintain any non-LXD owned filesystem entities in
    a LXD zfs pool or dataset since LXD might delete them.
+ - I/O quotas (IOps/MBs) are unlikely to affect ZFS filesystems very
+   much. That's because of ZFS being a port of a Solaris module (using SPL)
+   and not a native Linux filesystem using the Linux VFS API which is where
+   I/O limits are applied.
 
 #### Growing a loop backed ZFS pool
 LXD doesn't let you directly grow a loop backed ZFS pool, but you can do so with:
 
-```
+```bash
 sudo truncate -s +5G /var/lib/lxd/zfs.img
 sudo zpool set autoexpand=on lxd
 sudo zpool online -e lxd /var/lib/lxd/zfs.img
