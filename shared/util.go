@@ -11,6 +11,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -26,6 +27,21 @@ import (
 
 const SnapshotDelimiter = "/"
 const DefaultPort = "8443"
+
+// URLEncode encodes a path and query parameters to a URL.
+func URLEncode(path string, query map[string]string) (string, error) {
+	u, err := url.Parse(path)
+	if err != nil {
+		return "", err
+	}
+
+	params := url.Values{}
+	for key, value := range query {
+		params.Add(key, value)
+	}
+	u.RawQuery = params.Encode()
+	return u.String(), nil
+}
 
 // AddSlash adds a slash to the end of paths if they don't already have one.
 // This can be useful for rsyncing things, since rsync has behavior present on
@@ -83,6 +99,47 @@ func IsUnixSocket(path string) bool {
 	return (stat.Mode() & os.ModeSocket) == os.ModeSocket
 }
 
+// HostPath returns the host path for the provided path
+// On a normal system, this does nothing
+// When inside of a snap environment, returns the real path
+func HostPath(path string) string {
+	// Ignore empty paths
+	if len(path) == 0 {
+		return path
+	}
+
+	// Check if we're running in a snap package
+	snap := os.Getenv("SNAP")
+	if snap == "" {
+		return path
+	}
+
+	// Handle relative paths
+	if path[0] != os.PathSeparator {
+		// Use the cwd of the parent as snap-confine alters our own cwd on launch
+		ppid := os.Getppid()
+		if ppid < 1 {
+			return path
+		}
+
+		pwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", ppid))
+		if err != nil {
+			return path
+		}
+
+		path = filepath.Clean(strings.Join([]string{pwd, path}, string(os.PathSeparator)))
+	}
+
+	// Check if the path is already snap-aware
+	for _, prefix := range []string{"/snap", "/var/snap", "/var/lib/snapd"} {
+		if strings.HasPrefix(path, prefix) {
+			return path
+		}
+	}
+
+	return fmt.Sprintf("/var/lib/snapd/hostfs%s", path)
+}
+
 // VarPath returns the provided path elements joined by a slash and
 // appended to the end of $LXD_DIR, which defaults to /var/lib/lxd.
 func VarPath(path ...string) string {
@@ -122,7 +179,7 @@ func LogPath(path ...string) string {
 	return filepath.Join(items...)
 }
 
-func ParseLXDFileHeaders(headers http.Header) (uid int64, gid int64, mode int) {
+func ParseLXDFileHeaders(headers http.Header) (uid int64, gid int64, mode int, type_ string, write string) {
 	uid, err := strconv.ParseInt(headers.Get("X-LXD-uid"), 10, 64)
 	if err != nil {
 		uid = -1
@@ -143,7 +200,23 @@ func ParseLXDFileHeaders(headers http.Header) (uid int64, gid int64, mode int) {
 		}
 	}
 
-	return uid, gid, mode
+	type_ = headers.Get("X-LXD-type")
+	/* backwards compat: before "type" was introduced, we could only
+	 * manipulate files
+	 */
+	if type_ == "" {
+		type_ = "file"
+	}
+
+	write = headers.Get("X-LXD-write")
+	/* backwards compat: before "write" was introduced, we could only
+	 * overwrite files
+	 */
+	if write == "" {
+		write = "overwrite"
+	}
+
+	return uid, gid, mode, type_, write
 }
 
 func ReadToJSON(r io.Reader, req interface{}) error {
@@ -731,10 +804,23 @@ func GetByteSizeString(input int64, precision uint) string {
 	return fmt.Sprintf("%.*fEB", precision, value)
 }
 
+type RunError struct {
+	msg string
+	Err error
+}
+
+func (e RunError) Error() string {
+	return e.msg
+}
+
 func RunCommand(name string, arg ...string) (string, error) {
 	output, err := exec.Command(name, arg...).CombinedOutput()
 	if err != nil {
-		return string(output), fmt.Errorf("Failed to run: %s %s: %s", name, strings.Join(arg, " "), strings.TrimSpace(string(output)))
+		err := RunError{
+			msg: fmt.Sprintf("Failed to run: %s %s: %s", name, strings.Join(arg, " "), strings.TrimSpace(string(output))),
+			Err: err,
+		}
+		return string(output), err
 	}
 
 	return string(output), nil
@@ -766,4 +852,16 @@ func TimeIsSet(ts time.Time) bool {
 	}
 
 	return true
+}
+
+// WriteTempFile creates a temp file with the specified content
+func WriteTempFile(dir string, prefix string, content string) (string, error) {
+	f, err := ioutil.TempFile(dir, prefix)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	_, err = f.WriteString(content)
+	return f.Name(), err
 }

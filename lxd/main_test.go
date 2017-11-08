@@ -1,26 +1,26 @@
 package main
 
 import (
+	"crypto/tls"
 	"io/ioutil"
 	"os"
-	"testing"
 
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/idmap"
 )
 
 func mockStartDaemon() (*Daemon, error) {
-	d := &Daemon{
-		MockMode: true,
-	}
+	d := NewDaemon()
+	d.os.MockMode = true
+	d.tlsConfig = &tls.Config{}
 
 	if err := d.Init(); err != nil {
 		return nil, err
 	}
 
-	d.IdmapSet = &shared.IdmapSet{Idmap: []shared.IdmapEntry{
+	d.os.IdmapSet = &idmap.IdmapSet{Idmap: []idmap.IdmapEntry{
 		{Isuid: true, Hostid: 100000, Nsid: 0, Maprange: 500000},
 		{Isgid: true, Hostid: 100000, Nsid: 0, Maprange: 500000},
 	}}
@@ -57,6 +57,7 @@ func (suite *lxdTestSuite) SetupSuite() {
 	if err != nil {
 		os.Exit(1)
 	}
+	suite.Req = require.New(suite.T())
 }
 
 func (suite *lxdTestSuite) TearDownSuite() {
@@ -69,9 +70,23 @@ func (suite *lxdTestSuite) TearDownSuite() {
 }
 
 func (suite *lxdTestSuite) SetupTest() {
+	initializeDbObject(suite.d, ":memory:")
+	daemonConfigInit(suite.d.db)
 	suite.Req = require.New(suite.T())
+
+	suite.d.pruneChan = make(chan bool)
+	suite.d.resetAutoUpdateChan = make(chan bool)
+	go func() {
+		for {
+			select {
+			case <-suite.d.pruneChan:
+			case <-suite.d.resetAutoUpdateChan:
+				continue
+			}
+		}
+	}()
 }
 
-func TestLxdTestSuite(t *testing.T) {
-	suite.Run(t, new(lxdTestSuite))
+func (suite *lxdTestSuite) TearDownTest() {
+	suite.d.db.Close()
 }

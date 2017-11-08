@@ -28,6 +28,11 @@ update:
 	go get -t -v -d -u ./...
 	@echo "Dependencies updated"
 
+.PHONY: update
+update-schema:
+	go run -v $(TAGS) ./lxd/schema.go
+	@echo "Schema source code updated"
+
 .PHONY: debug
 debug:
 	go get -t -v -d ./...
@@ -57,30 +62,30 @@ gccgo:
 dist:
 	# Cleanup
 	rm -Rf $(ARCHIVE).gz
-	
+
 	# Create build dir
 	$(eval TMP := $(shell mktemp -d))
 	git archive --prefix=lxd-$(VERSION)/ HEAD | tar -x -C $(TMP)
 	mkdir -p $(TMP)/dist/src/github.com/lxc
 	ln -s ../../../../lxd-$(VERSION) $(TMP)/dist/src/github.com/lxc/lxd
-	
+
 	# Download dependencies
 	cd $(TMP)/lxd-$(VERSION) && GOPATH=$(TMP)/dist go get -t -v -d ./...
-	
+
 	# Workaround for gorilla/mux on Go < 1.7
 	cd $(TMP)/lxd-$(VERSION) && GOPATH=$(TMP)/dist go get -v -d github.com/gorilla/context
-	
+
 	# Assemble tarball
 	rm $(TMP)/dist/src/github.com/lxc/lxd
 	ln -s ../../../../ $(TMP)/dist/src/github.com/lxc/lxd
 	mv $(TMP)/dist $(TMP)/lxd-$(VERSION)/
 	tar --exclude-vcs -C $(TMP) -zcf $(ARCHIVE).gz lxd-$(VERSION)/
-	
+
 	# Cleanup
 	rm -Rf $(TMP)
 
 .PHONY: i18n update-po update-pot build-mo static-analysis
-i18n: update-po update-pot
+i18n: update-pot update-po
 
 po/%.mo: po/%.po
 	msgfmt --statistics -o $@ $<
@@ -101,7 +106,7 @@ update-pot:
 build-mo: $(MOFILES)
 
 static-analysis:
-	/bin/bash -x -c ". test/static_analysis.sh; static_analysis"
+	(cd test;  /bin/sh -x -c ". suites/static_analysis.sh; test_static_analysis")
 
 tags: *.go lxd/*.go shared/*.go lxc/*.go
 	find . | grep \.go | grep -v git | grep -v .swp | grep -v vagrant | xargs gotags > tags

@@ -80,8 +80,6 @@ const AA_PROFILE_BASE = `
 
   # block some other dangerous paths
   deny @{PROC}/kcore rwklx,
-  deny @{PROC}/kmem rwklx,
-  deny @{PROC}/mem rwklx,
   deny @{PROC}/sysrq-trigger rwklx,
 
   # deny writes in /sys except for /sys/fs/cgroup, also allow
@@ -347,6 +345,7 @@ func getAAProfileContent(c container) string {
   deny /sys/kernel/security?*{,/**} wklx,
   deny /sys/kernel?*{,/**} wklx,
 `
+		profile += fmt.Sprintf("  change_profile -> \":%s:*\",\n", AANamespace(c))
 		profile += fmt.Sprintf("  change_profile -> \":%s://*\",\n", AANamespace(c))
 	} else {
 		profile += "\n  ### Feature: apparmor stacking (not present)\n"

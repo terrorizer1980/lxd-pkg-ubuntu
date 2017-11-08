@@ -2,8 +2,14 @@ package lxd
 
 import (
 	"fmt"
-	"github.com/lxc/lxd/shared/api"
+	"io"
+	"io/ioutil"
+	"os"
+	"os/exec"
 	"strings"
+
+	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/api"
 )
 
 // Image handling functions
@@ -56,20 +62,30 @@ func (r *ProtocolSimpleStreams) GetImageFile(fingerprint string, req ImageFileRe
 	// Prepare the response
 	resp := ImageFileResponse{}
 
+	// Download function
+	download := func(path string, filename string, sha256 string, target io.WriteSeeker) (int64, error) {
+		// Try over http
+		url := fmt.Sprintf("http://%s/%s", strings.TrimPrefix(r.httpHost, "https://"), path)
+
+		size, err := downloadFileSha256(r.http, r.httpUserAgent, req.ProgressHandler, req.Canceler, filename, url, sha256, target)
+		if err != nil {
+			// Try over https
+			url = fmt.Sprintf("%s/%s", r.httpHost, path)
+			size, err = downloadFileSha256(r.http, r.httpUserAgent, req.ProgressHandler, req.Canceler, filename, url, sha256, target)
+			if err != nil {
+				return -1, err
+			}
+		}
+
+		return size, nil
+	}
+
 	// Download the LXD image file
 	meta, ok := files["meta"]
 	if ok && req.MetaFile != nil {
-		// Try over http
-		url := fmt.Sprintf("http://%s/%s", strings.TrimPrefix(r.httpHost, "https://"), meta.Path)
-
-		size, err := downloadFileSha256(r.http, r.httpUserAgent, req.ProgressHandler, "metadata", url, meta.Sha256, req.MetaFile)
+		size, err := download(meta.Path, "metadata", meta.Sha256, req.MetaFile)
 		if err != nil {
-			// Try over https
-			url = fmt.Sprintf("%s/%s", r.httpHost, meta.Path)
-			size, err = downloadFileSha256(r.http, r.httpUserAgent, req.ProgressHandler, "metadata", url, meta.Sha256, req.MetaFile)
-			if err != nil {
-				return nil, err
-			}
+			return nil, err
 		}
 
 		parts := strings.Split(meta.Path, "/")
@@ -80,25 +96,82 @@ func (r *ProtocolSimpleStreams) GetImageFile(fingerprint string, req ImageFileRe
 	// Download the rootfs
 	rootfs, ok := files["root"]
 	if ok && req.RootfsFile != nil {
-		// Try over http
-		url := fmt.Sprintf("http://%s/%s", strings.TrimPrefix(r.httpHost, "https://"), rootfs.Path)
+		// Look for deltas (requires xdelta3)
+		downloaded := false
+		_, err := exec.LookPath("xdelta3")
+		if err == nil && req.DeltaSourceRetriever != nil {
+			for filename, file := range files {
+				if !strings.HasPrefix(filename, "root.delta-") {
+					continue
+				}
 
-		size, err := downloadFileSha256(r.http, r.httpUserAgent, req.ProgressHandler, "rootfs", url, rootfs.Sha256, req.RootfsFile)
-		if err != nil {
-			// Try over https
-			url = fmt.Sprintf("%s/%s", r.httpHost, rootfs.Path)
-			size, err = downloadFileSha256(r.http, r.httpUserAgent, req.ProgressHandler, "rootfs", url, rootfs.Sha256, req.RootfsFile)
-			if err != nil {
-				return nil, err
+				// Check if we have the source file for the delta
+				srcFingerprint := strings.Split(filename, "root.delta-")[1]
+				srcPath := req.DeltaSourceRetriever(srcFingerprint, "rootfs")
+				if srcPath == "" {
+					continue
+				}
+
+				// Create temporary file for the delta
+				deltaFile, err := ioutil.TempFile("", "lxc_image_")
+				if err != nil {
+					return nil, err
+				}
+				defer deltaFile.Close()
+				defer os.Remove(deltaFile.Name())
+
+				// Download the delta
+				_, err = download(file.Path, "rootfs delta", file.Sha256, deltaFile)
+				if err != nil {
+					return nil, err
+				}
+
+				// Create temporary file for the delta
+				patchedFile, err := ioutil.TempFile("", "lxc_image_")
+				if err != nil {
+					return nil, err
+				}
+				defer patchedFile.Close()
+				defer os.Remove(patchedFile.Name())
+
+				// Apply it
+				_, err = shared.RunCommand("xdelta3", "-f", "-d", "-s", srcPath, deltaFile.Name(), patchedFile.Name())
+				if err != nil {
+					return nil, err
+				}
+
+				// Copy to the target
+				size, err := io.Copy(req.RootfsFile, patchedFile)
+				if err != nil {
+					return nil, err
+				}
+
+				parts := strings.Split(rootfs.Path, "/")
+				resp.RootfsName = parts[len(parts)-1]
+				resp.RootfsSize = size
+				downloaded = true
 			}
 		}
 
-		parts := strings.Split(rootfs.Path, "/")
-		resp.RootfsName = parts[len(parts)-1]
-		resp.RootfsSize = size
+		// Download the whole file
+		if !downloaded {
+			size, err := download(rootfs.Path, "rootfs", rootfs.Sha256, req.RootfsFile)
+			if err != nil {
+				return nil, err
+			}
+
+			parts := strings.Split(rootfs.Path, "/")
+			resp.RootfsName = parts[len(parts)-1]
+			resp.RootfsSize = size
+		}
 	}
 
 	return &resp, nil
+}
+
+// GetImageSecret isn't relevant for the simplestreams protocol
+func (r *ProtocolSimpleStreams) GetImageSecret(fingerprint string) (string, error) {
+	return "", fmt.Errorf("Private images aren't supported by the simplestreams protocol")
 }
 
 // GetPrivateImage isn't relevant for the simplestreams protocol
@@ -141,29 +214,4 @@ func (r *ProtocolSimpleStreams) GetImageAlias(name string) (*api.ImageAliasesEnt
 	}
 
 	return alias, "", err
-}
-
-// CopyImage copies an existing image to a remote server. Additional options can be passed using ImageCopyArgs
-func (r *ProtocolSimpleStreams) CopyImage(image api.Image, target ContainerServer, args *ImageCopyArgs) (*Operation, error) {
-	// Prepare the copy request
-	req := api.ImagesPost{
-		Source: &api.ImagesPostSource{
-			ImageSource: api.ImageSource{
-				Certificate: r.httpCertificate,
-				Protocol:    "simplestreams",
-				Server:      r.httpHost,
-			},
-			Fingerprint: image.Fingerprint,
-			Mode:        "pull",
-			Type:        "image",
-		},
-	}
-
-	// Process the arguments
-	if args != nil {
-		req.AutoUpdate = args.AutoUpdate
-		req.Public = args.Public
-	}
-
-	return target.CreateImage(req, nil)
 }

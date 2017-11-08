@@ -5,11 +5,11 @@ package main
 import (
 	"io"
 	"os"
+	"os/signal"
 
 	"github.com/gorilla/websocket"
 	"github.com/mattn/go-colorable"
 
-	"github.com/lxc/lxd"
 	"github.com/lxc/lxd/shared/logger"
 )
 
@@ -32,12 +32,16 @@ func (c *execCmd) getTERM() (string, bool) {
 	return "dumb", true
 }
 
-func (c *execCmd) controlSocketHandler(d *lxd.Client, control *websocket.Conn) {
-	// TODO: figure out what the equivalent of signal.SIGWINCH is on
-	// windows and use that; for now if you resize your terminal it just
-	// won't work quite correctly.
-	err := c.sendTermSize(control)
-	if err != nil {
-		logger.Debugf("error setting term size %s", err)
+func (c *execCmd) controlSocketHandler(control *websocket.Conn) {
+	ch := make(chan os.Signal, 10)
+	signal.Notify(ch, os.Interrupt)
+
+	closeMsg := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")
+	defer control.WriteMessage(websocket.CloseMessage, closeMsg)
+
+	for {
+		sig := <-ch
+
+		logger.Debugf("Received '%s signal', updating window geometry.", sig)
 	}
 }

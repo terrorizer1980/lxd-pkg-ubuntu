@@ -16,14 +16,13 @@ import (
 	"github.com/pborman/uuid"
 
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/idmap"
 	"github.com/lxc/lxd/shared/logger"
 
 	log "gopkg.in/inconshreveable/log15.v2"
 )
 
 type storageBtrfs struct {
-	d *Daemon
-
 	storageShared
 }
 
@@ -415,7 +414,7 @@ func (s *storageBtrfs) ImageCreate(fingerprint string) error {
 		return err
 	}
 
-	if err := unpackImage(s.d, imagePath, subvol); err != nil {
+	if err := unpackImage(imagePath, subvol, s.storage.GetStorageType()); err != nil {
 		s.subvolsDelete(subvol)
 		return err
 	}
@@ -762,10 +761,11 @@ func (s *btrfsMigrationSourceDriver) Snapshots() []container {
 }
 
 func (s *btrfsMigrationSourceDriver) send(conn *websocket.Conn, btrfsPath string, btrfsParent string) error {
-	args := []string{"send", btrfsPath}
+	args := []string{"send"}
 	if btrfsParent != "" {
 		args = append(args, "-p", btrfsParent)
 	}
+	args = append(args, btrfsPath)
 
 	cmd := exec.Command("btrfs", args...)
 
@@ -925,7 +925,7 @@ func (s *storageBtrfs) MigrationSource(c container) (MigrationStorageSourceDrive
 	return driver, nil
 }
 
-func (s *storageBtrfs) MigrationSink(live bool, container container, snapshots []*Snapshot, conn *websocket.Conn, srcIdmap *shared.IdmapSet) error {
+func (s *storageBtrfs) MigrationSink(live bool, container container, snapshots []*Snapshot, conn *websocket.Conn, srcIdmap *idmap.IdmapSet) error {
 	if runningInUserns {
 		return rsyncMigrationSink(live, container, snapshots, conn, srcIdmap)
 	}
@@ -1000,7 +1000,7 @@ func (s *storageBtrfs) MigrationSink(live bool, container container, snapshots [
 
 	for _, snap := range snapshots {
 		args := snapshotProtobufToContainerArgs(container.Name(), snap)
-		s, err := containerCreateEmptySnapshot(container.Daemon(), args)
+		s, err := containerCreateEmptySnapshot(s.s, s.storage, args)
 		if err != nil {
 			return err
 		}

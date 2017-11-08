@@ -4,11 +4,13 @@
 package shared
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -127,71 +129,6 @@ void create_pipe(int *master, int *slave) {
 	*slave = pipefd[1];
 }
 
-int shiftowner(char *basepath, char *path, int uid, int gid) {
-	struct stat sb;
-	int fd, r;
-	char fdpath[PATH_MAX];
-	char realpath[PATH_MAX];
-
-	fd = open(path, O_PATH|O_NOFOLLOW);
-	if (fd < 0 ) {
-		perror("Failed open");
-		return 1;
-	}
-
-	r = sprintf(fdpath, "/proc/self/fd/%d", fd);
-	if (r < 0) {
-		perror("Failed sprintf");
-		close(fd);
-		return 1;
-	}
-
-	r = readlink(fdpath, realpath, PATH_MAX);
-	if (r < 0) {
-		perror("Failed readlink");
-		close(fd);
-		return 1;
-	}
-
-	if (strlen(realpath) < strlen(basepath)) {
-		printf("Invalid path, source (%s) is outside of basepath (%s).\n", realpath, basepath);
-		close(fd);
-		return 1;
-	}
-
-	if (strncmp(realpath, basepath, strlen(basepath))) {
-		printf("Invalid path, source (%s) is outside of basepath (%s).\n", realpath, basepath);
-		close(fd);
-		return 1;
-	}
-
-	r = fstat(fd, &sb);
-	if (r < 0) {
-		perror("Failed fstat");
-		close(fd);
-		return 1;
-	}
-
-	r = fchownat(fd, "", uid, gid, AT_EMPTY_PATH|AT_SYMLINK_NOFOLLOW);
-	if (r < 0) {
-		perror("Failed chown");
-		close(fd);
-		return 1;
-	}
-
-	if (!S_ISLNK(sb.st_mode)) {
-		r = chmod(fdpath, sb.st_mode);
-		if (r < 0) {
-			perror("Failed chmod");
-			close(fd);
-			return 1;
-		}
-	}
-
-	close(fd);
-	return 0;
-}
-
 int get_poll_revents(int lfd, int timeout, int flags, int *revents, int *saved_errno)
 {
 	int ret;
@@ -237,20 +174,6 @@ func GetPollRevents(fd int, timeout int, flags int) (int, int, error) {
 	return int(ret), int(revents), err
 }
 
-func ShiftOwner(basepath string, path string, uid int, gid int) error {
-	cbasepath := C.CString(basepath)
-	defer C.free(unsafe.Pointer(cbasepath))
-
-	cpath := C.CString(path)
-	defer C.free(unsafe.Pointer(cpath))
-
-	r := C.shiftowner(cbasepath, cpath, C.int(uid), C.int(gid))
-	if r != 0 {
-		return fmt.Errorf("Failed to change ownership of: %s", path)
-	}
-	return nil
-}
-
 func OpenPty(uid, gid int64) (master *os.File, slave *os.File, err error) {
 	fd_master := C.int(-1)
 	fd_slave := C.int(-1)
@@ -290,8 +213,12 @@ func UserId(name string) (int, error) {
 	var pw C.struct_passwd
 	var result *C.struct_passwd
 
-	bufSize := C.size_t(C.sysconf(C._SC_GETPW_R_SIZE_MAX))
-	buf := C.malloc(bufSize)
+	bufSize := C.sysconf(C._SC_GETPW_R_SIZE_MAX)
+	if bufSize < 0 {
+		bufSize = 4096
+	}
+
+	buf := C.malloc(C.size_t(bufSize))
 	if buf == nil {
 		return -1, fmt.Errorf("allocation failed")
 	}
@@ -300,13 +227,24 @@ func UserId(name string) (int, error) {
 	cname := C.CString(name)
 	defer C.free(unsafe.Pointer(cname))
 
-	rv := C.getpwnam_r(cname,
+again:
+	rv, errno := C.getpwnam_r(cname,
 		&pw,
 		(*C.char)(buf),
-		bufSize,
+		C.size_t(bufSize),
 		&result)
-
-	if rv != 0 {
+	if rv < 0 {
+		// OOM killer will take care of us if we end up doing this too
+		// often.
+		if errno == syscall.ERANGE {
+			bufSize *= 2
+			tmp := C.realloc(buf, C.size_t(bufSize))
+			if tmp == nil {
+				return -1, fmt.Errorf("allocation failed")
+			}
+			buf = tmp
+			goto again
+		}
 		return -1, fmt.Errorf("failed user lookup: %s", syscall.Errno(rv))
 	}
 
@@ -322,25 +260,42 @@ func GroupId(name string) (int, error) {
 	var grp C.struct_group
 	var result *C.struct_group
 
-	bufSize := C.size_t(C.sysconf(C._SC_GETGR_R_SIZE_MAX))
-	buf := C.malloc(bufSize)
+	bufSize := C.sysconf(C._SC_GETGR_R_SIZE_MAX)
+	if bufSize < 0 {
+		bufSize = 4096
+	}
+
+	buf := C.malloc(C.size_t(bufSize))
 	if buf == nil {
 		return -1, fmt.Errorf("allocation failed")
 	}
-	defer C.free(buf)
 
 	cname := C.CString(name)
 	defer C.free(unsafe.Pointer(cname))
 
-	rv := C.getgrnam_r(cname,
+again:
+	rv, errno := C.getgrnam_r(cname,
 		&grp,
 		(*C.char)(buf),
-		bufSize,
+		C.size_t(bufSize),
 		&result)
-
 	if rv != 0 {
+		// OOM killer will take care of us if we end up doing this too
+		// often.
+		if errno == syscall.ERANGE {
+			bufSize *= 2
+			tmp := C.realloc(buf, C.size_t(bufSize))
+			if tmp == nil {
+				return -1, fmt.Errorf("allocation failed")
+			}
+			buf = tmp
+			goto again
+		}
+
+		C.free(buf)
 		return -1, fmt.Errorf("failed group lookup: %s", syscall.Errno(rv))
 	}
+	C.free(buf)
 
 	if result == nil {
 		return -1, fmt.Errorf("unknown group %s", name)
@@ -350,6 +305,14 @@ func GroupId(name string) (int, error) {
 }
 
 // --- pure Go functions ---
+
+func Major(dev uint64) int {
+	return int(((dev >> 8) & 0xfff) | ((dev >> 32) & (0xfffff000)))
+}
+
+func Minor(dev uint64) int {
+	return int((dev & 0xff) | ((dev >> 12) & (0xffffff00)))
+}
 
 func GetFileStat(p string) (uid int, gid int, major int, minor int,
 	inode uint64, nlink int, err error) {
@@ -365,22 +328,41 @@ func GetFileStat(p string) (uid int, gid int, major int, minor int,
 	major = -1
 	minor = -1
 	if stat.Mode&syscall.S_IFBLK != 0 || stat.Mode&syscall.S_IFCHR != 0 {
-		major = int(stat.Rdev / 256)
-		minor = int(stat.Rdev % 256)
+		major = Major(stat.Rdev)
+		minor = Minor(stat.Rdev)
 	}
 
 	return
 }
 
-func IsMountPoint(name string) bool {
-	_, err := exec.LookPath("mountpoint")
-	if err == nil {
-		_, err = RunCommand("mountpoint", "-q", name)
-		if err != nil {
-			return false
-		}
+func parseMountinfo(name string) int {
+	f, err := os.Open("/proc/self/mountinfo")
+	if err != nil {
+		return -1
+	}
+	defer f.Close()
 
-		return true
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		tokens := strings.Fields(line)
+		if len(tokens) < 5 {
+			return -1
+		}
+		cleanPath := filepath.Clean(tokens[4])
+		cleanName := filepath.Clean(name)
+		if cleanPath == cleanName {
+			return 1
+		}
+	}
+
+	return 0
+}
+
+func IsMountPoint(name string) bool {
+	ret := parseMountinfo(name)
+	if ret >= 0 {
+		return (ret == 1)
 	}
 
 	stat, err := os.Stat(name)
@@ -570,12 +552,14 @@ func ExecReaderToChannel(r io.Reader, bufferSize int, exited <-chan bool, fd int
 
 		atomic.StoreInt32(&attachedChildIsDead, 1)
 
-		ret, revents, err := GetPollRevents(fd, 0, (POLLIN | POLLPRI | POLLERR | POLLHUP | POLLRDHUP))
+		ret, revents, err := GetPollRevents(fd, 0, (POLLIN | POLLPRI | POLLERR | POLLHUP | POLLRDHUP | POLLNVAL))
 		if ret < 0 {
 			logger.Errorf("Failed to poll(POLLIN | POLLPRI | POLLHUP | POLLRDHUP) on file descriptor: %s.", err)
 		} else if ret > 0 {
 			if (revents & POLLERR) > 0 {
 				logger.Warnf("Detected poll(POLLERR) event.")
+			} else if (revents & POLLNVAL) > 0 {
+				logger.Warnf("Detected poll(POLLNVAL) event.")
 			}
 		} else if ret == 0 {
 			logger.Debugf("No data in stdout: exiting.")
@@ -595,7 +579,7 @@ func ExecReaderToChannel(r io.Reader, bufferSize int, exited <-chan bool, fd int
 			nr := 0
 			var err error
 
-			ret, revents, err := GetPollRevents(fd, -1, (POLLIN | POLLPRI | POLLERR | POLLHUP | POLLRDHUP))
+			ret, revents, err := GetPollRevents(fd, -1, (POLLIN | POLLPRI | POLLERR | POLLHUP | POLLRDHUP | POLLNVAL))
 			if ret < 0 {
 				// COMMENT(brauner):
 				// This condition is only reached in cases where we are massively f*cked since we even handle
@@ -617,6 +601,9 @@ func ExecReaderToChannel(r io.Reader, bufferSize int, exited <-chan bool, fd int
 
 			if (revents & POLLERR) > 0 {
 				logger.Warnf("Detected poll(POLLERR) event: exiting.")
+				return
+			} else if (revents & POLLNVAL) > 0 {
+				logger.Warnf("Detected poll(POLLNVAL) event: exiting.")
 				return
 			}
 
@@ -675,11 +662,11 @@ func ExecReaderToChannel(r io.Reader, bufferSize int, exited <-chan bool, fd int
 					//   or (POLLHUP | POLLRDHUP). Both will trigger another codepath (See [2].)
 					//   that takes care that all data of the child that is buffered in
 					//   stdout is written out.
-					ret, revents, err := GetPollRevents(fd, 0, (POLLIN | POLLPRI | POLLERR | POLLHUP | POLLRDHUP))
+					ret, revents, err := GetPollRevents(fd, 0, (POLLIN | POLLPRI | POLLERR | POLLHUP | POLLRDHUP | POLLNVAL))
 					if ret < 0 {
 						logger.Errorf("Failed to poll(POLLIN | POLLPRI | POLLERR | POLLHUP | POLLRDHUP) on file descriptor: %s. Exiting.", err)
 						return
-					} else if (revents & (POLLHUP | POLLRDHUP)) == 0 {
+					} else if (revents & (POLLHUP | POLLRDHUP | POLLERR | POLLNVAL)) == 0 {
 						logger.Debugf("Exiting but background processes are still running.")
 						return
 					}
@@ -726,4 +713,68 @@ func GetErrno(err error) (errno error, iserrno bool) {
 	}
 
 	return nil, false
+}
+
+// Utsname returns the same info as syscall.Utsname, as strings
+type Utsname struct {
+	Sysname    string
+	Nodename   string
+	Release    string
+	Version    string
+	Machine    string
+	Domainname string
+}
+
+// Uname returns Utsname as strings
+func Uname() (*Utsname, error) {
+	/*
+	 * Based on: https://groups.google.com/forum/#!topic/golang-nuts/Jel8Bb-YwX8
+	 * there is really no better way to do this, which is
+	 * unfortunate. Also, we ditch the more accepted CharsToString
+	 * version in that thread, since it doesn't seem as portable,
+	 * viz. github issue #206.
+	 */
+
+	uname := syscall.Utsname{}
+	err := syscall.Uname(&uname)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Utsname{
+		Sysname:    intArrayToString(uname.Sysname),
+		Nodename:   intArrayToString(uname.Nodename),
+		Release:    intArrayToString(uname.Release),
+		Version:    intArrayToString(uname.Version),
+		Machine:    intArrayToString(uname.Machine),
+		Domainname: intArrayToString(uname.Domainname),
+	}, nil
+}
+
+func intArrayToString(arr interface{}) string {
+	slice := reflect.ValueOf(arr)
+	s := ""
+	for i := 0; i < slice.Len(); i++ {
+		val := slice.Index(i)
+		valInt := int64(-1)
+
+		switch val.Kind() {
+		case reflect.Int:
+		case reflect.Int8:
+			valInt = int64(val.Int())
+		case reflect.Uint:
+		case reflect.Uint8:
+			valInt = int64(val.Uint())
+		default:
+			continue
+		}
+
+		if valInt == 0 {
+			break
+		}
+
+		s += string(byte(valInt))
+	}
+
+	return s
 }

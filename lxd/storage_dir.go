@@ -9,13 +9,12 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/idmap"
 
 	log "gopkg.in/inconshreveable/log15.v2"
 )
 
 type storageDir struct {
-	d *Daemon
-
 	storageShared
 }
 
@@ -69,7 +68,7 @@ func (s *storageDir) ContainerCreateFromImage(
 	}
 
 	imagePath := shared.VarPath("images", imageFingerprint)
-	if err := unpackImage(s.d, imagePath, container.Path()); err != nil {
+	if err := unpackImage(imagePath, container.Path(), s.storage.GetStorageType()); err != nil {
 		s.ContainerDelete(container)
 		return err
 	}
@@ -229,12 +228,11 @@ func (s *storageDir) ContainerSnapshotCreate(
 			s.log.Warn("ContainerSnapshotCreate: trying to freeze and rsync again failed.")
 			return nil
 		}
+		defer sourceContainer.Unfreeze()
 
 		if err := rsync(snapshotContainer, oldPath, newPath); err != nil {
 			return err
 		}
-
-		defer sourceContainer.Unfreeze()
 	}
 
 	return nil
@@ -315,6 +313,6 @@ func (s *storageDir) MigrationSource(container container) (MigrationStorageSourc
 	return rsyncMigrationSource(container)
 }
 
-func (s *storageDir) MigrationSink(live bool, container container, snapshots []*Snapshot, conn *websocket.Conn, srcIdmap *shared.IdmapSet) error {
+func (s *storageDir) MigrationSink(live bool, container container, snapshots []*Snapshot, conn *websocket.Conn, srcIdmap *idmap.IdmapSet) error {
 	return rsyncMigrationSink(live, container, snapshots, conn, srcIdmap)
 }

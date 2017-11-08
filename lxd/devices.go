@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io/ioutil"
 	"math/big"
 	"os"
 	"path"
@@ -17,6 +18,9 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
+	"github.com/lxc/lxd/lxd/db"
+	"github.com/lxc/lxd/lxd/state"
+	"github.com/lxc/lxd/lxd/util"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/logger"
 
@@ -168,7 +172,7 @@ func parseCpuset(cpu string) ([]int, error) {
 	return cpus, nil
 }
 
-func deviceTaskBalance(d *Daemon) {
+func deviceTaskBalance(s *state.State, storage storage) {
 	min := func(x, y int) int {
 		if x < y {
 			return x
@@ -191,6 +195,43 @@ func deviceTaskBalance(d *Daemon) {
 			return
 		}
 	}
+
+	effectiveCpusInt, err := parseCpuset(effectiveCpus)
+	if err != nil {
+		logger.Errorf("Error parsing effective CPU set")
+		return
+	}
+
+	isolatedCpusInt := []int{}
+	if shared.PathExists("/sys/devices/system/cpu/isolated") {
+		buf, err := ioutil.ReadFile("/sys/devices/system/cpu/isolated")
+		if err != nil {
+			logger.Errorf("Error reading host's isolated cpu")
+			return
+		}
+
+		// File might exist even though there are no isolated cpus.
+		isolatedCpus := strings.TrimSpace(string(buf))
+		if isolatedCpus != "" {
+			isolatedCpusInt, err = parseCpuset(isolatedCpus)
+			if err != nil {
+				logger.Errorf("Error parsing isolated CPU set: %s", string(isolatedCpus))
+				return
+			}
+		}
+	}
+
+	effectiveCpusSlice := []string{}
+	for _, id := range effectiveCpusInt {
+		if shared.IntInSlice(id, isolatedCpusInt) {
+			continue
+		}
+
+		effectiveCpusSlice = append(effectiveCpusSlice, fmt.Sprintf("%d", id))
+	}
+
+	effectiveCpus = strings.Join(effectiveCpusSlice, ",")
+
 	err = cGroupSet("cpuset", "/lxc", "cpuset.cpus", effectiveCpus)
 	if err != nil && shared.PathExists("/sys/fs/cgroup/cpuset/lxc") {
 		logger.Warn("Error setting lxd's cpuset.cpus", log.Ctx{"err": err})
@@ -202,7 +243,7 @@ func deviceTaskBalance(d *Daemon) {
 	}
 
 	// Iterate through the containers
-	containers, err := dbContainersList(d.db, cTypeRegular)
+	containers, err := db.ContainersList(s.DB, db.CTypeRegular)
 	if err != nil {
 		logger.Error("problem loading containers list", log.Ctx{"err": err})
 		return
@@ -210,7 +251,7 @@ func deviceTaskBalance(d *Daemon) {
 	fixedContainers := map[int][]container{}
 	balancedContainers := map[container]int{}
 	for _, name := range containers {
-		c, err := containerLoadByName(d, name)
+		c, err := containerLoadByName(s, storage, name)
 		if err != nil {
 			continue
 		}
@@ -322,20 +363,20 @@ func deviceTaskBalance(d *Daemon) {
 	}
 }
 
-func deviceNetworkPriority(d *Daemon, netif string) {
+func deviceNetworkPriority(s *state.State, storage storage, netif string) {
 	// Don't bother running when CGroup support isn't there
 	if !cgNetPrioController {
 		return
 	}
 
-	containers, err := dbContainersList(d.db, cTypeRegular)
+	containers, err := db.ContainersList(s.DB, db.CTypeRegular)
 	if err != nil {
 		return
 	}
 
 	for _, name := range containers {
 		// Get the container struct
-		c, err := containerLoadByName(d, name)
+		c, err := containerLoadByName(s, storage, name)
 		if err != nil {
 			continue
 		}
@@ -358,7 +399,7 @@ func deviceNetworkPriority(d *Daemon, netif string) {
 	return
 }
 
-func deviceEventListener(d *Daemon) {
+func deviceEventListener(s *state.State, storage storage) {
 	chNetlinkCPU, chNetlinkNetwork, err := deviceNetlinkListener()
 	if err != nil {
 		logger.Errorf("scheduler: couldn't setup netlink listener")
@@ -378,7 +419,7 @@ func deviceEventListener(d *Daemon) {
 			}
 
 			logger.Debugf("Scheduler: cpu: %s is now %s: re-balancing", e[0], e[1])
-			deviceTaskBalance(d)
+			deviceTaskBalance(s, storage)
 		case e := <-chNetlinkNetwork:
 			if len(e) != 2 {
 				logger.Errorf("Scheduler: received an invalid network hotplug event")
@@ -390,7 +431,7 @@ func deviceEventListener(d *Daemon) {
 			}
 
 			logger.Debugf("Scheduler: network: %s has been added: updating network priorities", e[0])
-			deviceNetworkPriority(d, e[0])
+			deviceNetworkPriority(s, storage, e[0])
 		case e := <-deviceSchedRebalance:
 			if len(e) != 3 {
 				logger.Errorf("Scheduler: received an invalid rebalance event")
@@ -402,7 +443,7 @@ func deviceEventListener(d *Daemon) {
 			}
 
 			logger.Debugf("Scheduler: %s %s %s: re-balancing", e[0], e[1], e[2])
-			deviceTaskBalance(d)
+			deviceTaskBalance(s, storage)
 		}
 	}
 }
@@ -467,8 +508,8 @@ func deviceGetAttributes(path string) (string, int, int, error) {
 	}
 
 	// Return the device information
-	major := int(stat.Rdev / 256)
-	minor := int(stat.Rdev % 256)
+	major := shared.Major(stat.Rdev)
+	minor := shared.Minor(stat.Rdev)
 	return dType, major, minor, nil
 }
 
@@ -498,7 +539,7 @@ func deviceNextVeth() string {
 }
 
 func deviceRemoveInterface(nic string) error {
-	_, err := shared.RunCommand("ip", "link", "del", nic)
+	_, err := shared.RunCommand("ip", "link", "del", "dev", nic)
 	return err
 }
 
@@ -528,6 +569,14 @@ func deviceMountDisk(srcPath string, dstPath string, readonly bool, recursive bo
 	// Mount the filesystem
 	if err = syscall.Mount(srcPath, dstPath, fstype, uintptr(flags), ""); err != nil {
 		return fmt.Errorf("Unable to mount %s at %s: %s", srcPath, dstPath, err)
+	}
+
+	// Remount bind mounts in readonly mode if requested
+	if readonly == true && flags&syscall.MS_BIND == syscall.MS_BIND {
+		flags = syscall.MS_RDONLY | syscall.MS_BIND | syscall.MS_REMOUNT
+		if err = syscall.Mount("", dstPath, fstype, uintptr(flags), ""); err != nil {
+			return fmt.Errorf("Unable to mount %s in readonly mode: %s", dstPath, err)
+		}
 	}
 
 	flags = syscall.MS_REC | syscall.MS_SLAVE
@@ -687,7 +736,7 @@ func deviceGetParentBlocks(path string) ([]string, error) {
 
 	// Deal with per-filesystem oddities. We don't care about failures here
 	// because any non-special filesystem => directory backend.
-	fs, _ := filesystemDetect(expPath)
+	fs, _ := util.FilesystemDetect(expPath)
 
 	if fs == "zfs" && shared.PathExists("/dev/zfs") {
 		// Accessible zfs filesystems

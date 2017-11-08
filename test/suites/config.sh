@@ -107,7 +107,7 @@ test_config_profiles() {
 
   # setting an invalid config item should error out when setting it, not get
   # into the database and never let the user edit the container again.
-  ! lxc config set foo raw.lxc "lxc.notaconfigkey = invalid"
+  ! lxc config set foo raw.lxc lxc.notaconfigkey=invalid
 
   lxc profile create stdintest
   echo "BADCONF" | lxc profile set stdintest user.user_data -
@@ -136,9 +136,10 @@ test_config_profiles() {
 
   # test live-adding a nic
   lxc start foo
-  ! lxc config show foo | grep -q "raw.lxc"
+  lxc exec foo -- cat /proc/self/mountinfo | grep -q "/mnt1.*ro,"
+  ! lxc config show foo | grep -q "raw.lxc" || false
   lxc config show foo --expanded | grep -q "raw.lxc"
-  ! lxc config show foo | grep -v "volatile.eth0" | grep -q "eth0"
+  ! lxc config show foo | grep -v "volatile.eth0" | grep -q "eth0" || false
   lxc config show foo --expanded | grep -v "volatile.eth0" | grep -q "eth0"
   lxc config device add foo eth2 nic nictype=bridged parent=lxdbr0 name=eth10
   lxc exec foo -- /sbin/ifconfig -a | grep eth0
@@ -150,6 +151,7 @@ test_config_profiles() {
   mkdir "${TEST_DIR}/mnt2"
   touch "${TEST_DIR}/mnt2/hosts"
   lxc config device add foo mnt2 disk source="${TEST_DIR}/mnt2" path=/mnt2 readonly=true
+  lxc exec foo -- cat /proc/self/mountinfo | grep -q "/mnt2.*ro,"
   lxc exec foo -- ls /mnt2/hosts
   lxc stop foo --force
   lxc start foo
@@ -195,7 +197,9 @@ test_config_profiles() {
   lxc profile apply foo onenic,unconfined
   lxc start foo
 
-  lxc exec foo -- cat /proc/self/attr/current | grep unconfined
+  if [ -e /sys/module/apparmor ]; then
+    lxc exec foo -- cat /proc/self/attr/current | grep unconfined
+  fi
   lxc exec foo -- ls /sys/class/net | grep eth0
 
   lxc stop foo --force

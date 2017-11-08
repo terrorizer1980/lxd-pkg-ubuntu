@@ -28,7 +28,6 @@ test_remote_url() {
 
   for url in ${urls}; do
     lxc_remote remote add test "${url}"
-    lxc_remote finger test:
     lxc_remote remote remove test
   done
 }
@@ -93,10 +92,11 @@ test_remote_usage() {
   lxc_remote remote add lxd2 "${LXD2_ADDR}" --accept-certificate --password foo
 
   # we need a public image on localhost
-  img=$(lxc_remote image export localhost:testimage "${LXD_DIR}/foo" | grep -o "foo.*")
+
+  lxc_remote image export localhost:testimage "${LXD_DIR}/foo"
   lxc_remote image delete localhost:testimage
-  sum=$(sha256sum "${LXD_DIR}/${img}" | cut -d' ' -f1)
-  lxc_remote image import "${LXD_DIR}/${img}" localhost: --public
+  sum=$(sha256sum "${LXD_DIR}/foo.tar.xz" | cut -d' ' -f1)
+  lxc_remote image import "${LXD_DIR}/foo.tar.xz" localhost: --public
   lxc_remote image alias create localhost:testimage "${sum}"
 
   lxc_remote image delete "lxd2:${sum}" || true
@@ -128,7 +128,12 @@ test_remote_usage() {
   lxc_remote image show lxd2:bar | grep -q "public: true"
   ! lxc_remote image show bar
   lxc_remote delete pub
+
+  # test spawn from public server
+  lxc_remote remote add lxd2-public "${LXD2_ADDR}" --public --accept-certificate
+  lxc_remote init lxd2-public:bar pub
   lxc_remote image delete lxd2:bar
+  lxc_remote delete pub
 
   # Double launch to test if the image downloads only once.
   lxc_remote init localhost:testimage lxd2:c1 &

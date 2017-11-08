@@ -47,6 +47,9 @@ test_basic_usage() {
 
   # Re-import the image
   mv "${LXD_DIR}/${sum}.tar.xz" "${LXD_DIR}/testimage.tar.xz"
+  lxc image import "${LXD_DIR}/testimage.tar.xz" --alias testimage user.foo=bar
+  lxc image show testimage | grep -q "user.foo: bar"
+  lxc image delete testimage
   lxc image import "${LXD_DIR}/testimage.tar.xz" --alias testimage
   rm "${LXD_DIR}/testimage.tar.xz"
 
@@ -96,6 +99,9 @@ test_basic_usage() {
   # Test list json format
   lxc list --format json | jq '.[]|select(.name="foo")' | grep '"name": "foo"'
 
+  # Test list with --columns and --fast
+  ! lxc list --columns=nsp --fast
+
   # Test container rename
   lxc move foo bar
   lxc list | grep -v foo
@@ -116,6 +122,17 @@ test_basic_usage() {
   lxc image show foo-image | grep val1
   curl -k -s --cert "${LXD_CONF}/client3.crt" --key "${LXD_CONF}/client3.key" -X GET "https://${LXD_ADDR}/1.0/images" | grep "/1.0/images/" && false
   lxc image delete foo-image
+
+  # Test container publish with existing alias
+  lxc publish bar --alias=foo-image --alias=foo-image2
+  lxc launch testimage baz
+  # change the container filesystem so the resulting image is different
+  lxc exec baz touch /somefile
+  lxc stop baz --force
+  # publishing another image with same alias doesn't fail
+  lxc publish baz --alias=foo-image
+  lxc delete baz
+  lxc image delete foo-image foo-image2
 
   # Test privileged container publish
   lxc profile create priv
@@ -173,9 +190,9 @@ test_basic_usage() {
   [ ! -d "${LXD_DIR}/snapshots/bar" ]
 
   # Test randomly named container creation
-  lxc init testimage
+  lxc launch testimage
   RDNAME=$(lxc list | tail -n2 | grep ^\| | awk '{print $2}')
-  lxc delete "${RDNAME}"
+  lxc delete -f "${RDNAME}"
 
   # Test "nonetype" container creation
   wait_for "${LXD_ADDR}" my_curl -X POST "https://${LXD_ADDR}/1.0/containers" \
@@ -211,17 +228,13 @@ test_basic_usage() {
 
     lxc start autostart --force-local
     PID=$(lxc info autostart --force-local | grep ^Pid | awk '{print $2}')
-    lxd shutdown
+    shutdown_lxd "${LXD_DIR}"
     [ -d "/proc/${PID}" ] && false
 
     lxd activateifneeded --debug 2>&1 | grep -q "Daemon has auto-started containers, activating..."
 
-    # shellcheck disable=SC2086
-    lxd --logfile "${LXD_DIR}/lxd.log" ${DEBUG-} "$@" 2>&1 &
-    LXD_PID=$!
-    echo "${LXD_PID}" > "${LXD_DIR}/lxd.pid"
-    echo "${LXD_DIR}" >> "${TEST_DIR}/daemons"
-    lxd waitready --timeout=300
+    # shellcheck disable=SC2031
+    respawn_lxd "${LXD_DIR}"
 
     lxc list --force-local autostart | grep -q RUNNING
 
@@ -247,6 +260,13 @@ test_basic_usage() {
     echo "==> MAC addresses didn't match across restarts (${mac1} vs ${mac2})"
     false
   fi
+
+  # Test instance types
+  lxc launch testimage test-limits -t c0.5-m0.2
+  [ "$(lxc config get test-limits limits.cpu)" = "1" ]
+  [ "$(lxc config get test-limits limits.cpu.allowance)" = "50%" ]
+  [ "$(lxc config get test-limits limits.memory)" = "204MB" ]
+  lxc delete -f test-limits
 
   # check that we can set the environment
   lxc exec foo pwd | grep /root
@@ -299,29 +319,33 @@ test_basic_usage() {
   # cleanup
   lxc delete foo -f
 
-  # check that an apparmor profile is created for this container, that it is
-  # unloaded on stop, and that it is deleted when the container is deleted
-  lxc launch testimage lxd-apparmor-test
+  if [ -e /sys/module/apparmor/ ]; then
+    # check that an apparmor profile is created for this container, that it is
+    # unloaded on stop, and that it is deleted when the container is deleted
+    lxc launch testimage lxd-apparmor-test
 
-  MAJOR=0
-  MINOR=0
-  if [ -f /sys/kernel/security/apparmor/features/domain/version ]; then
-    MAJOR=$(awk -F. '{print $1}' < /sys/kernel/security/apparmor/features/domain/version)
-    MINOR=$(awk -F. '{print $2}' < /sys/kernel/security/apparmor/features/domain/version)
-  fi
+    MAJOR=0
+    MINOR=0
+    if [ -f /sys/kernel/security/apparmor/features/domain/version ]; then
+      MAJOR=$(awk -F. '{print $1}' < /sys/kernel/security/apparmor/features/domain/version)
+      MINOR=$(awk -F. '{print $2}' < /sys/kernel/security/apparmor/features/domain/version)
+    fi
 
-  if [ "${MAJOR}" -gt "1" ] || ([ "${MAJOR}" = "1" ] && [ "${MINOR}" -ge "2" ]); then
-    aa_namespace="lxd-lxd-apparmor-test_<$(echo "${LXD_DIR}" | sed -e 's/\//-/g' -e 's/^.//')>"
-    aa-status | grep ":${aa_namespace}://unconfined"
-    lxc stop lxd-apparmor-test --force
-    ! aa-status | grep -q ":${aa_namespace}:"
+    if [ "${MAJOR}" -gt "1" ] || ([ "${MAJOR}" = "1" ] && [ "${MINOR}" -ge "2" ]); then
+      aa_namespace="lxd-lxd-apparmor-test_<$(echo "${LXD_DIR}" | sed -e 's/\//-/g' -e 's/^.//')>"
+      aa-status | grep -q ":${aa_namespace}:unconfined" || aa-status | grep -q ":${aa_namespace}://unconfined"
+      lxc stop lxd-apparmor-test --force
+      ! aa-status | grep -q ":${aa_namespace}:" || false
+    else
+      aa-status | grep "lxd-lxd-apparmor-test_<${LXD_DIR}>"
+      lxc stop lxd-apparmor-test --force
+      ! aa-status | grep -q "lxd-lxd-apparmor-test_<${LXD_DIR}>" || false
+    fi
+    lxc delete lxd-apparmor-test
+    [ ! -f "${LXD_DIR}/security/apparmor/profiles/lxd-lxd-apparmor-test" ]
   else
-    aa-status | grep "lxd-lxd-apparmor-test_<${LXD_DIR}>"
-    lxc stop lxd-apparmor-test --force
-    ! aa-status | grep -q "lxd-lxd-apparmor-test_<${LXD_DIR}>"
+    echo "==> SKIP: apparmor tests (missing kernel support)"
   fi
-  lxc delete lxd-apparmor-test
-  [ ! -f "${LXD_DIR}/security/apparmor/profiles/lxd-lxd-apparmor-test" ]
 
   # make sure that privileged containers are not world-readable
   lxc profile create unconfined
@@ -358,5 +382,5 @@ test_basic_usage() {
   sleep 2
 
   lxc stop foo --force || true
-  ! lxc list | grep -q foo
+  ! lxc list | grep -q foo || false
 }

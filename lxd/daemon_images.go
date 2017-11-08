@@ -15,8 +15,11 @@ import (
 	"gopkg.in/yaml.v2"
 
 	"github.com/lxc/lxd/client"
+	"github.com/lxc/lxd/lxd/db"
+	"github.com/lxc/lxd/lxd/util"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
+	"github.com/lxc/lxd/shared/cancel"
 	"github.com/lxc/lxd/shared/ioprogress"
 	"github.com/lxc/lxd/shared/logger"
 	"github.com/lxc/lxd/shared/version"
@@ -190,6 +193,8 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 			fp = matches[0]
 		} else if len(matches) > 1 {
 			return nil, fmt.Errorf("Provided partial image fingerprint matches more than one image")
+		} else {
+			return nil, fmt.Errorf("The requested image couldn't be found.")
 		}
 	} else if protocol == "lxd" {
 		// Setup LXD client
@@ -221,7 +226,7 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 	}
 
 	// Check if the image already exists (partial hash match)
-	_, imgInfo, err := dbImageGet(d.db, fp, false, true)
+	_, imgInfo, err := db.ImageGet(d.db, fp, false, true)
 	if err == nil {
 		logger.Debug("Image already exists in the db", log.Ctx{"image": fp})
 		info = imgInfo
@@ -243,7 +248,7 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 		<-waitChannel
 
 		// Grab the database entry
-		_, imgInfo, err := dbImageGet(d.db, fp, false, true)
+		_, imgInfo, err := db.ImageGet(d.db, fp, false, true)
 		if err != nil {
 			// Other download failed, lets try again
 			logger.Error("Other image download didn't succeed", log.Ctx{"image": fp})
@@ -251,9 +256,12 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 			// Other download succeeded, we're done
 			return imgInfo, nil
 		}
+	} else {
+		imagesDownloadingLock.Unlock()
 	}
 
 	// Add the download to the queue
+	imagesDownloadingLock.Lock()
 	imagesDownloading[fp] = make(chan bool)
 	imagesDownloadingLock.Unlock()
 
@@ -310,6 +318,12 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 		}
 	}
 
+	var canceler *cancel.Canceler
+	if op != nil {
+		canceler = cancel.NewCanceler()
+		op.canceler = canceler
+	}
+
 	if protocol == "lxd" || protocol == "simplestreams" {
 		// Create the target files
 		dest, err := os.Create(destName)
@@ -328,11 +342,18 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 		if info == nil {
 			if secret != "" {
 				info, _, err = remote.GetPrivateImage(fp, secret)
+				if err != nil {
+					return nil, err
+				}
+
+				// Expand the fingerprint now and mark alias string to match
+				fp = info.Fingerprint
+				alias = info.Fingerprint
 			} else {
 				info, _, err = remote.GetImage(fp)
-			}
-			if err != nil {
-				return nil, err
+				if err != nil {
+					return nil, err
+				}
 			}
 		}
 
@@ -342,6 +363,15 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 			MetaFile:        io.WriteSeeker(dest),
 			RootfsFile:      io.WriteSeeker(destRootfs),
 			ProgressHandler: progress,
+			Canceler:        canceler,
+			DeltaSourceRetriever: func(fingerprint string, file string) string {
+				path := shared.VarPath("images", fmt.Sprintf("%s.%s", fingerprint, file))
+				if shared.PathExists(path) {
+					return path
+				}
+
+				return ""
+			},
 		}
 
 		if secret != "" {
@@ -362,7 +392,7 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 		}
 	} else if protocol == "direct" {
 		// Setup HTTP client
-		httpClient, err := d.httpClient(certificate)
+		httpClient, err := util.HTTPClient(certificate, d.proxy)
 		if err != nil {
 			return nil, err
 		}
@@ -375,7 +405,8 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 		req.Header.Set("User-Agent", version.UserAgent)
 
 		// Make the request
-		raw, err := httpClient.Do(req)
+		raw, doneCh, err := cancel.CancelableDownload(canceler, httpClient, req)
+		defer close(doneCh)
 		if err != nil {
 			return nil, err
 		}
@@ -423,6 +454,8 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 			return nil, err
 		}
 
+		info = &api.Image{}
+		info.Fingerprint = fp
 		info.Size = size
 		info.Architecture = imageMeta.Architecture
 		info.CreatedAt = time.Unix(imageMeta.CreationDate, 0)
@@ -439,8 +472,15 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 		return nil, err
 	}
 
+	// We want to enable auto-update only if we were passed an
+	// alias name, so we can figure when the associated
+	// fingerprint changes in the remote.
+	if alias != fp {
+		info.AutoUpdate = autoUpdate
+	}
+
 	// Create the database entry
-	err = dbImageInsert(d.db, info.Fingerprint, info.Filename, info.Size, info.Public, info.AutoUpdate, info.Architecture, info.CreatedAt, info.ExpiresAt, info.Properties)
+	err = db.ImageInsert(d.db, info.Fingerprint, info.Filename, info.Size, info.Public, info.AutoUpdate, info.Architecture, info.CreatedAt, info.ExpiresAt, info.Properties)
 	if err != nil {
 		return nil, err
 	}
@@ -448,23 +488,38 @@ func (d *Daemon) ImageDownload(op *operation, server string, protocol string, ce
 	// Image is in the DB now, don't wipe on-disk files on failure
 	failure = false
 
+	// Check if the image path changed (private images)
+	newDestName := filepath.Join(destDir, fp)
+	if newDestName != destName {
+		err = shared.FileMove(destName, newDestName)
+		if err != nil {
+			return nil, err
+		}
+
+		if shared.PathExists(destName + ".rootfs") {
+			err = shared.FileMove(destName+".rootfs", newDestName+".rootfs")
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	// Record the image source
 	if alias != fp {
-		id, _, err := dbImageGet(d.db, fp, false, true)
+		id, _, err := db.ImageGet(d.db, fp, false, true)
 		if err != nil {
 			return nil, err
 		}
 
-		err = dbImageSourceInsert(d.db, id, server, protocol, certificate, alias)
+		err = db.ImageSourceInsert(d.db, id, server, protocol, certificate, alias)
 		if err != nil {
 			return nil, err
 		}
-
-		info.AutoUpdate = autoUpdate
 	}
 
 	// Mark the image as "cached" if downloading for a container
 	if forContainer {
-		err := dbImageLastAccessInit(d.db, fp)
+		err := db.ImageLastAccessInit(d.db, fp)
 		if err != nil {
 			return nil, err
 		}

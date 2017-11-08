@@ -2,7 +2,6 @@ package lxd
 
 import (
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
+	"github.com/lxc/lxd/shared/cancel"
 	"github.com/lxc/lxd/shared/ioprogress"
 )
 
@@ -60,6 +60,16 @@ func (r *ProtocolLXD) GetImage(fingerprint string) (*api.Image, string, error) {
 // GetImageFile downloads an image from the server, returning an ImageFileRequest struct
 func (r *ProtocolLXD) GetImageFile(fingerprint string, req ImageFileRequest) (*ImageFileResponse, error) {
 	return r.GetPrivateImageFile(fingerprint, "", req)
+}
+
+// GetImageSecret is a helper around CreateImageSecret that returns a secret for the image
+func (r *ProtocolLXD) GetImageSecret(fingerprint string) (string, error) {
+	op, err := r.CreateImageSecret(fingerprint)
+	if err != nil {
+		return "", err
+	}
+
+	return op.Metadata["secret"].(string), nil
 }
 
 // GetPrivateImage is similar to GetImage but allows passing a secret download token
@@ -108,14 +118,18 @@ func (r *ProtocolLXD) GetPrivateImageFile(fingerprint string, secret string, req
 	}
 
 	// Start the request
-	response, err := r.http.Do(request)
+	response, doneCh, err := cancel.CancelableDownload(req.Canceler, r.http, request)
 	if err != nil {
 		return nil, err
 	}
 	defer response.Body.Close()
+	defer close(doneCh)
 
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Unable to fetch %s: %s", url, response.Status)
+		_, _, err := r.parseResponse(response)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	ctype, ctypeParams, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
@@ -267,6 +281,12 @@ func (r *ProtocolLXD) GetImageAlias(name string) (*api.ImageAliasesEntry, string
 
 // CreateImage requests that LXD creates, copies or import a new image
 func (r *ProtocolLXD) CreateImage(image api.ImagesPost, args *ImageCreateArgs) (*Operation, error) {
+	if image.CompressionAlgorithm != "" {
+		if !r.HasExtension("image_compression_algorithm") {
+			return nil, fmt.Errorf("The server is missing the required \"image_compression_algorithm\" API extension")
+		}
+	}
+
 	// Send the JSON based request
 	if args == nil {
 		op, _, err := r.queryOperation("POST", "/images", image, "")
@@ -384,29 +404,16 @@ func (r *ProtocolLXD) CreateImage(image api.ImagesPost, args *ImageCreateArgs) (
 	}
 
 	// Send the request
-	resp, err := r.http.Do(req)
+	resp, err := r.do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	// Decode the response
-	decoder := json.NewDecoder(resp.Body)
-	response := api.Response{}
-
-	err = decoder.Decode(&response)
-	if err != nil {
-		// Check the return value for a cleaner error
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("Failed to fetch %s: %s", reqURL, resp.Status)
-		}
-
-		return nil, err
-	}
-
 	// Handle errors
-	if response.Type == api.ErrorResponse {
-		return nil, fmt.Errorf(response.Error)
+	response, _, err := r.parseResponse(resp)
+	if err != nil {
+		return nil, err
 	}
 
 	// Get to the operation
@@ -425,15 +432,107 @@ func (r *ProtocolLXD) CreateImage(image api.ImagesPost, args *ImageCreateArgs) (
 	return &op, nil
 }
 
-// CopyImage copies an existing image to a remote server. Additional options can be passed using ImageCopyArgs
-func (r *ProtocolLXD) CopyImage(image api.Image, target ContainerServer, args *ImageCopyArgs) (*Operation, error) {
+// tryCopyImage iterates through the source server URLs until one lets it download the image
+func (r *ProtocolLXD) tryCopyImage(req api.ImagesPost, urls []string) (*RemoteOperation, error) {
+	if len(urls) == 0 {
+		return nil, fmt.Errorf("The source server isn't listening on the network")
+	}
+
+	rop := RemoteOperation{
+		chDone: make(chan bool),
+	}
+
+	// For older servers, apply the aliases after copy
+	if !r.HasExtension("image_create_aliases") && req.Aliases != nil {
+		rop.chPost = make(chan bool)
+
+		go func() {
+			defer close(rop.chPost)
+
+			// Wait for the main operation to finish
+			<-rop.chDone
+			if rop.err != nil {
+				return
+			}
+
+			// Get the operation data
+			op, err := rop.GetTarget()
+			if err != nil {
+				return
+			}
+
+			// Extract the fingerprint
+			fingerprint := op.Metadata["fingerprint"].(string)
+
+			// Add the aliases
+			for _, entry := range req.Aliases {
+				alias := api.ImageAliasesPost{}
+				alias.Name = entry.Name
+				alias.Target = fingerprint
+
+				r.CreateImageAlias(alias)
+			}
+		}()
+	}
+
+	// Forward targetOp to remote op
+	go func() {
+		success := false
+		errors := []string{}
+		for _, serverURL := range urls {
+			req.Source.Server = serverURL
+
+			op, err := r.CreateImage(req, nil)
+			if err != nil {
+				errors = append(errors, fmt.Sprintf("%s: %v", serverURL, err))
+				continue
+			}
+
+			rop.targetOp = op
+
+			for _, handler := range rop.handlers {
+				rop.targetOp.AddHandler(handler)
+			}
+
+			err = rop.targetOp.Wait()
+			if err != nil {
+				errors = append(errors, fmt.Sprintf("%s: %v", serverURL, err))
+				continue
+			}
+
+			success = true
+			break
+		}
+
+		if !success {
+			rop.err = fmt.Errorf("Failed remote image download:\n - %s", strings.Join(errors, "\n - "))
+		}
+
+		close(rop.chDone)
+	}()
+
+	return &rop, nil
+}
+
+// CopyImage copies an image from a remote server. Additional options can be passed using ImageCopyArgs
+func (r *ProtocolLXD) CopyImage(source ImageServer, image api.Image, args *ImageCopyArgs) (*RemoteOperation, error) {
+	// Sanity checks
+	if r == source {
+		return nil, fmt.Errorf("The source and target servers must be different")
+	}
+
+	// Get source server connection information
+	info, err := source.GetConnectionInfo()
+	if err != nil {
+		return nil, err
+	}
+
 	// Prepare the copy request
 	req := api.ImagesPost{
 		Source: &api.ImagesPostSource{
 			ImageSource: api.ImageSource{
-				Certificate: r.httpCertificate,
-				Protocol:    "lxd",
-				Server:      r.httpHost,
+				Certificate: info.Certificate,
+				Protocol:    info.Protocol,
 			},
 			Fingerprint: image.Fingerprint,
 			Mode:        "pull",
@@ -443,21 +542,29 @@ func (r *ProtocolLXD) CopyImage(image api.Image, target ContainerServer, args *I
 
 	// Generate secret token if needed
 	if !image.Public {
-		op, err := r.CreateImageSecret(image.Fingerprint)
+		secret, err := source.GetImageSecret(image.Fingerprint)
 		if err != nil {
 			return nil, err
 		}
 
-		req.Source.Secret = op.Metadata["secret"].(string)
+		req.Source.Secret = secret
 	}
 
 	// Process the arguments
 	if args != nil {
+		req.Aliases = args.Aliases
 		req.AutoUpdate = args.AutoUpdate
 		req.Public = args.Public
+
+		if args.CopyAliases {
+			req.Aliases = image.Aliases
+			if args.Aliases != nil {
+				req.Aliases = append(req.Aliases, args.Aliases...)
+			}
+		}
 	}
 
-	return target.CreateImage(req, nil)
+	return r.tryCopyImage(req, info.Addresses)
 }
 
 // UpdateImage updates the image definition
@@ -475,6 +582,21 @@ func (r *ProtocolLXD) UpdateImage(fingerprint string, image api.ImagePut, ETag s
 func (r *ProtocolLXD) DeleteImage(fingerprint string) (*Operation, error) {
 	// Send the request
 	op, _, err := r.queryOperation("DELETE", fmt.Sprintf("/images/%s", fingerprint), nil, "")
+	if err != nil {
+		return nil, err
+	}
+
+	return op, nil
+}
+
+// RefreshImage requests that LXD issues an image refresh
+func (r *ProtocolLXD) RefreshImage(fingerprint string) (*Operation, error) {
+	if !r.HasExtension("image_force_refresh") {
+		return nil, fmt.Errorf("The server is missing the required \"image_force_refresh\" API extension")
+	}
+
+	// Send the request
+	op, _, err := r.queryOperation("POST", fmt.Sprintf("/images/%s/refresh", fingerprint), nil, "")
 	if err != nil {
 		return nil, err
 	}

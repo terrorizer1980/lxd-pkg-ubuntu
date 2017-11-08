@@ -14,6 +14,7 @@ import (
 	"golang.org/x/crypto/scrypt"
 	log "gopkg.in/inconshreveable/log15.v2"
 
+	dbapi "github.com/lxc/lxd/lxd/db"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/logger"
 )
@@ -127,9 +128,14 @@ func (k *daemonConfigKey) Set(d *Daemon, value string) error {
 	k.currentValue = value
 	daemonConfigLock.Unlock()
 
-	err = dbConfigValueSet(d.db, name, value)
+	err = dbapi.ConfigValueSet(d.db, name, value)
 	if err != nil {
 		return err
+	}
+
+	// Run the trigger (if any)
+	if k.trigger != nil {
+		k.trigger(d, k.name(), value)
 	}
 
 	return nil
@@ -184,7 +190,7 @@ func daemonConfigInit(db *sql.DB) error {
 		"core.trust_password":        {valueType: "string", hiddenValue: true, setter: daemonConfigSetPassword},
 
 		"images.auto_update_cached":    {valueType: "bool", defaultValue: "true"},
-		"images.auto_update_interval":  {valueType: "int", defaultValue: "6"},
+		"images.auto_update_interval":  {valueType: "int", defaultValue: "6", trigger: daemonConfigTriggerAutoUpdateInterval},
 		"images.compression_algorithm": {valueType: "string", validator: daemonConfigValidateCompression, defaultValue: "gzip"},
 		"images.remote_cache_expiry":   {valueType: "int", defaultValue: "10", trigger: daemonConfigTriggerExpiry},
 
@@ -196,7 +202,7 @@ func daemonConfigInit(db *sql.DB) error {
 	}
 
 	// Load the values from the DB
-	dbValues, err := dbConfigValuesGet(db)
+	dbValues, err := dbapi.ConfigValuesGet(db)
 	if err != nil {
 		return err
 	}
@@ -205,7 +211,8 @@ func daemonConfigInit(db *sql.DB) error {
 	for k, v := range dbValues {
 		_, ok := daemonConfig[k]
 		if !ok {
-			logger.Error("Found invalid configuration key in database", log.Ctx{"key": k})
+			logger.Error("Found unknown configuration key in database", log.Ctx{"key": k})
+			continue
 		}
 
 		daemonConfig[k].currentValue = v
@@ -271,7 +278,7 @@ func daemonConfigSetStorage(d *Daemon, key string, value string) (string, error)
 	}()
 
 	// Update the current storage driver
-	err := d.SetupStorageDriver()
+	err := SetupStorageDriver(d)
 	if err != nil {
 		return "", err
 	}
@@ -319,6 +326,11 @@ func daemonConfigSetProxy(d *Daemon, key string, value string) (string, error) {
 func daemonConfigTriggerExpiry(d *Daemon, key string, value string) {
 	// Trigger an image pruning run
 	d.pruneChan <- true
+}
+
+func daemonConfigTriggerAutoUpdateInterval(d *Daemon, key string, value string) {
+	// Reset the auto-update interval loop
+	d.resetAutoUpdateChan <- true
 }
 
 func daemonConfigValidateCompression(d *Daemon, key string, value string) error {

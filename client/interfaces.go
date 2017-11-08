@@ -2,20 +2,31 @@ package lxd
 
 import (
 	"io"
+	"net/http"
 
 	"github.com/gorilla/websocket"
 
 	"github.com/lxc/lxd/shared/api"
+	"github.com/lxc/lxd/shared/cancel"
 )
+
+// The Server type represents a generic read-only server.
+type Server interface {
+	GetConnectionInfo() (info *ConnectionInfo, err error)
+	GetHTTPClient() (client *http.Client, err error)
+}
 
 // The ImageServer type represents a read-only image server.
 type ImageServer interface {
+	Server
+
 	// Image handling functions
 	GetImages() (images []api.Image, err error)
 	GetImageFingerprints() (fingerprints []string, err error)
 
 	GetImage(fingerprint string) (image *api.Image, ETag string, err error)
 	GetImageFile(fingerprint string, req ImageFileRequest) (resp *ImageFileResponse, err error)
+	GetImageSecret(fingerprint string) (secret string, err error)
 
 	GetPrivateImage(fingerprint string, secret string) (image *api.Image, ETag string, err error)
 	GetPrivateImageFile(fingerprint string, secret string, req ImageFileRequest) (resp *ImageFileResponse, err error)
@@ -24,22 +35,25 @@ type ImageServer interface {
 	GetImageAliasNames() (names []string, err error)
 
 	GetImageAlias(name string) (alias *api.ImageAliasesEntry, ETag string, err error)
-
-	CopyImage(image api.Image, target ContainerServer, args *ImageCopyArgs) (op *Operation, err error)
 }
 
 // The ContainerServer type represents a full featured LXD server.
 type ContainerServer interface {
+	ImageServer
+
 	// Server functions
 	GetServer() (server *api.Server, ETag string, err error)
+	GetServerResources() (*api.Resources, error)
 	UpdateServer(server api.ServerPut, ETag string) (err error)
 	HasExtension(extension string) bool
+	RequireAuthenticated(authenticated bool)
 
 	// Certificate functions
 	GetCertificateFingerprints() (fingerprints []string, err error)
 	GetCertificates() (certificates []api.Certificate, err error)
 	GetCertificate(fingerprint string) (certificate *api.Certificate, ETag string, err error)
 	CreateCertificate(certificate api.CertificatesPost) (err error)
+	UpdateCertificate(fingerprint string, certificate api.CertificatePut, ETag string) (err error)
 	DeleteCertificate(fingerprint string) (err error)
 
 	// Container functions
@@ -47,6 +61,8 @@ type ContainerServer interface {
 	GetContainers() (containers []api.Container, err error)
 	GetContainer(name string) (container *api.Container, ETag string, err error)
 	CreateContainer(container api.ContainersPost) (op *Operation, err error)
+	CreateContainerFromImage(source ImageServer, image api.Image, imgcontainer api.ContainersPost) (op *RemoteOperation, err error)
+	CopyContainer(source ContainerServer, container api.Container, args *ContainerCopyArgs) (op *RemoteOperation, err error)
 	UpdateContainer(name string, container api.ContainerPut, ETag string) (op *Operation, err error)
 	RenameContainer(name string, container api.ContainerPost) (op *Operation, err error)
 	MigrateContainer(name string, container api.ContainerPost) (op *Operation, err error)
@@ -62,6 +78,7 @@ type ContainerServer interface {
 	GetContainerSnapshots(containerName string) (snapshots []api.ContainerSnapshot, err error)
 	GetContainerSnapshot(containerName string, name string) (snapshot *api.ContainerSnapshot, ETag string, err error)
 	CreateContainerSnapshot(containerName string, snapshot api.ContainerSnapshotsPost) (op *Operation, err error)
+	CopyContainerSnapshot(source ContainerServer, snapshot api.ContainerSnapshot, args *ContainerSnapshotCopyArgs) (op *RemoteOperation, err error)
 	RenameContainerSnapshot(containerName string, name string, container api.ContainerSnapshotPost) (op *Operation, err error)
 	MigrateContainerSnapshot(containerName string, name string, container api.ContainerSnapshotPost) (op *Operation, err error)
 	DeleteContainerSnapshot(containerName string, name string) (op *Operation, err error)
@@ -73,14 +90,24 @@ type ContainerServer interface {
 	GetContainerLogfile(name string, filename string) (content io.ReadCloser, err error)
 	DeleteContainerLogfile(name string, filename string) (err error)
 
+	GetContainerMetadata(name string) (*api.ImageMetadata, string, error)
+	SetContainerMetadata(name string, metadata api.ImageMetadata, ETag string) error
+
+	GetContainerTemplateFiles(containerName string) (templates []string, err error)
+	GetContainerTemplateFile(containerName string, templateName string) (content io.ReadCloser, err error)
+	CreateContainerTemplateFile(containerName string, templateName string, content io.ReadSeeker) (err error)
+	UpdateContainerTemplateFile(containerName string, templateName string, content io.ReadSeeker) (err error)
+	DeleteContainerTemplateFile(name string, templateName string) (err error)
+
 	// Event handling functions
 	GetEvents() (listener *EventListener, err error)
 
 	// Image functions
-	ImageServer
 	CreateImage(image api.ImagesPost, args *ImageCreateArgs) (op *Operation, err error)
+	CopyImage(source ImageServer, image api.Image, args *ImageCopyArgs) (op *RemoteOperation, err error)
 	UpdateImage(fingerprint string, image api.ImagePut, ETag string) (err error)
 	DeleteImage(fingerprint string) (op *Operation, err error)
+	RefreshImage(fingerprint string) (op *Operation, err error)
 	CreateImageSecret(fingerprint string) (op *Operation, err error)
 	CreateImageAlias(alias api.ImageAliasesPost) (err error)
 	UpdateImageAlias(name string, alias api.ImageAliasesEntryPut, ETag string) (err error)
@@ -91,6 +118,10 @@ type ContainerServer interface {
 	GetNetworkNames() (names []string, err error)
 	GetNetworks() (networks []api.Network, err error)
 	GetNetwork(name string) (network *api.Network, ETag string, err error)
+	CreateNetwork(network api.NetworksPost) (err error)
+	UpdateNetwork(name string, network api.NetworkPut, ETag string) (err error)
+	RenameNetwork(name string, network api.NetworkPost) (err error)
+	DeleteNetwork(name string) (err error)
 
 	// Operation functions
 	GetOperation(uuid string) (op *api.Operation, ETag string, err error)
@@ -106,9 +137,34 @@ type ContainerServer interface {
 	RenameProfile(name string, profile api.ProfilePost) (err error)
 	DeleteProfile(name string) (err error)
 
+	// Storage pool functions ("storage" API extension)
+	GetStoragePoolNames() (names []string, err error)
+	GetStoragePools() (pools []api.StoragePool, err error)
+	GetStoragePool(name string) (pool *api.StoragePool, ETag string, err error)
+	GetStoragePoolResources(name string) (resources *api.ResourcesStoragePool, err error)
+	CreateStoragePool(pool api.StoragePoolsPost) (err error)
+	UpdateStoragePool(name string, pool api.StoragePoolPut, ETag string) (err error)
+	DeleteStoragePool(name string) (err error)
+
+	// Storage volume functions ("storage" API extension)
+	GetStoragePoolVolumeNames(pool string) (names []string, err error)
+	GetStoragePoolVolumes(pool string) (volumes []api.StorageVolume, err error)
+	GetStoragePoolVolume(pool string, volType string, name string) (volume *api.StorageVolume, ETag string, err error)
+	CreateStoragePoolVolume(pool string, volume api.StorageVolumesPost) (err error)
+	UpdateStoragePoolVolume(pool string, volType string, name string, volume api.StorageVolumePut, ETag string) (err error)
+	DeleteStoragePoolVolume(pool string, volType string, name string) (err error)
+	RenameStoragePoolVolume(pool string, volType string, name string, volume api.StorageVolumePost) (err error)
+
 	// Internal functions (for internal use)
 	RawQuery(method string, path string, data interface{}, queryETag string) (resp *api.Response, ETag string, err error)
 	RawWebsocket(path string) (conn *websocket.Conn, err error)
+}
+
+// The ConnectionInfo struct represents general information for a connection
+type ConnectionInfo struct {
+	Addresses   []string
+	Certificate string
+	Protocol    string
 }
 
 // The ProgressData struct represents new progress information on an operation
@@ -154,6 +210,13 @@ type ImageFileRequest struct {
 
 	// Progress handler (called whenever some progress is made)
 	ProgressHandler func(progress ProgressData)
+
+	// A canceler that can be used to interrupt some part of the image download request
+	Canceler *cancel.Canceler
+
+	// Path retriever for image delta downloads
+	// If set, it must return the path to the image file or an empty string if not available
+	DeltaSourceRetriever func(fingerprint string, file string) string
 }
 
 // The ImageFileResponse struct is used as the response for image downloads
@@ -179,8 +242,39 @@ type ImageCopyArgs struct {
 	// Whether to have LXD keep this image up to date
 	AutoUpdate bool
 
+	// Whether to copy the source image aliases to the target
+	CopyAliases bool
+
 	// Whether this image is to be made available to unauthenticated users
 	Public bool
+}
+
+// The ContainerCopyArgs struct is used to pass additional options during container copy
+type ContainerCopyArgs struct {
+	// If set, the container will be renamed on copy
+	Name string
+
+	// If set, the container running state will be transferred (live migration)
+	Live bool
+
+	// If set, only the container will copied, its snapshots won't
+	ContainerOnly bool
+
+	// The transfer mode, can be "pull" (default), "push" or "relay"
+	Mode string
+}
+
+// The ContainerSnapshotCopyArgs struct is used to pass additional options during container copy
+type ContainerSnapshotCopyArgs struct {
+	// If set, the container will be renamed on copy
+	Name string
+
+	// The transfer mode, can be "pull" (default), "push" or "relay"
+	Mode string
+
+	// API extension: container_snapshot_stateful_migration
+	// If set, the container running state will be transferred (live migration)
+	Live bool
 }
 
 // The ContainerExecArgs struct is used to pass additional options during container exec
@@ -196,6 +290,9 @@ type ContainerExecArgs struct {
 
 	// Control message handler (window resize, signals, ...)
 	Control func(conn *websocket.Conn)
+
+	// Channel that will be closed when all data operations are done
+	DataDone chan bool
 }
 
 // The ContainerFileArgs struct is used to pass the various options for a container file upload
@@ -211,6 +308,12 @@ type ContainerFileArgs struct {
 
 	// File permissions
 	Mode int
+
+	// File type (file or directory)
+	Type string
+
+	// File write mode (overwrite or append)
+	WriteMode string
 }
 
 // The ContainerFileResponse struct is used as part of the response for a container file download
@@ -223,4 +326,10 @@ type ContainerFileResponse struct {
 
 	// File permissions
 	Mode int
+
+	// File type (file or directory)
+	Type string
+
+	// If a directory, the list of files inside it
+	Entries []string
 }

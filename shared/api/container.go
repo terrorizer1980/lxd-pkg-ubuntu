@@ -10,12 +10,35 @@ type ContainersPost struct {
 
 	Name   string          `json:"name" yaml:"name"`
 	Source ContainerSource `json:"source" yaml:"source"`
+
+	InstanceType string `json:"instance_type" yaml:"instance_type"`
 }
 
 // ContainerPost represents the fields required to rename/move a LXD container
 type ContainerPost struct {
-	Migration bool   `json:"migration" yaml:"migration"`
-	Name      string `json:"name" yaml:"name"`
+	// Used for renames
+	Name string `json:"name" yaml:"name"`
+
+	// Used for migration
+	Migration bool `json:"migration" yaml:"migration"`
+
+	// API extension: container_stateless_copy
+	Live bool `json:"live" yaml:"live"`
+
+	// API extension: container_only_migration
+	ContainerOnly bool `json:"container_only" yaml:"container_only"`
+
+	// API extension: container_push_target
+	Target *ContainerPostTarget `json:"target" yaml:"target"`
+}
+
+// ContainerPostTarget represents the migration target host and operation
+//
+// API extension: container_push_target
+type ContainerPostTarget struct {
+	Certificate string            `json:"certificate" yaml:"certificate"`
+	Operation   string            `json:"operation,omitempty" yaml:"operation,omitempty"`
+	Websockets  map[string]string `json:"secrets,omitempty" yaml:"secrets,omitempty"`
 }
 
 // ContainerPut represents the modifiable fields of a LXD container
@@ -29,6 +52,9 @@ type ContainerPut struct {
 	// For snapshot restore
 	Restore  string `json:"restore,omitempty" yaml:"restore,omitempty"`
 	Stateful bool   `json:"stateful" yaml:"stateful"`
+
+	// API extension: entity_description
+	Description string `json:"description" yaml:"description"`
 }
 
 // Container represents a LXD container
@@ -41,6 +67,9 @@ type Container struct {
 	Name            string                       `json:"name" yaml:"name"`
 	Status          string                       `json:"status" yaml:"status"`
 	StatusCode      StatusCode                   `json:"status_code" yaml:"status_code"`
+
+	// API extension: container_last_used_at
+	LastUsedAt time.Time `json:"last_used_at" yaml:"last_used_at"`
 }
 
 // Writable converts a full Container struct into a ContainerPut struct (filters read-only fields)
@@ -83,4 +112,10 @@ type ContainerSource struct {
 
 	// For "copy" type
 	Source string `json:"source,omitempty" yaml:"source,omitempty"`
+
+	// API extension: container_push
+	Live bool `json:"live,omitempty" yaml:"live,omitempty"`
+
+	// API extension: container_only_migration
+	ContainerOnly bool `json:"container_only,omitempty" yaml:"container_only,omitempty"`
 }

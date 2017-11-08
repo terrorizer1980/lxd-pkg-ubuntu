@@ -16,7 +16,7 @@ test_static_analysis() {
 
     # Shell static analysis
     if which shellcheck >/dev/null 2>&1; then
-      shellcheck --shell sh test/main.sh test/suites/* test/backends/*
+      shellcheck --shell sh test/*.sh test/includes/*.sh test/suites/*.sh test/backends/*.sh
     else
       echo "shellcheck not found, shell static analysis disabled"
     fi
@@ -65,10 +65,11 @@ test_static_analysis() {
     fi
 
     if which godeps >/dev/null 2>&1; then
-      OUT=$(godeps . ./shared | cut -f1)
-      if [ "${OUT}" != "$(printf "github.com/gorilla/websocket\ngopkg.in/yaml.v2\n")" ]; then
+      OUT=$(godeps -T ./client ./lxc/config ./shared/api 2>/dev/null | cut -f1 | diff -u test/godeps.list - || true)
+      if [ -n "${OUT}" ]; then
         echo "ERROR: you added a new dependency to the client or shared; please make sure this is what you want"
         echo "${OUT}"
+        exit 1
       fi
     fi
 

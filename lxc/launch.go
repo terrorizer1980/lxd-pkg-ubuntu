@@ -2,13 +2,10 @@ package main
 
 import (
 	"fmt"
-	"strings"
 
-	"github.com/lxc/lxd"
-	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/lxc/config"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/i18n"
-	"github.com/lxc/lxd/shared/version"
 )
 
 type launchCmd struct {
@@ -21,7 +18,7 @@ func (c *launchCmd) showByDefault() bool {
 
 func (c *launchCmd) usage() string {
 	return i18n.G(
-		`Usage: lxc launch [<remote>:]<image> [<remote>:][<name>] [--ephemeral|-e] [--profile|-p <profile>...] [--config|-c <key=value>...]
+		`Usage: lxc launch [<remote>:]<image> [<remote>:][<name>] [--ephemeral|-e] [--profile|-p <profile>...] [--config|-c <key=value>...] [--type|-t <instance type>]
 
 Create and start containers from images.
 
@@ -37,97 +34,40 @@ func (c *launchCmd) flags() {
 	c.init.flags()
 }
 
-func (c *launchCmd) run(config *lxd.Config, args []string) error {
-	if len(args) > 2 || len(args) < 1 {
-		return errArgs
+func (c *launchCmd) run(conf *config.Config, args []string) error {
+	// Call the matching code from init
+	d, name, err := c.init.create(conf, args)
+	if err != nil {
+		return err
 	}
 
-	iremote, image := config.ParseRemoteAndContainer(args[0])
-
-	var name string
+	// Get the remote
 	var remote string
 	if len(args) == 2 {
-		remote, name = config.ParseRemoteAndContainer(args[1])
-	} else {
-		remote, name = config.ParseRemoteAndContainer("")
-	}
-
-	d, err := lxd.NewClient(config, remote)
-	if err != nil {
-		return err
-	}
-
-	/*
-	 * initRequestedEmptyProfiles means user requested empty
-	 * !initRequestedEmptyProfiles but len(profArgs) == 0 means use profile default
-	 */
-	var resp *api.Response
-	profiles := []string{}
-	for _, p := range c.init.profArgs {
-		profiles = append(profiles, p)
-	}
-
-	iremote, image = c.init.guessImage(config, d, remote, iremote, image)
-
-	if !initRequestedEmptyProfiles && len(profiles) == 0 {
-		resp, err = d.Init(name, iremote, image, nil, configMap, c.init.ephem)
-	} else {
-		resp, err = d.Init(name, iremote, image, &profiles, configMap, c.init.ephem)
-	}
-
-	if err != nil {
-		return err
-	}
-
-	progress := ProgressRenderer{}
-	c.init.initProgressTracker(d, &progress, resp.Operation)
-
-	if name == "" {
-		op, err := resp.MetadataAsOperation()
+		remote, _, err = conf.ParseRemote(args[1])
 		if err != nil {
-			progress.Done("")
-			return fmt.Errorf(i18n.G("didn't get any affected image, container or snapshot from server"))
-		}
-
-		containers, ok := op.Resources["containers"]
-		if !ok || len(containers) == 0 {
-			progress.Done("")
-			return fmt.Errorf(i18n.G("didn't get any affected image, container or snapshot from server"))
-		}
-
-		var restVersion string
-		toScan := strings.Replace(containers[0], "/", " ", -1)
-		count, err := fmt.Sscanf(toScan, " %s containers %s", &restVersion, &name)
-		if err != nil {
-			progress.Done("")
 			return err
 		}
-
-		if count != 2 {
-			progress.Done("")
-			return fmt.Errorf(i18n.G("bad number of things scanned from image, container or snapshot"))
-		}
-
-		if restVersion != version.APIVersion {
-			progress.Done("")
-			return fmt.Errorf(i18n.G("got bad version"))
+	} else {
+		remote, _, err = conf.ParseRemote("")
+		if err != nil {
+			return err
 		}
 	}
-	fmt.Printf(i18n.G("Creating %s")+"\n", name)
 
-	if err = d.WaitForSuccess(resp.Operation); err != nil {
-		progress.Done("")
-		return err
-	}
-	progress.Done("")
-
+	// Start the container
 	fmt.Printf(i18n.G("Starting %s")+"\n", name)
-	resp, err = d.Action(name, shared.Start, -1, false, false)
+	req := api.ContainerStatePut{
+		Action:  "start",
+		Timeout: -1,
+	}
+
+	op, err := d.UpdateContainerState(name, req, "")
 	if err != nil {
 		return err
 	}
 
-	err = d.WaitForSuccess(resp.Operation)
+	err = op.Wait()
 	if err != nil {
 		prettyName := name
 		if remote != "" {

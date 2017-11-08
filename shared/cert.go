@@ -14,9 +14,9 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"math/big"
 	"net"
+	"net/http"
 	"os"
 	"os/user"
 	"path"
@@ -94,16 +94,14 @@ func GenCert(certf string, keyf string, certtype bool) error {
 
 	certOut, err := os.Create(certf)
 	if err != nil {
-		log.Fatalf("failed to open %s for writing: %s", certf, err)
-		return err
+		return fmt.Errorf("Failed to open %s for writing: %v", certf, err)
 	}
 	certOut.Write(certBytes)
 	certOut.Close()
 
 	keyOut, err := os.OpenFile(keyf, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
-		log.Printf("failed to open %s for writing: %s", keyf, err)
-		return err
+		return fmt.Errorf("Failed to open %s for writing: %v", keyf, err)
 	}
 	keyOut.Write(keyBytes)
 	keyOut.Close()
@@ -115,14 +113,12 @@ func GenCert(certf string, keyf string, certtype bool) error {
 func GenerateMemCert(client bool) ([]byte, []byte, error) {
 	privk, err := rsa.GenerateKey(rand.Reader, 4096)
 	if err != nil {
-		log.Fatalf("failed to generate key")
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("Failed to generate key: %v", err)
 	}
 
 	hosts, err := mynames()
 	if err != nil {
-		log.Fatalf("Failed to get my hostname")
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("Failed to get my hostname: %v", err)
 	}
 
 	validFrom := time.Now()
@@ -131,8 +127,7 @@ func GenerateMemCert(client bool) ([]byte, []byte, error) {
 	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
 	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
 	if err != nil {
-		log.Fatalf("failed to generate serial number: %s", err)
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("Failed to generate serial number: %v", err)
 	}
 
 	userEntry, err := user.Current()
@@ -182,8 +177,7 @@ func GenerateMemCert(client bool) ([]byte, []byte, error) {
 
 	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &privk.PublicKey, privk)
 	if err != nil {
-		log.Fatalf("Failed to create certificate: %s", err)
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("Failed to create certificate: %v", err)
 	}
 
 	cert := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
@@ -221,4 +215,33 @@ func CertFingerprintStr(c string) (string, error) {
 	}
 
 	return CertFingerprint(cert), nil
+}
+
+func GetRemoteCertificate(address string) (*x509.Certificate, error) {
+	// Setup a permissive TLS config
+	tlsConfig, err := GetTLSConfig("", "", "", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	tlsConfig.InsecureSkipVerify = true
+	tr := &http.Transport{
+		TLSClientConfig: tlsConfig,
+		Dial:            RFC3493Dialer,
+		Proxy:           ProxyFromEnvironment,
+	}
+
+	// Connect
+	client := &http.Client{Transport: tr}
+	resp, err := client.Get(address)
+	if err != nil {
+		return nil, err
+	}
+
+	// Retrieve the certificate
+	if resp.TLS == nil || len(resp.TLS.PeerCertificates) == 0 {
+		return nil, fmt.Errorf("Unable to read remote TLS certificate")
+	}
+
+	return resp.TLS.PeerCertificates[0], nil
 }

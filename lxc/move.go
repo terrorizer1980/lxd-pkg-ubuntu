@@ -1,7 +1,11 @@
 package main
 
 import (
-	"github.com/lxc/lxd"
+	"strings"
+
+	"github.com/lxc/lxd/lxc/config"
+	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/i18n"
 )
 
@@ -30,13 +34,20 @@ lxc move <container>/<old snapshot name> <container>/<new snapshot name>
 
 func (c *moveCmd) flags() {}
 
-func (c *moveCmd) run(config *lxd.Config, args []string) error {
+func (c *moveCmd) run(conf *config.Config, args []string) error {
 	if len(args) != 2 {
 		return errArgs
 	}
 
-	sourceRemote, sourceName := config.ParseRemoteAndContainer(args[0])
-	destRemote, destName := config.ParseRemoteAndContainer(args[1])
+	sourceRemote, sourceName, err := conf.ParseRemote(args[0])
+	if err != nil {
+		return err
+	}
+
+	destRemote, destName, err := conf.ParseRemote(args[1])
+	if err != nil {
+		return err
+	}
 
 	// As an optimization, if the source an destination are the same, do
 	// this via a simple rename. This only works for containers that aren't
@@ -44,27 +55,43 @@ func (c *moveCmd) run(config *lxd.Config, args []string) error {
 	// course, this changing of hostname isn't supported right now, so this
 	// simply won't work).
 	if sourceRemote == destRemote {
-		source, err := lxd.NewClient(config, sourceRemote)
+		source, err := conf.GetContainerServer(sourceRemote)
 		if err != nil {
 			return err
 		}
 
-		rename, err := source.Rename(sourceName, destName)
+		if shared.IsSnapshot(sourceName) {
+			// Snapshot rename
+			srcFields := strings.SplitN(sourceName, shared.SnapshotDelimiter, 2)
+			dstFields := strings.SplitN(destName, shared.SnapshotDelimiter, 2)
+
+			op, err := source.RenameContainerSnapshot(srcFields[0], srcFields[1], api.ContainerSnapshotPost{Name: dstFields[1]})
+			if err != nil {
+				return err
+			}
+
+			return op.Wait()
+		}
+
+		// Container rename
+		op, err := source.RenameContainer(sourceName, api.ContainerPost{Name: destName})
 		if err != nil {
 			return err
 		}
 
-		return source.WaitForSuccess(rename.Operation)
+		return op.Wait()
 	}
 
 	cpy := copyCmd{}
 
 	// A move is just a copy followed by a delete; however, we want to
 	// keep the volatile entries around since we are moving the container.
-	err := cpy.copyContainer(config, args[0], args[1], true, -1)
+	err = cpy.copyContainer(conf, args[0], args[1], true, -1)
 	if err != nil {
 		return err
 	}
 
-	return commands["delete"].run(config, args[:1])
+	del := deleteCmd{}
+	del.force = true
+	return del.run(conf, args[:1])
 }
