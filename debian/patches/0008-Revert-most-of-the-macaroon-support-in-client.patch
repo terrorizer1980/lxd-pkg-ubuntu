@@ -1,0 +1,317 @@
+From 3c80390d373ab316fd725757bc3163f2850a0e26 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Wed, 8 Nov 2017 18:19:04 -0500
+Subject: Revert most of the macaroon support in client
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This was causing a bunch of extra dependencies that we should avoid in
+the 2.0 branch.
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ client/connection.go | 30 ++++-------------------------
+ client/interfaces.go |  1 -
+ client/lxd.go        | 53 ----------------------------------------------------
+ client/lxd_server.go |  5 -----
+ lxc/config/config.go | 25 -------------------------
+ lxc/config/remote.go |  9 +--------
+ test/godeps.list     |  3 ---
+ 7 files changed, 5 insertions(+), 121 deletions(-)
+
+diff --git a/client/connection.go b/client/connection.go
+index c2e830cd..560546be 100644
+--- a/client/connection.go
++++ b/client/connection.go
+@@ -8,7 +8,6 @@ import (
+ 
+ 	"github.com/lxc/lxd/shared/logger"
+ 	"github.com/lxc/lxd/shared/simplestreams"
+-	"gopkg.in/macaroon-bakery.v2/httpbakery"
+ )
+ 
+ // ConnectionArgs represents a set of common connection properties
+@@ -28,12 +27,6 @@ type ConnectionArgs struct {
+ 	// User agent string
+ 	UserAgent string
+ 
+-	// Authentication type
+-	AuthType string
+-
+-	// Authentication interactor
+-	AuthInteractor httpbakery.Interactor
+-
+ 	// Custom proxy
+ 	Proxy func(*http.Request) (*url.URL, error)
+ 
+@@ -42,9 +35,6 @@ type ConnectionArgs struct {
+ 
+ 	// Controls whether a client verifies the server's certificate chain and host name.
+ 	InsecureSkipVerify bool
+-
+-	// Cookie jar
+-	CookieJar http.CookieJar
+ }
+ 
+ // ConnectLXD lets you connect to a remote LXD daemon over HTTPs.
+@@ -158,14 +148,10 @@ func httpsLXD(url string, args *ConnectionArgs) (ContainerServer, error) {
+ 
+ 	// Initialize the client struct
+ 	server := ProtocolLXD{
+-		httpCertificate:  args.TLSServerCert,
+-		httpHost:         url,
+-		httpProtocol:     "https",
+-		httpUserAgent:    args.UserAgent,
+-		bakeryInteractor: args.AuthInteractor,
+-	}
+-	if args.AuthType == "macaroons" {
+-		server.RequireAuthenticated(true)
++		httpCertificate: args.TLSServerCert,
++		httpHost:        url,
++		httpProtocol:    "https",
++		httpUserAgent:   args.UserAgent,
+ 	}
+ 
+ 	// Setup the HTTP client
+@@ -173,15 +159,7 @@ func httpsLXD(url string, args *ConnectionArgs) (ContainerServer, error) {
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-
+-	if args.CookieJar != nil {
+-		httpClient.Jar = args.CookieJar
+-	}
+-
+ 	server.http = httpClient
+-	if args.AuthType == "macaroons" {
+-		server.setupBakeryClient()
+-	}
+ 
+ 	// Test the connection and seed the server information
+ 	_, _, err = server.GetServer()
+diff --git a/client/interfaces.go b/client/interfaces.go
+index 7c183b8f..cee6efab 100644
+--- a/client/interfaces.go
++++ b/client/interfaces.go
+@@ -46,7 +46,6 @@ type ContainerServer interface {
+ 	GetServerResources() (*api.Resources, error)
+ 	UpdateServer(server api.ServerPut, ETag string) (err error)
+ 	HasExtension(extension string) bool
+-	RequireAuthenticated(authenticated bool)
+ 
+ 	// Certificate functions
+ 	GetCertificateFingerprints() (fingerprints []string, err error)
+diff --git a/client/lxd.go b/client/lxd.go
+index 0ca7a2d8..dec646c4 100644
+--- a/client/lxd.go
++++ b/client/lxd.go
+@@ -9,14 +9,10 @@ import (
+ 	"sync"
+ 
+ 	"github.com/gorilla/websocket"
+-	"gopkg.in/macaroon-bakery.v2/bakery"
+-	"gopkg.in/macaroon-bakery.v2/httpbakery"
+ 
+ 	"github.com/lxc/lxd/shared"
+ 	"github.com/lxc/lxd/shared/api"
+ 	"github.com/lxc/lxd/shared/logger"
+-
+-	neturl "net/url"
+ )
+ 
+ // ProtocolLXD represents a LXD API server
+@@ -31,10 +27,6 @@ type ProtocolLXD struct {
+ 	httpHost        string
+ 	httpProtocol    string
+ 	httpUserAgent   string
+-
+-	bakeryClient         *httpbakery.Client
+-	bakeryInteractor     httpbakery.Interactor
+-	requireAuthenticated bool
+ }
+ 
+ // GetConnectionInfo returns the basic connection information used to interact with the server
+@@ -72,27 +64,9 @@ func (r *ProtocolLXD) GetHTTPClient() (*http.Client, error) {
+ 
+ // Do performs a Request, using macaroon authentication if set.
+ func (r *ProtocolLXD) do(req *http.Request) (*http.Response, error) {
+-	if r.bakeryClient != nil {
+-		r.addMacaroonHeaders(req)
+-		return r.bakeryClient.Do(req)
+-	}
+-
+ 	return r.http.Do(req)
+ }
+ 
+-func (r *ProtocolLXD) addMacaroonHeaders(req *http.Request) {
+-	req.Header.Set(httpbakery.BakeryProtocolHeader, fmt.Sprint(bakery.LatestVersion))
+-
+-	for _, cookie := range r.http.Jar.Cookies(req.URL) {
+-		req.AddCookie(cookie)
+-	}
+-}
+-
+-// RequireAuthenticated sets whether we expect to be authenticated with the server
+-func (r *ProtocolLXD) RequireAuthenticated(authenticated bool) {
+-	r.requireAuthenticated = authenticated
+-}
+-
+ // RawQuery allows directly querying the LXD API
+ //
+ // This should only be used by internal LXD tools.
+@@ -187,11 +161,6 @@ func (r *ProtocolLXD) rawQuery(method string, url string, data interface{}, ETag
+ 		req.Header.Set("If-Match", ETag)
+ 	}
+ 
+-	// Set the authentication header
+-	if r.requireAuthenticated {
+-		req.Header.Set("X-LXD-authenticated", "true")
+-	}
+-
+ 	// Send the request
+ 	resp, err := r.do(req)
+ 	if err != nil {
+@@ -285,20 +254,6 @@ func (r *ProtocolLXD) rawWebsocket(url string) (*websocket.Conn, error) {
+ 		headers.Set("User-Agent", r.httpUserAgent)
+ 	}
+ 
+-	if r.requireAuthenticated {
+-		headers.Set("X-LXD-authenticated", "true")
+-	}
+-
+-	// Set macaroon headers if needed
+-	if r.bakeryClient != nil {
+-		u, err := neturl.Parse(r.httpHost) // use the http url, not the ws one
+-		if err != nil {
+-			return nil, err
+-		}
+-		req := &http.Request{URL: u, Header: headers}
+-		r.addMacaroonHeaders(req)
+-	}
+-
+ 	// Establish the connection
+ 	conn, _, err := dialer.Dial(url, headers)
+ 	if err != nil {
+@@ -322,11 +277,3 @@ func (r *ProtocolLXD) websocket(path string) (*websocket.Conn, error) {
+ 
+ 	return r.rawWebsocket(url)
+ }
+-
+-func (r *ProtocolLXD) setupBakeryClient() {
+-	r.bakeryClient = httpbakery.NewClient()
+-	r.bakeryClient.Client = r.http
+-	if r.bakeryInteractor != nil {
+-		r.bakeryClient.AddInteractor(r.bakeryInteractor)
+-	}
+-}
+diff --git a/client/lxd_server.go b/client/lxd_server.go
+index c95d095d..6f50a2cc 100644
+--- a/client/lxd_server.go
++++ b/client/lxd_server.go
+@@ -28,11 +28,6 @@ func (r *ProtocolLXD) GetServer() (*api.Server, string, error) {
+ 		}
+ 	}
+ 
+-	if !server.Public && len(server.AuthMethods) == 0 {
+-		// TLS is always available for LXD servers
+-		server.AuthMethods = []string{"tls"}
+-	}
+-
+ 	// Add the value to the cache
+ 	r.server = &server
+ 
+diff --git a/lxc/config/config.go b/lxc/config/config.go
+index f6e9a3fe..9be7a565 100644
+--- a/lxc/config/config.go
++++ b/lxc/config/config.go
+@@ -3,9 +3,6 @@ package config
+ import (
+ 	"fmt"
+ 	"path/filepath"
+-
+-	"github.com/juju/persistent-cookiejar"
+-	"gopkg.in/macaroon-bakery.v2/httpbakery"
+ )
+ 
+ // Config holds settings to be used by a client or daemon
+@@ -26,10 +23,6 @@ type Config struct {
+ 
+ 	// The UserAgent to pass for all queries
+ 	UserAgent string `yaml:"-"`
+-
+-	authInteractor httpbakery.Interactor
+-
+-	cookiejar *cookiejar.Jar
+ }
+ 
+ // ConfigPath returns a joined path of the configuration directory and passed arguments
+@@ -45,18 +38,6 @@ func (c *Config) ServerCertPath(remote string) string {
+ 	return c.ConfigPath("servercerts", fmt.Sprintf("%s.crt", remote))
+ }
+ 
+-// SetAuthInteractor sets the interactor for macaroon-based authorization
+-func (c *Config) SetAuthInteractor(interactor httpbakery.Interactor) {
+-	c.authInteractor = interactor
+-}
+-
+-// SaveCookies saves cookies to file
+-func (c *Config) SaveCookies() {
+-	if c.cookiejar != nil {
+-		c.cookiejar.Save()
+-	}
+-}
+-
+ // NewConfig returns a Config, optionally using default remotes.
+ func NewConfig(configDir string, defaults bool) *Config {
+ 	config := &Config{ConfigDir: configDir}
+@@ -65,11 +46,5 @@ func NewConfig(configDir string, defaults bool) *Config {
+ 		config.DefaultRemote = "local"
+ 	}
+ 
+-	if configDir != "" {
+-		config.cookiejar, _ = cookiejar.New(
+-			&cookiejar.Options{
+-				Filename: filepath.Join(configDir, "cookies")})
+-	}
+-
+ 	return config
+ }
+diff --git a/lxc/config/remote.go b/lxc/config/remote.go
+index bc1acf63..f9715e64 100644
+--- a/lxc/config/remote.go
++++ b/lxc/config/remote.go
+@@ -134,15 +134,8 @@ func (c *Config) GetImageServer(name string) (lxd.ImageServer, error) {
+ }
+ 
+ func (c *Config) getConnectionArgs(name string) (*lxd.ConnectionArgs, error) {
+-	remote, _ := c.Remotes[name]
+ 	args := lxd.ConnectionArgs{
+-		UserAgent:      c.UserAgent,
+-		AuthType:       remote.AuthType,
+-		AuthInteractor: c.authInteractor,
+-	}
+-
+-	if c.cookiejar != nil {
+-		args.CookieJar = c.cookiejar
++		UserAgent: c.UserAgent,
+ 	}
+ 
+ 	// Client certificate
+diff --git a/test/godeps.list b/test/godeps.list
+index d7010620..57324e2a 100644
+--- a/test/godeps.list
++++ b/test/godeps.list
+@@ -1,5 +1,4 @@
+ github.com/gorilla/websocket
+-github.com/juju/persistent-cookiejar
+ github.com/lxc/lxd/client
+ github.com/lxc/lxd/shared
+ github.com/lxc/lxd/shared/api
+@@ -7,6 +6,4 @@ github.com/lxc/lxd/shared/cancel
+ github.com/lxc/lxd/shared/ioprogress
+ github.com/lxc/lxd/shared/logger
+ github.com/lxc/lxd/shared/simplestreams
+-gopkg.in/macaroon-bakery.v2/bakery
+-gopkg.in/macaroon-bakery.v2/httpbakery
+ gopkg.in/yaml.v2

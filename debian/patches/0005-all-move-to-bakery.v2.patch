@@ -1,0 +1,68 @@
+From b84bb00bcd3337c5ca9336308b390209b9f55bb9 Mon Sep 17 00:00:00 2001
+From: Thomas Hipp <thipp@suse.de>
+Date: Fri, 27 Oct 2017 18:40:21 +0200
+Subject: all: move to bakery.v2
+
+Signed-off-by: Thomas Hipp <thomashipp@gmail.com>
+---
+ client/connection.go | 2 +-
+ client/lxd.go        | 4 ++--
+ lxc/config/config.go | 2 +-
+ test/godeps.list     | 4 ++--
+ 4 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/client/connection.go b/client/connection.go
+index 0a606452..c2e830cd 100644
+--- a/client/connection.go
++++ b/client/connection.go
+@@ -8,7 +8,7 @@ import (
+ 
+ 	"github.com/lxc/lxd/shared/logger"
+ 	"github.com/lxc/lxd/shared/simplestreams"
+-	"gopkg.in/macaroon-bakery.v2-unstable/httpbakery"
++	"gopkg.in/macaroon-bakery.v2/httpbakery"
+ )
+ 
+ // ConnectionArgs represents a set of common connection properties
+diff --git a/client/lxd.go b/client/lxd.go
+index 6b57f2a2..0ca7a2d8 100644
+--- a/client/lxd.go
++++ b/client/lxd.go
+@@ -9,8 +9,8 @@ import (
+ 	"sync"
+ 
+ 	"github.com/gorilla/websocket"
+-	"gopkg.in/macaroon-bakery.v2-unstable/bakery"
+-	"gopkg.in/macaroon-bakery.v2-unstable/httpbakery"
++	"gopkg.in/macaroon-bakery.v2/bakery"
++	"gopkg.in/macaroon-bakery.v2/httpbakery"
+ 
+ 	"github.com/lxc/lxd/shared"
+ 	"github.com/lxc/lxd/shared/api"
+diff --git a/lxc/config/config.go b/lxc/config/config.go
+index 486b39af..f6e9a3fe 100644
+--- a/lxc/config/config.go
++++ b/lxc/config/config.go
+@@ -5,7 +5,7 @@ import (
+ 	"path/filepath"
+ 
+ 	"github.com/juju/persistent-cookiejar"
+-	"gopkg.in/macaroon-bakery.v2-unstable/httpbakery"
++	"gopkg.in/macaroon-bakery.v2/httpbakery"
+ )
+ 
+ // Config holds settings to be used by a client or daemon
+diff --git a/test/godeps.list b/test/godeps.list
+index 172f8847..86644a6c 100644
+--- a/test/godeps.list
++++ b/test/godeps.list
+@@ -10,7 +10,7 @@ github.com/rogpeppe/fastuuid
+ golang.org/x/crypto
+ golang.org/x/net
+ gopkg.in/errgo.v1
+-gopkg.in/macaroon-bakery.v2-unstable
+-gopkg.in/macaroon.v2-unstable
++gopkg.in/macaroon-bakery.v2
++gopkg.in/macaroon.v2
+ gopkg.in/retry.v1
+ gopkg.in/yaml.v2

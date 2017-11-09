@@ -1,0 +1,28 @@
+From b4f5a475593706824522d42987d3a028ea467a96 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Mon, 23 Oct 2017 18:11:00 +0200
+Subject: If running as root in the snap, use /proc/1/root
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ shared/util.go | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/shared/util.go b/shared/util.go
+index d9cd2d49..cc84a233 100644
+--- a/shared/util.go
++++ b/shared/util.go
+@@ -142,6 +142,10 @@ func HostPath(path string) string {
+ 		}
+ 	}
+ 
++	if os.Geteuid() == 0 {
++		return fmt.Sprintf("/proc/1/root%s", path)
++	}
++
+ 	return fmt.Sprintf("/var/lib/snapd/hostfs%s", path)
+ }
+ 

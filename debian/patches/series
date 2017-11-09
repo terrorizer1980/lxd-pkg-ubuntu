@@ -1,1 +1,8 @@
 0001-Fix-for-older-gorilla-websocket-package.patch
+0002-Fix-file-transfers-to-from-stdin-stdout-in-snap.patch
+0003-If-running-as-root-in-the-snap-use-proc-1-root.patch
+0004-Fix-failure-due-to-bind-mount-through-proc.patch
+0005-all-move-to-bakery.v2.patch
+0006-Update-the-lxc-list-help-to-match-stable-2.0.patch
+0007-tests-Don-t-use-godeps-for-import-check.patch
+0008-Revert-most-of-the-macaroon-support-in-client.patch

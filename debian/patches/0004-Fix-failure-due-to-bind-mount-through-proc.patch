@@ -1,0 +1,42 @@
+From 6ffb4f976073bf0d1ad23a43362db791295fca44 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Tue, 24 Oct 2017 16:29:46 +0200
+Subject: Fix failure due to bind-mount through /proc
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The kernel won't allow us to bind-mount stuff through /proc.
+Since the main reason for my previous change was to fix /dev handling,
+lets just whitelist /dev as safe to read from within the snap, which
+should be fine so long as distros use devtmpfs.
+
+Closes #3968
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ shared/util.go | 6 +-----
+ 1 file changed, 1 insertion(+), 5 deletions(-)
+
+diff --git a/shared/util.go b/shared/util.go
+index cc84a233..94d687a2 100644
+--- a/shared/util.go
++++ b/shared/util.go
+@@ -136,16 +136,12 @@ func HostPath(path string) string {
+ 	}
+ 
+ 	// Check if the path is already snap-aware
+-	for _, prefix := range []string{"/snap", "/var/snap", "/var/lib/snapd"} {
++	for _, prefix := range []string{"/dev", "/snap", "/var/snap", "/var/lib/snapd"} {
+ 		if strings.HasPrefix(path, prefix) {
+ 			return path
+ 		}
+ 	}
+ 
+-	if os.Geteuid() == 0 {
+-		return fmt.Sprintf("/proc/1/root%s", path)
+-	}
+-
+ 	return fmt.Sprintf("/var/lib/snapd/hostfs%s", path)
+ }
+ 

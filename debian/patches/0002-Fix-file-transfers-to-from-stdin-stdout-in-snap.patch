@@ -1,0 +1,29 @@
+From 186d2a8801709dd4f3e9575b0fb5fb7f6eb0d345 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Fri, 20 Oct 2017 17:50:43 -0400
+Subject: Fix file transfers to/from stdin/stdout in snap
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ shared/util.go | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/shared/util.go b/shared/util.go
+index 361dab63..d9cd2d49 100644
+--- a/shared/util.go
++++ b/shared/util.go
+@@ -108,6 +108,11 @@ func HostPath(path string) string {
+ 		return path
+ 	}
+ 
++	// Don't prefix stdin/stdout
++	if path == "-" {
++		return path
++	}
++
+ 	// Check if we're running in a snap package
+ 	snap := os.Getenv("SNAP")
+ 	if snap == "" {
