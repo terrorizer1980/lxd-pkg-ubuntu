@@ -1,0 +1,44 @@
+From 0498ed53bb886d2aefc174501f8b6dca3e48cd98 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Thu, 9 Nov 2017 01:15:34 -0500
+Subject: Revert "Temporary workaround for log15 API breakage"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This reverts commit 7c88b008b7f01972b2b366430ae9ac0ed743caf3.
+
+This is needed as the archive copy of log15 is fine.
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ shared/logging/log_posix.go | 6 ++----
+ 1 file changed, 2 insertions(+), 4 deletions(-)
+
+diff --git a/shared/logging/log_posix.go b/shared/logging/log_posix.go
+index 5ada8081..ffc55da5 100644
+--- a/shared/logging/log_posix.go
++++ b/shared/logging/log_posix.go
+@@ -3,8 +3,6 @@
+ package logging
+ 
+ import (
+-	slog "log/syslog"
+-
+ 	log "gopkg.in/inconshreveable/log15.v2"
+ )
+ 
+@@ -15,11 +13,11 @@ func getSystemHandler(syslog string, debug bool, format log.Format) log.Handler
+ 		if !debug {
+ 			return log.LvlFilterHandler(
+ 				log.LvlInfo,
+-				log.Must.SyslogHandler(slog.LOG_INFO, syslog, format),
++				log.Must.SyslogHandler(syslog, format),
+ 			)
+ 		}
+ 
+-		return log.Must.SyslogHandler(slog.LOG_INFO, syslog, format)
++		return log.Must.SyslogHandler(syslog, format)
+ 	}
+ 
+ 	return nil
