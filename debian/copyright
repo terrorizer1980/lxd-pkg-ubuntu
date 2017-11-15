@@ -75,10 +75,6 @@ Files: dist/src/gopkg.in/flosch/pongo2.v3/*
 Copyright: 2013-2014 Florian Schlachter
 License: Expat
 
-Files: dist/src/gopkg.in/inconshreveable/log15.v2/*
-Copyright: 2014 Alan Shreve
-License: Apache-2
-
 Files: dist/src/gopkg.in/lxc/go-lxc.v2/*
 Copyright: The go-lxc contributors
 License: LGPL-2.1 with static linking exception
