@@ -1,0 +1,29 @@
+From e0389937d8e7a8f28ab74df57b2ceb448991d3ff Mon Sep 17 00:00:00 2001
+From: Christian Brauner <christian.brauner@ubuntu.com>
+Date: Wed, 15 Nov 2017 17:12:27 +0100
+Subject: test: skip console tests on lower versions
+
+Signed-off-by: Christian Brauner <christian.brauner@ubuntu.com>
+---
+ test/suites/console.sh | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/test/suites/console.sh b/test/suites/console.sh
+index 5b49247e..8c173394 100644
+--- a/test/suites/console.sh
++++ b/test/suites/console.sh
+@@ -1,4 +1,14 @@
+ test_console() {
++  lxc_version=$(lxc info | grep "driver_version: " | cut -d' ' -f4)
++  lxc_major=$(echo "${lxc_version}" | cut -d. -f1)
++
++  if [ "${lxc_major}" -lt 3 ]; then
++    echo "==> SKIP: The console ringbuffer require liblxc 3.0 or higher"
++    return
++  fi
++
++  echo "==> API extension console"
++
+   ensure_import_testimage
+ 
+   lxc init testimage cons1
