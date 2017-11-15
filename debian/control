@@ -83,7 +83,6 @@ Description: Container hypervisor based on LXC - extra tools
 
 Package: golang-github-lxc-lxd-dev
 Architecture: all
-Section: golang
 Depends: golang-go, lxc-dev, pkg-config, ${misc:Depends}, ${shlibs:Depends}
 Description: Container hypervisor based on LXC - go source
  LXD offers a REST API to remotely manage containers over the network,
