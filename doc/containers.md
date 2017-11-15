@@ -42,17 +42,17 @@ limits.network.priority              | integer   | 0 (minimum)   | yes          
 limits.processes                     | integer   | - (max)       | yes           | -                                    | Maximum number of processes that can run in the container
 linux.kernel\_modules                | string    | -             | yes           | -                                    | Comma separated list of kernel modules to load before starting the container
 raw.apparmor                         | blob      | -             | yes           | -                                    | Apparmor profile entries to be appended to the generated profile
+raw.idmap                            | blob      | -             | no            | id\_map                              | Raw idmap configuration (e.g. "both 1000 1000")
 raw.lxc                              | blob      | -             | no            | -                                    | Raw LXC configuration to be appended to the generated one
 raw.seccomp                          | blob      | -             | no            | container\_syscall\_filtering        | Raw Seccomp configuration
-raw.idmap                            | blob      | -             | no            | id\_map                              | Raw idmap configuration (e.g. "both 1000 1000")
 security.idmap.base                  | integer   | -             | no            | id\_map\_base                        | The base host ID to use for the allocation (overrides auto-detection)
 security.idmap.isolated              | boolean   | false         | no            | id\_map                              | Use an idmap for this container that is unique among containers with isolated set.
 security.idmap.size                  | integer   | -             | no            | id\_map                              | The size of the idmap to use
 security.nesting                     | boolean   | false         | yes           | -                                    | Support running lxd (nested) inside the container
 security.privileged                  | boolean   | false         | no            | -                                    | Runs the container in privileged mode
-security.syscalls.blacklist\_default | boolean   | true          | no            | container\_syscall\_filtering        | Enables the default syscall blacklist
-security.syscalls.blacklist\_compat  | boolean   | false         | no            | container\_syscall\_filtering        | On x86\_64 this enables blocking of compat\_\* syscalls, it is a no-op on other arches
 security.syscalls.blacklist          | string    | -             | no            | container\_syscall\_filtering        | A '\n' separated list of syscalls to blacklist
+security.syscalls.blacklist\_compat  | boolean   | false         | no            | container\_syscall\_filtering        | On x86\_64 this enables blocking of compat\_\* syscalls, it is a no-op on other arches
+security.syscalls.blacklist\_default | boolean   | true          | no            | container\_syscall\_filtering        | Enables the default syscall blacklist
 security.syscalls.whitelist          | string    | -             | no            | container\_syscall\_filtering        | A '\n' separated list of syscalls to whitelist (mutually exclusive with security.syscalls.blacklist\*)
 user.\*                              | string    | -             | n/a           | -                                    | Free form user key/value storage (can be used in search)
 
@@ -60,9 +60,6 @@ The following volatile keys are currently internally used by LXD:
 
 Key                             | Type      | Default       | Description
 :--                             | :---      | :------       | :----------
-volatile.\<name\>.hwaddr        | string    | -             | Network device MAC address (when no hwaddr property is set on the device itself)
-volatile.\<name\>.name          | string    | -             | Network device name (when no name propery is set on the device itself)
-volatile.\<name\>.host\_name    | string    | -             | Network device name on the host (for nictype=bridged or nictype=p2p)
 volatile.apply\_quota           | string    | -             | Disk quota to be applied on next container start
 volatile.apply\_template        | string    | -             | The name of a template hook which should be triggered upon next startup
 volatile.base\_image            | string    | -             | The hash of the image the container was created from, if any.
@@ -70,17 +67,20 @@ volatile.idmap.base             | integer   | -             | The first id in th
 volatile.idmap.next             | string    | -             | The idmap to use next time the container starts
 volatile.last\_state.idmap      | string    | -             | Serialized container uid/gid map
 volatile.last\_state.power      | string    | -             | Container state as of last host shutdown
+volatile.\<name\>.host\_name    | string    | -             | Network device name on the host (for nictype=bridged or nictype=p2p, or nictype=sriov)
+volatile.\<name\>.hwaddr        | string    | -             | Network device MAC address (when no hwaddr property is set on the device itself)
+volatile.\<name\>.name          | string    | -             | Network device name (when no name propery is set on the device itself)
 
 
 Additionally, those user keys have become common with images (support isn't guaranteed):
 
 Key                         | Type          | Default           | Description
 :--                         | :---          | :------           | :----------
-user.network\_mode          | string        | dhcp              | One of "dhcp" or "link-local". Used to configure network in supported images.
 user.meta-data              | string        | -                 | Cloud-init meta-data, content is appended to seed value.
+user.network-config         | string        | DHCP on eth0      | Cloud-init network-config, content is used as seed value.
+user.network\_mode          | string        | dhcp              | One of "dhcp" or "link-local". Used to configure network in supported images.
 user.user-data              | string        | #!cloud-config    | Cloud-init user-data, content is used as seed value.
 user.vendor-data            | string        | #!cloud-config    | Cloud-init vendor-data, content is used as seed value.
-user.network-config         | string        | DHCP on eth0      | Cloud-init network-config, content is used as seed value.
 
 Note that while a type is defined above as a convenience, all values are
 stored as strings and should be exported over the REST API as strings
@@ -102,7 +102,7 @@ and should whenever possible be avoided.
 # Devices configuration
 LXD will always provide the container with the basic devices which are required
 for a standard POSIX system to work. These aren't visible in container or
-profile configuration and may not be overriden.
+profile configuration and may not be overridden.
 
 Those includes:
 
@@ -128,7 +128,7 @@ Devices may be added or removed while the container is running.
 
 Every device entry is identified by a unique name. If the same name is used in
 a subsequent profile or in the container's own configuration, the whole entry
-is overriden by the new definition.
+is overridden by the new definition.
 
 Device entries are added to a container through:
 
@@ -170,24 +170,25 @@ LXD supports different kind of network devices:
  - `bridged`: Uses an existing bridge on the host and creates a virtual device pair to connect the host bridge to the container.
  - `macvlan`: Sets up a new network device based on an existing one but using a different MAC address.
  - `p2p`: Creates a virtual device pair, putting one side in the container and leaving the other side on the host.
+ - `sriov`: Passes a virtual function of an SR-IOV enabled physical network device into the container.
 
 Different network interface types have different additional properties, the current list is:
 
-Key                     | Type      | Default           | Required  | Used by                       | API extension                          | Description
-:--                     | :--       | :--               | :--       | :--                           | :--                                    | :--
-nictype                 | string    | -                 | yes       | all                           | -                                      | The device type, one of "physical", "bridged", "macvlan" or "p2p"
-limits.ingress          | string    | -                 | no        | bridged, p2p                  | -                                      | I/O limit in bit/s (supports kbit, Mbit, Gbit suffixes)
-limits.egress           | string    | -                 | no        | bridged, p2p                  | -                                      | I/O limit in bit/s (supports kbit, Mbit, Gbit suffixes)
-limits.max              | string    | -                 | no        | bridged, p2p                  | -                                      | Same as modifying both limits.read and limits.write
-name                    | string    | kernel assigned   | no        | all                           | -                                      | The name of the interface inside the container
-host\_name              | string    | randomly assigned | no        | bridged, p2p, macvlan         | -                                      | The name of the interface inside the host
-hwaddr                  | string    | randomly assigned | no        | all                           | -                                      | The MAC address of the new interface
-mtu                     | integer   | parent MTU        | no        | all                           | -                                      | The MTU of the new interface
-parent                  | string    | -                 | yes       | physical, bridged, macvlan    | -                                      | The name of the host device or bridge
-vlan                    | integer   | -                 | no        | macvlan, physical             | network\_vlan, network\_vlan\_physical | The VLAN ID to attach to
-ipv4.address            | string    | -                 | no        | bridged                       | network                                | An IPv4 address to assign to the container through DHCP
-ipv6.address            | string    | -                 | no        | bridged                       | network                                | An IPv6 address to assign to the container through DHCP
-security.mac\_filtering | boolean   | false             | no        | bridged                       | network                                | Prevent the container from spoofing another's MAC address
+Key                     | Type      | Default           | Required  | Used by                           | API extension                          | Description
+:--                     | :--       | :--               | :--       | :--                               | :--                                    | :--
+nictype                 | string    | -                 | yes       | all                               | -                                      | The device type, one of "bridged", "macvlan", "p2p", "physical", or "sriov"
+limits.ingress          | string    | -                 | no        | bridged, p2p                      | -                                      | I/O limit in bit/s (supports kbit, Mbit, Gbit suffixes)
+limits.egress           | string    | -                 | no        | bridged, p2p                      | -                                      | I/O limit in bit/s (supports kbit, Mbit, Gbit suffixes)
+limits.max              | string    | -                 | no        | bridged, p2p                      | -                                      | Same as modifying both limits.read and limits.write
+name                    | string    | kernel assigned   | no        | all                               | -                                      | The name of the interface inside the container
+host\_name              | string    | randomly assigned | no        | bridged, macvlan, p2p, sriov      | -                                      | The name of the interface inside the host
+hwaddr                  | string    | randomly assigned | no        | all                               | -                                      | The MAC address of the new interface
+mtu                     | integer   | parent MTU        | no        | all                               | -                                      | The MTU of the new interface
+parent                  | string    | -                 | yes       | bridged, macvlan, physical, sriov | -                                      | The name of the host device or bridge
+vlan                    | integer   | -                 | no        | macvlan, physical                 | network\_vlan, network\_vlan\_physical | The VLAN ID to attach to
+ipv4.address            | string    | -                 | no        | bridged                           | network                                | An IPv4 address to assign to the container through DHCP
+ipv6.address            | string    | -                 | no        | bridged                           | network                                | An IPv6 address to assign to the container through DHCP
+security.mac\_filtering | boolean   | false             | no        | bridged                           | network                                | Prevent the container from spoofing another's MAC address
 
 #### bridged or macvlan for connection to physical network
 The `bridged` and `macvlan` interface types can both be used to connect
@@ -205,6 +206,31 @@ your containers to talk to the host itself.
 
 In such case, a bridge is preferable. A bridge will also let you use mac
 filtering and I/O limits which cannot be applied to a macvlan device.
+
+#### SR-IOV
+The `sriov` interface type supports SR-IOV enabled network devices. These
+devices associate a set of virtual functions (VFs) with the single physical
+function (PF) of the network device. PFs are standard PCIe functions. VFs on
+the other hand are very lightweight PCIe functions that are optimized for data
+movement. They come with a limited set of configuration capabilities to prevent
+changing properties of the PF. Given that VFs appear as regular PCIe devices to
+the system they can be passed to containers just like a regular physical
+device. The `sriov` interface type expects to be passed the name of an SR-IOV
+enabled network device on the system via the `parent` property. LXD will then
+check for any available VFs on the system. By default LXD will allocate the
+first free VF it finds. If it detects that either none are enabled or all
+currently enabled VFs are in use it will bump the number of supported VFs to
+the maximum value and use the first free VF. If all possible VFs are in use or
+the kernel or card doesn't support incrementing the number of VFs LXD will
+return an error. To create a `sriov` network device use:
+
+```
+lxc config device add <container> <device-name> nic nictype=sriov parent=<sriov-enabled-device>
+```
+
+To tell LXD to use a specific unused VF add the `host_name` property and pass
+it the name of the enabled VF.
+
 
 ### Type: disk
 Disk entries are essentially mountpoints inside the container. They can

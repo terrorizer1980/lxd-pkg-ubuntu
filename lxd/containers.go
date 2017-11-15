@@ -11,7 +11,7 @@ import (
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/logger"
 
-	log "gopkg.in/inconshreveable/log15.v2"
+	log "github.com/lxc/lxd/shared/log15"
 )
 
 var containersCmd = Command{
@@ -53,6 +53,13 @@ var containerSnapshotCmd = Command{
 	get:    snapshotHandler,
 	post:   snapshotHandler,
 	delete: snapshotHandler,
+}
+
+var containerConsoleCmd = Command{
+	name:   "containers/{name}/console",
+	get:    containerConsoleLogGet,
+	post:   containerConsolePost,
+	delete: containerConsoleLogDelete,
 }
 
 var containerExecCmd = Command{
@@ -99,7 +106,7 @@ func (slice containerAutostartList) Swap(i, j int) {
 
 func containersRestart(s *state.State) error {
 	// Get all the containers
-	result, err := db.ContainersList(s.DB, db.CTypeRegular)
+	result, err := s.DB.ContainersList(db.CTypeRegular)
 	if err != nil {
 		return err
 	}
@@ -146,13 +153,13 @@ func containersShutdown(s *state.State) error {
 	var wg sync.WaitGroup
 
 	// Get all the containers
-	results, err := db.ContainersList(s.DB, db.CTypeRegular)
+	results, err := s.DB.ContainersList(db.CTypeRegular)
 	if err != nil {
 		return err
 	}
 
 	// Reset all container states
-	_, err = db.Exec(s.DB, "DELETE FROM containers_config WHERE key='volatile.last_state.power'")
+	err = s.DB.ContainersResetState()
 	if err != nil {
 		return err
 	}
@@ -200,7 +207,7 @@ func containerDeleteSnapshots(s *state.State, cname string) error {
 	logger.Debug("containerDeleteSnapshots",
 		log.Ctx{"container": cname})
 
-	results, err := db.ContainerGetSnapshots(s.DB, cname)
+	results, err := s.DB.ContainerGetSnapshots(cname)
 	if err != nil {
 		return err
 	}

@@ -36,7 +36,10 @@ func RFC3493Dialer(network, address string) (net.Conn, error) {
 	return nil, fmt.Errorf("Unable to connect to: " + address)
 }
 
-func initTLSConfig() *tls.Config {
+// InitTLSConfig returns a tls.Config populated with default encryption
+// parameters. This is used as baseline config for both client and server
+// certificates used by LXD.
+func InitTLSConfig() *tls.Config {
 	return &tls.Config{
 		MinVersion: tls.VersionTLS12,
 		MaxVersion: tls.VersionTLS12,
@@ -48,7 +51,8 @@ func initTLSConfig() *tls.Config {
 			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
 			tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
 			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-			tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA},
+			tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
+		},
 		PreferServerCipherSuites: true,
 	}
 }
@@ -79,7 +83,7 @@ func finalizeTLSConfig(tlsConfig *tls.Config, tlsRemoteCert *x509.Certificate) {
 }
 
 func GetTLSConfig(tlsClientCertFile string, tlsClientKeyFile string, tlsClientCAFile string, tlsRemoteCert *x509.Certificate) (*tls.Config, error) {
-	tlsConfig := initTLSConfig()
+	tlsConfig := InitTLSConfig()
 
 	// Client authentication
 	if tlsClientCertFile != "" && tlsClientKeyFile != "" {
@@ -108,7 +112,7 @@ func GetTLSConfig(tlsClientCertFile string, tlsClientKeyFile string, tlsClientCA
 }
 
 func GetTLSConfigMem(tlsClientCert string, tlsClientKey string, tlsClientCA string, tlsRemoteCertPEM string, insecureSkipVerify bool) (*tls.Config, error) {
-	tlsConfig := initTLSConfig()
+	tlsConfig := InitTLSConfig()
 	tlsConfig.InsecureSkipVerify = insecureSkipVerify
 	// Client authentication
 	if tlsClientCert != "" && tlsClientKey != "" {
@@ -374,6 +378,45 @@ func WebsocketMirror(conn *websocket.Conn, w io.WriteCloser, r io.ReadCloser, Re
 
 	go ReadFunc(conn, r, readDone)
 	go WriteFunc(conn, w, writeDone)
+
+	return readDone, writeDone
+}
+
+func WebsocketConsoleMirror(conn *websocket.Conn, w io.WriteCloser, r io.ReadCloser) (chan bool, chan bool) {
+	readDone := make(chan bool, 1)
+	writeDone := make(chan bool, 1)
+
+	go defaultWriter(conn, w, writeDone)
+
+	go func(conn *websocket.Conn, r io.ReadCloser) {
+		in := ReaderToChannel(r, -1)
+		for {
+			buf, ok := <-in
+			if !ok {
+				r.Close()
+				logger.Debugf("sending write barrier")
+				conn.WriteMessage(websocket.TextMessage, []byte{})
+				readDone <- true
+				return
+			}
+			w, err := conn.NextWriter(websocket.BinaryMessage)
+			if err != nil {
+				logger.Debugf("Got error getting next writer %s", err)
+				break
+			}
+
+			_, err = w.Write(buf)
+			w.Close()
+			if err != nil {
+				logger.Debugf("Got err writing %s", err)
+				break
+			}
+		}
+		closeMsg := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")
+		conn.WriteMessage(websocket.CloseMessage, closeMsg)
+		readDone <- true
+		r.Close()
+	}(conn, r)
 
 	return readDone, writeDone
 }
