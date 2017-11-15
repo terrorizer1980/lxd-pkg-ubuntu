@@ -1,3 +1,9 @@
+lxd (2.20-0ubuntu2) bionic; urgency=medium
+
+  * Launchpad doesn't know about the golang section.
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 15 Nov 2017 03:13:29 -0500
+
 lxd (2.20-0ubuntu1) bionic; urgency=medium
 
   * New upstream release (2.20)
