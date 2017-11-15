@@ -291,7 +291,7 @@ map auto-selection process for isolated containers and specify what host
 uid/gid to use as the base.
 
 ## file\_symlinks
-This adds support for transfering symlinks through the file API.
+This adds support for transferring symlinks through the file API.
 X-LXD-type can now be "symlink" with the request content being the target path.
 
 ## container\_push\_target
@@ -342,6 +342,7 @@ and xfs.
 
 ## resources
 This adds support for querying an LXD daemon for the system resources it has
+available.
 
 ## kernel\_limits
 This adds support for setting process limits such as maximum number of open
@@ -349,3 +350,12 @@ files for the container via `nofile`. The format is `limits.kernel.[limit name]`
 
 ## storage\_api\_volume\_rename
 This adds support for renaming custom storage volumes.
+
+## external\_authentication
+This adds support for external authentication via Macaroons.
+
+## network\_sriov
+This adds support for SR-IOV enabled network devices.
+
+## console
+This adds support to interact with the container console device and console log.

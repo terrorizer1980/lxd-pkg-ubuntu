@@ -22,6 +22,7 @@ import (
 	"github.com/gorilla/websocket"
 	"gopkg.in/lxc/go-lxc.v2"
 
+	"github.com/lxc/lxd/lxd/util"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/idmap"
@@ -296,7 +297,7 @@ func (s *migrationSourceWs) ConnectTarget(target api.ContainerPostTarget) error 
 	return nil
 }
 
-func writeActionScript(directory string, operation string, secret string) error {
+func writeActionScript(directory string, operation string, secret string, execPath string) error {
 	script := fmt.Sprintf(`#!/bin/sh -e
 if [ "$CRTOOLS_SCRIPT_ACTION" = "post-dump" ]; then
 	%s migratedumpsuccess %s %s
@@ -486,7 +487,7 @@ func (s *migrationSourceWs) Do(migrateOp *operation) error {
 			return abort(err)
 		}
 
-		if lxc.VersionAtLeast(2, 0, 4) {
+		if util.RuntimeLiblxcVersionAtLeast(2, 0, 4) {
 			/* What happens below is slightly convoluted. Due to various
 			 * complications with networking, there's no easy way for criu
 			 * to exit and leave the container in a frozen state for us to
@@ -548,7 +549,8 @@ func (s *migrationSourceWs) Do(migrateOp *operation) error {
 				return abort(err)
 			}
 
-			err = writeActionScript(checkpointDir, actionScriptOp.url, actionScriptOpSecret)
+			state := s.container.DaemonState()
+			err = writeActionScript(checkpointDir, actionScriptOp.url, actionScriptOpSecret, state.OS.ExecPath)
 			if err != nil {
 				os.RemoveAll(checkpointDir)
 				return abort(err)
@@ -589,7 +591,8 @@ func (s *migrationSourceWs) Do(migrateOp *operation) error {
 		 * p.haul's protocol, it will make sense to do these in parallel.
 		 */
 		ctName, _, _ := containerGetParentAndSnapshotName(s.container.Name())
-		err = RsyncSend(ctName, shared.AddSlash(checkpointDir), s.criuConn, nil, bwlimit)
+		state := s.container.DaemonState()
+		err = RsyncSend(ctName, shared.AddSlash(checkpointDir), s.criuConn, nil, bwlimit, state.OS.ExecPath)
 		if err != nil {
 			return abort(err)
 		}

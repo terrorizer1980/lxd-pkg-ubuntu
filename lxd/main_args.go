@@ -71,7 +71,7 @@ Common options:
 
 Daemon options:
     --group GROUP
-        Group which owns the shared socket
+        Group which owns the shared socket (ignored with socket-based activation)
 
 Daemon debug options:
     --cpuprofile FILE
@@ -113,6 +113,8 @@ Waitready options:
 
 
 Internal commands (don't call these directly):
+    forkconsole
+        Attach to the console of a container
     forkexec
         Execute a command in a container
     forkgetnet

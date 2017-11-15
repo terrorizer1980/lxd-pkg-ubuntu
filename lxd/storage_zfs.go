@@ -13,7 +13,6 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/lxc/lxd/lxd/db"
 	"github.com/lxc/lxd/lxd/util"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
@@ -87,24 +86,28 @@ func (s *storageZfs) StoragePoolCheck() error {
 	}
 
 	poolName := s.getOnDiskPoolName()
-	if filepath.IsAbs(source) {
-		if zfsFilesystemEntityExists(poolName, "") {
-			return nil
-		}
-		logger.Debugf("ZFS storage pool \"%s\" does not exist. Trying to import it.", poolName)
-
-		disksPath := shared.VarPath("disks")
-		output, err := shared.RunCommand(
-			"zpool",
-			"import",
-			"-d", disksPath, poolName)
-		if err != nil {
-			return fmt.Errorf("ZFS storage pool \"%s\" could not be imported: %s", poolName, output)
-		}
-
-		logger.Debugf("ZFS storage pool \"%s\" successfully imported.", poolName)
+	exists := zfsFilesystemEntityExists(poolName, "")
+	if exists {
+		return nil
 	}
 
+	logger.Debugf("ZFS storage pool \"%s\" does not exist. Trying to import it.", poolName)
+
+	var err error
+	var msg string
+	if filepath.IsAbs(source) {
+		disksPath := shared.VarPath("disks")
+		msg, err = shared.RunCommand("zpool", "import", "-d", disksPath, poolName)
+	} else {
+		purePoolName := strings.Split(poolName, "/")[0]
+		msg, err = shared.RunCommand("zpool", "import", purePoolName)
+	}
+
+	if err != nil {
+		return fmt.Errorf("ZFS storage pool \"%s\" could not be imported: %s", poolName, msg)
+	}
+
+	logger.Debugf("ZFS storage pool \"%s\" successfully imported.", poolName)
 	return nil
 }
 
@@ -421,8 +424,7 @@ func (s *storageZfs) StoragePoolVolumeDelete() error {
 		}
 	}
 
-	err := db.StoragePoolVolumeDelete(
-		s.s.DB,
+	err := s.db.StoragePoolVolumeDelete(
 		s.volume.Name,
 		storagePoolVolumeTypeCustom,
 		s.poolID)
@@ -626,7 +628,7 @@ func (s *storageZfs) StoragePoolVolumeRename(newName string) error {
 	logger.Infof(`Renamed ZFS storage volume on storage pool "%s" from "%s" to "%s`,
 		s.pool.Name, s.volume.Name, newName)
 
-	return db.StoragePoolVolumeRename(s.s.DB, s.volume.Name, newName,
+	return s.db.StoragePoolVolumeRename(s.volume.Name, newName,
 		storagePoolVolumeTypeCustom, s.poolID)
 }
 
@@ -1109,7 +1111,7 @@ func (s *storageZfs) copyWithoutSnapshotFull(target container, source container)
 
 	targetName := target.Name()
 	targetDataset := fmt.Sprintf("%s/containers/%s", poolName, targetName)
-	targetSnapshotDataset := targetDataset
+	targetSnapshotDataset := ""
 
 	if sourceIsSnapshot {
 		sourceParentName, sourceSnapOnlyName, _ := containerGetParentAndSnapshotName(source.Name())
@@ -1270,8 +1272,14 @@ func (s *storageZfs) ContainerCopy(target container, source container, container
 	if containerOnly || len(snapshots) == 0 {
 		if s.pool.Config["zfs.clone_copy"] != "" && !shared.IsTrue(s.pool.Config["zfs.clone_copy"]) {
 			err = s.copyWithoutSnapshotFull(target, source)
+			if err != nil {
+				return err
+			}
 		} else {
 			err = s.copyWithoutSnapshotsSparse(target, source)
+			if err != nil {
+				return err
+			}
 		}
 	} else {
 		targetContainerName := target.Name()
@@ -1887,7 +1895,7 @@ func (s *storageZfs) ImageCreate(fingerprint string) error {
 	}
 
 	// Unpack the image into the temporary mountpoint.
-	err = unpackImage(imagePath, tmpImageDir, storageTypeZfs)
+	err = unpackImage(imagePath, tmpImageDir, storageTypeZfs, s.s.OS.RunningInUserNS)
 	if err != nil {
 		return err
 	}
@@ -2252,7 +2260,7 @@ func (s *storageZfs) MigrationSink(live bool, container container, snapshots []*
 				args.Devices[snapLocalRootDiskDeviceKey]["pool"] = parentStoragePool
 			}
 		}
-		_, err := containerCreateEmptySnapshot(container.StateObject(), args)
+		_, err := containerCreateEmptySnapshot(container.DaemonState(), args)
 		if err != nil {
 			return err
 		}

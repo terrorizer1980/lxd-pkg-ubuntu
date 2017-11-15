@@ -1,7 +1,6 @@
 package main
 
 import (
-	"database/sql"
 	"fmt"
 	"os"
 	"strings"
@@ -165,14 +164,14 @@ const imagesDirMode os.FileMode = 0700
 const snapshotsDirMode os.FileMode = 0700
 
 // Detect whether LXD already uses the given storage pool.
-func lxdUsesPool(dbObj *sql.DB, onDiskPoolName string, driver string, onDiskProperty string) (bool, string, error) {
-	pools, err := db.StoragePools(dbObj)
+func lxdUsesPool(dbObj *db.Node, onDiskPoolName string, driver string, onDiskProperty string) (bool, string, error) {
+	pools, err := dbObj.StoragePools()
 	if err != nil && err != db.NoSuchObjectError {
 		return false, "", err
 	}
 
 	for _, pool := range pools {
-		_, pl, err := db.StoragePoolGet(dbObj, pool)
+		_, pl, err := dbObj.StoragePoolGet(pool)
 		if err != nil {
 			continue
 		}
@@ -215,10 +214,34 @@ func makeFSType(path string, fsType string, options *mkfsOptions) (string, error
 	return "", nil
 }
 
+func fsGenerateNewUUID(fstype string, lvpath string) (string, error) {
+	switch fstype {
+	case "btrfs":
+		return btrfsGenerateNewUUID(lvpath)
+	case "xfs":
+		return xfsGenerateNewUUID(lvpath)
+	}
+
+	return "", nil
+}
+
 func xfsGenerateNewUUID(lvpath string) (string, error) {
 	msg, err := shared.RunCommand(
 		"xfs_admin",
 		"-U", "generate",
+		lvpath)
+	if err != nil {
+		return msg, err
+	}
+
+	return "", nil
+}
+
+func btrfsGenerateNewUUID(lvpath string) (string, error) {
+	msg, err := shared.RunCommand(
+		"btrfstune",
+		"-f",
+		"-u",
 		lvpath)
 	if err != nil {
 		return msg, err
@@ -254,29 +277,30 @@ func growFileSystem(fsType string, devPath string, mntpoint string) error {
 }
 
 func shrinkFileSystem(fsType string, devPath string, mntpoint string, byteSize int64) error {
-	var msg string
-	var err error
 	strSize := fmt.Sprintf("%dK", byteSize/1024)
+
 	switch fsType {
 	case "": // if not specified, default to ext4
 		fallthrough
 	case "ext4":
-		msg, err = shared.TryRunCommand("e2fsck", "-f", "-y", devPath)
+		_, err := shared.TryRunCommand("e2fsck", "-f", "-y", devPath)
 		if err != nil {
 			return err
 		}
-		msg, err = shared.TryRunCommand("resize2fs", devPath, strSize)
+
+		_, err = shared.TryRunCommand("resize2fs", devPath, strSize)
+		if err != nil {
+			return err
+		}
 	case "btrfs":
-		msg, err = shared.TryRunCommand("btrfs", "filesystem", "resize", strSize, mntpoint)
+		_, err := shared.TryRunCommand("btrfs", "filesystem", "resize", strSize, mntpoint)
+		if err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf(`Shrinking not supported for filesystem type "%s"`, fsType)
 	}
 
-	if err != nil {
-		errorMsg := fmt.Sprintf(`Could not reduce underlying %s filesystem for "%s": %s`, fsType, devPath, msg)
-		logger.Errorf(errorMsg)
-		return fmt.Errorf(errorMsg)
-	}
 	return nil
 }
 

@@ -295,14 +295,23 @@ func (s *storageLvm) copyContainerThinpool(target container, source container, r
 	containerLvmName := containerNameToLVName(containerName)
 	containerLvDevPath := getLvmDevPath(poolName,
 		storagePoolVolumeAPIEndpointContainers, containerLvmName)
-	if LVFilesystem == "xfs" {
-		msg, err := xfsGenerateNewUUID(containerLvDevPath)
+	// If btrfstune sees two btrfs filesystems with the same UUID it
+	// gets confused and wants both of them unmounted. So unmount
+	// the source as well.
+	if LVFilesystem == "btrfs" {
+		ourUmount, err := s.ContainerUmount(source.Name(), source.Path())
 		if err != nil {
-			logger.Errorf(`Failed to create new xfs UUID for `+
-				`container "%s" on storage pool "%s": %s`,
-				containerName, s.pool.Name, msg)
 			return err
 		}
+		if ourUmount {
+			s.ContainerMount(source)
+		}
+	}
+
+	msg, err := fsGenerateNewUUID(LVFilesystem, containerLvDevPath)
+	if err != nil {
+		logger.Errorf("Failed to create new \"%s\" UUID for container \"%s\" on storage pool \"%s\": %s", LVFilesystem, containerName, s.pool.Name, msg)
+		return err
 	}
 
 	return nil
@@ -452,7 +461,7 @@ func (s *storageLvm) containerCreateFromImageLv(c container, fp string) error {
 
 	imagePath := shared.VarPath("images", fp)
 	containerMntPoint := getContainerMountPoint(s.pool.Name, containerName)
-	err = unpackImage(imagePath, containerMntPoint, storageTypeLvm)
+	err = unpackImage(imagePath, containerMntPoint, storageTypeLvm, s.s.OS.RunningInUserNS)
 	if err != nil {
 		logger.Errorf(`Failed to unpack image "%s" into non-thinpool `+
 			`LVM storage volume "%s" for container "%s" on `+
@@ -488,7 +497,7 @@ func (s *storageLvm) containerCreateFromImageThinLv(c container, fp string) erro
 		var imgerr error
 		ok, _ := storageLVExists(imageLvmDevPath)
 		if ok {
-			_, volume, err := db.StoragePoolVolumeGetType(s.s.DB, fp, db.StoragePoolVolumeTypeImage, s.poolID)
+			_, volume, err := s.s.DB.StoragePoolVolumeGetType(fp, db.StoragePoolVolumeTypeImage, s.poolID)
 			if err != nil {
 				return err
 			}
@@ -675,7 +684,7 @@ func storageLVMThinpoolExists(vgName string, poolName string) (bool, error) {
 func storageLVMGetThinPoolUsers(s *state.State) ([]string, error) {
 	results := []string{}
 
-	cNames, err := db.ContainersList(s.DB, db.CTypeRegular)
+	cNames, err := s.DB.ContainersList(db.CTypeRegular)
 	if err != nil {
 		return results, err
 	}
@@ -693,7 +702,7 @@ func storageLVMGetThinPoolUsers(s *state.State) ([]string, error) {
 		}
 	}
 
-	imageNames, err := db.ImagesGet(s.DB, false)
+	imageNames, err := s.DB.ImagesGet(false)
 	if err != nil {
 		return results, err
 	}
@@ -783,10 +792,9 @@ func lvmCreateLv(vgName string, thinPoolName string, lvName string, lvFsType str
 	var output string
 	var err error
 
-	targetVg := vgName
 	lvmPoolVolumeName := getPrefixedLvName(volumeType, lvName)
 	if makeThinLv {
-		targetVg = fmt.Sprintf("%s/%s", vgName, thinPoolName)
+		targetVg := fmt.Sprintf("%s/%s", vgName, thinPoolName)
 		output, err = shared.TryRunCommand("lvcreate", "--thin", "-n", lvmPoolVolumeName, "--virtualsize", lvSize+"B", targetVg)
 	} else {
 		output, err = shared.TryRunCommand("lvcreate", "-n", lvmPoolVolumeName, "--size", lvSize+"B", vgName)
