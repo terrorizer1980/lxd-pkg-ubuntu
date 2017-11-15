@@ -21,7 +21,7 @@ import (
 	"github.com/lxc/lxd/shared/logger"
 	"github.com/lxc/lxd/shared/version"
 
-	log "gopkg.in/inconshreveable/log15.v2"
+	log "github.com/lxc/lxd/shared/log15"
 )
 
 type execWs struct {
@@ -110,6 +110,9 @@ func (s *execWs) Do(op *operation) error {
 		ttys = make([]*os.File, 1)
 		ptys = make([]*os.File, 1)
 		ptys[0], ttys[0], err = shared.OpenPty(s.rootUid, s.rootGid)
+		if err != nil {
+			return err
+		}
 
 		stdin = ttys[0]
 		stdout = ttys[0]

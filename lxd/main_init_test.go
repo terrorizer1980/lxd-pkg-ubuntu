@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"path"
+	"path/filepath"
 	"strconv"
 	"testing"
 
@@ -36,7 +37,7 @@ func (suite *cmdInitTestSuite) SetupTest() {
 		Context:         suite.context,
 		Args:            suite.args,
 		RunningInUserns: false,
-		SocketPath:      suite.d.UnixSocket.Socket.Addr().String(),
+		SocketPath:      filepath.Join(shared.VarPath(), "unix.socket"),
 	}
 	client, err := lxd.ConnectLXDUnix(suite.command.SocketPath, nil)
 	suite.Req.Nil(err)
@@ -522,7 +523,7 @@ func (suite *cmdInitTestSuite) TestCmdInit_ProfilesCreateRevert() {
 `)
 
 	err := suite.command.Run()
-	suite.Req.Equal("Bad key: boom", err.Error())
+	suite.Req.Equal("Unknown configuration key: boom", err.Error())
 	_, _, err = suite.client.GetProfile("first")
 	suite.Req.Equal("not found", err.Error())
 
@@ -574,7 +575,7 @@ func (suite *cmdInitTestSuite) TestCmdInit_ProfilesUpdateRevert() {
 `)
 
 	err = suite.command.Run()
-	suite.Req.Equal("Bad key: boom", err.Error())
+	suite.Req.Equal("Unknown configuration key: boom", err.Error())
 
 	profile, _, err := suite.client.GetProfile("first")
 	suite.Req.Nil(err)

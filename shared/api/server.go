@@ -30,6 +30,9 @@ type ServerUntrusted struct {
 	APIVersion    string   `json:"api_version" yaml:"api_version"`
 	Auth          string   `json:"auth" yaml:"auth"`
 	Public        bool     `json:"public" yaml:"public"`
+
+	// API extension: macaroon_authentication
+	AuthMethods []string `json:"auth_methods" yaml:"auth_methods"`
 }
 
 // Server represents a LXD server

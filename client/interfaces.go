@@ -43,9 +43,10 @@ type ContainerServer interface {
 
 	// Server functions
 	GetServer() (server *api.Server, ETag string, err error)
-	GetServerResources() (*api.Resources, error)
+	GetServerResources() (resources *api.Resources, err error)
 	UpdateServer(server api.ServerPut, ETag string) (err error)
-	HasExtension(extension string) bool
+	HasExtension(extension string) (exists bool)
+	RequireAuthenticated(authenticated bool)
 
 	// Certificate functions
 	GetCertificateFingerprints() (fingerprints []string, err error)
@@ -67,7 +68,10 @@ type ContainerServer interface {
 	MigrateContainer(name string, container api.ContainerPost) (op *Operation, err error)
 	DeleteContainer(name string) (op *Operation, err error)
 
-	ExecContainer(containerName string, exec api.ContainerExecPost, args *ContainerExecArgs) (*Operation, error)
+	ExecContainer(containerName string, exec api.ContainerExecPost, args *ContainerExecArgs) (op *Operation, err error)
+	ConsoleContainer(containerName string, console api.ContainerConsolePost, args *ContainerConsoleArgs) (op *Operation, err error)
+	GetContainerConsoleLog(containerName string, args *ContainerConsoleLogArgs) (content io.ReadCloser, err error)
+	DeleteContainerConsoleLog(containerName string, args *ContainerConsoleLogArgs) (err error)
 
 	GetContainerFile(containerName string, path string) (content io.ReadCloser, resp *ContainerFileResponse, err error)
 	CreateContainerFile(containerName string, path string, args ContainerFileArgs) (err error)
@@ -89,8 +93,8 @@ type ContainerServer interface {
 	GetContainerLogfile(name string, filename string) (content io.ReadCloser, err error)
 	DeleteContainerLogfile(name string, filename string) (err error)
 
-	GetContainerMetadata(name string) (*api.ImageMetadata, string, error)
-	SetContainerMetadata(name string, metadata api.ImageMetadata, ETag string) error
+	GetContainerMetadata(name string) (metadata *api.ImageMetadata, ETag string, err error)
+	SetContainerMetadata(name string, metadata api.ImageMetadata, ETag string) (err error)
 
 	GetContainerTemplateFiles(containerName string) (templates []string, err error)
 	GetContainerTemplateFile(containerName string, templateName string) (content io.ReadCloser, err error)
@@ -123,6 +127,8 @@ type ContainerServer interface {
 	DeleteNetwork(name string) (err error)
 
 	// Operation functions
+	GetOperationUUIDs() (uuids []string, err error)
+	GetOperations() (operations []api.Operation, err error)
 	GetOperation(uuid string) (op *api.Operation, ETag string, err error)
 	DeleteOperation(uuid string) (err error)
 	GetOperationWebsocket(uuid string, secret string) (conn *websocket.Conn, err error)
@@ -274,6 +280,24 @@ type ContainerSnapshotCopyArgs struct {
 	// API extension: container_snapshot_stateful_migration
 	// If set, the container running state will be transferred (live migration)
 	Live bool
+}
+
+// The ContainerConsoleArgs struct is used to pass additional options during a
+// container console session
+type ContainerConsoleArgs struct {
+	// Bidirectional fd to pass to the container
+	Terminal io.ReadWriteCloser
+
+	// Control message handler (window resize)
+	Control func(conn *websocket.Conn)
+
+	// Closing this Channel causes a disconnect from the container's console
+	ConsoleDisconnect chan bool
+}
+
+// The ContainerConsoleLogArgs struct is used to pass additional options during a
+// container console log request
+type ContainerConsoleLogArgs struct {
 }
 
 // The ContainerExecArgs struct is used to pass additional options during container exec

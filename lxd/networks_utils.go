@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"database/sql"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
@@ -30,8 +29,8 @@ import (
 
 var networkStaticLock sync.Mutex
 
-func networkAutoAttach(dbObj *sql.DB, devName string) error {
-	_, dbInfo, err := db.NetworkGetInterface(dbObj, devName)
+func networkAutoAttach(db *db.Node, devName string) error {
+	_, dbInfo, err := db.NetworkGetInterface(devName)
 	if err != nil {
 		// No match found, move on
 		return nil
@@ -78,8 +77,8 @@ func networkDetachInterface(netName string, devName string) error {
 	return nil
 }
 
-func networkGetInterfaces(dbObj *sql.DB) ([]string, error) {
-	networks, err := db.Networks(dbObj)
+func networkGetInterfaces(db *db.Node) ([]string, error) {
+	networks, err := db.Networks()
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +103,7 @@ func networkIsInUse(c container, name string) bool {
 			continue
 		}
 
-		if !shared.StringInSlice(d["nictype"], []string{"bridged", "macvlan", "physical"}) {
+		if !shared.StringInSlice(d["nictype"], []string{"bridged", "macvlan", "physical", "sriov"}) {
 			continue
 		}
 
@@ -184,8 +183,7 @@ func networkGetIP(subnet *net.IPNet, host int64) net.IP {
 
 	// Generate an IPv6
 	if subnet.IP.To4() == nil {
-		newIp := make(net.IP, 16)
-		newIp = bigIP.Bytes()
+		newIp := bigIP.Bytes()
 		return newIp
 	}
 
@@ -301,7 +299,7 @@ func networkInRoutingTable(subnet *net.IPNet) bool {
 		fields := strings.Fields(string(line))
 
 		// Get the IP
-		ip := net.IP{}
+		var ip net.IP
 		if filename == "ipv6_route" {
 			ip, err = hex.DecodeString(fields[0])
 			if err != nil {
@@ -317,7 +315,7 @@ func networkInRoutingTable(subnet *net.IPNet) bool {
 		}
 
 		// Get the mask
-		mask := net.IPMask{}
+		var mask net.IPMask
 		if filename == "ipv6_route" {
 			size, err := strconv.ParseInt(fmt.Sprintf("0x%s", fields[1]), 0, 64)
 			if err != nil {
@@ -746,16 +744,16 @@ func networkUpdateStatic(s *state.State, networkName string) error {
 	defer networkStaticLock.Unlock()
 
 	// Get all the containers
-	containers, err := db.ContainersList(s.DB, db.CTypeRegular)
+	containers, err := s.DB.ContainersList(db.CTypeRegular)
 	if err != nil {
 		return err
 	}
 
 	// Get all the networks
-	networks := []string{}
+	var networks []string
 	if networkName == "" {
 		var err error
-		networks, err = db.Networks(s.DB)
+		networks, err = s.DB.Networks()
 		if err != nil {
 			return err
 		}

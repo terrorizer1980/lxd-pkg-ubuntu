@@ -25,11 +25,7 @@ func doProfileUpdate(d *Daemon, name string, id int64, profile *api.Profile, req
 	// Check if the root device is supposed to be changed or removed.
 	oldProfileRootDiskDeviceKey, oldProfileRootDiskDevice, _ := containerGetRootDiskDevice(profile.Devices)
 	_, newProfileRootDiskDevice, _ := containerGetRootDiskDevice(req.Devices)
-	if len(containers) > 0 &&
-		oldProfileRootDiskDevice["pool"] != "" &&
-		newProfileRootDiskDevice["pool"] == "" ||
-		(oldProfileRootDiskDevice["pool"] != newProfileRootDiskDevice["pool"]) {
-
+	if len(containers) > 0 && oldProfileRootDiskDevice["pool"] != "" && newProfileRootDiskDevice["pool"] == "" || (oldProfileRootDiskDevice["pool"] != newProfileRootDiskDevice["pool"]) {
 		// Check for containers using the device
 		for _, container := range containers {
 			// Check if the device is locally overridden
@@ -42,7 +38,7 @@ func doProfileUpdate(d *Daemon, name string, id int64, profile *api.Profile, req
 			// Check what profile the device comes from
 			profiles := container.Profiles()
 			for i := len(profiles) - 1; i >= 0; i-- {
-				_, profile, err := db.ProfileGet(d.db, profiles[i])
+				_, profile, err := d.db.ProfileGet(profiles[i])
 				if err != nil {
 					return SmartError(err)
 				}
@@ -64,7 +60,7 @@ func doProfileUpdate(d *Daemon, name string, id int64, profile *api.Profile, req
 	}
 
 	// Update the database
-	tx, err := db.Begin(d.db)
+	tx, err := d.db.Begin()
 	if err != nil {
 		return SmartError(err)
 	}

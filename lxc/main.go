@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 
+	"gopkg.in/macaroon-bakery.v2/httpbakery/form"
+
 	"github.com/lxc/lxd/lxc/config"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/gnuflag"
@@ -17,6 +19,8 @@ import (
 	"github.com/lxc/lxd/shared/logger"
 	"github.com/lxc/lxd/shared/logging"
 	"github.com/lxc/lxd/shared/version"
+
+	schemaform "gopkg.in/juju/environschema.v1/form"
 )
 
 var configPath string
@@ -90,16 +94,21 @@ func run() error {
 	var err error
 
 	if *forceLocal {
-		conf = &config.DefaultConfig
+		conf = config.NewConfig("", true)
 	} else if shared.PathExists(configPath) {
 		conf, err = config.LoadConfig(configPath)
 		if err != nil {
 			return err
 		}
 	} else {
-		conf = &config.DefaultConfig
-		conf.ConfigDir = filepath.Dir(configPath)
+		conf = config.NewConfig(filepath.Dir(configPath), true)
 	}
+
+	// Add interactor for external authentication
+	conf.SetAuthInteractor(form.Interactor{Filler: schemaform.IOFiller{}})
+
+	// Save cookies on exit
+	defer conf.SaveCookies()
 
 	// Set the user agent
 	conf.UserAgent = version.UserAgent
@@ -147,7 +156,6 @@ func run() error {
 	// if LXD has been properly configured.  Don't display the message if the var path
 	// does not exist (LXD not installed), as the user may be targeting a remote daemon.
 	if os.Args[0] != "help" && os.Args[0] != "version" && shared.PathExists(shared.VarPath("")) && !shared.PathExists(conf.ConfigDir) {
-
 		// Create the config dir so that we don't get in here again for this user.
 		err = os.MkdirAll(conf.ConfigDir, 0750)
 		if err != nil {
@@ -205,24 +213,26 @@ type command interface {
 }
 
 var commands = map[string]command{
-	"config":  &configCmd{},
-	"copy":    &copyCmd{},
-	"delete":  &deleteCmd{},
-	"exec":    &execCmd{},
-	"file":    &fileCmd{},
-	"finger":  &fingerCmd{},
-	"query":   &queryCmd{},
-	"help":    &helpCmd{},
-	"image":   &imageCmd{},
-	"info":    &infoCmd{},
-	"init":    &initCmd{},
-	"launch":  &launchCmd{},
-	"list":    &listCmd{},
-	"manpage": &manpageCmd{},
-	"monitor": &monitorCmd{},
-	"rename":  &renameCmd{},
-	"move":    &moveCmd{},
-	"network": &networkCmd{},
+	"config":    &configCmd{},
+	"console":   &consoleCmd{},
+	"copy":      &copyCmd{},
+	"delete":    &deleteCmd{},
+	"exec":      &execCmd{},
+	"file":      &fileCmd{},
+	"finger":    &fingerCmd{},
+	"query":     &queryCmd{},
+	"help":      &helpCmd{},
+	"image":     &imageCmd{},
+	"info":      &infoCmd{},
+	"init":      &initCmd{},
+	"launch":    &launchCmd{},
+	"list":      &listCmd{},
+	"manpage":   &manpageCmd{},
+	"monitor":   &monitorCmd{},
+	"rename":    &renameCmd{},
+	"move":      &moveCmd{},
+	"network":   &networkCmd{},
+	"operation": &operationCmd{},
 	"pause": &actionCmd{
 		action:      shared.Freeze,
 		description: i18n.G("Pause containers."),

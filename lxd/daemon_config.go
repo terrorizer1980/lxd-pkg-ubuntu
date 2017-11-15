@@ -11,8 +11,8 @@ import (
 	"strings"
 	"sync"
 
+	log "github.com/lxc/lxd/shared/log15"
 	"golang.org/x/crypto/scrypt"
-	log "gopkg.in/inconshreveable/log15.v2"
 
 	dbapi "github.com/lxc/lxd/lxd/db"
 	"github.com/lxc/lxd/shared"
@@ -128,7 +128,7 @@ func (k *daemonConfigKey) Set(d *Daemon, value string) error {
 	k.currentValue = value
 	daemonConfigLock.Unlock()
 
-	err = dbapi.ConfigValueSet(d.db, name, value)
+	err = dbapi.ConfigValueSet(d.db.DB(), name, value)
 	if err != nil {
 		return err
 	}
@@ -189,6 +189,7 @@ func daemonConfigInit(db *sql.DB) error {
 		"core.proxy_https":               {valueType: "string", setter: daemonConfigSetProxy},
 		"core.proxy_ignore_hosts":        {valueType: "string", setter: daemonConfigSetProxy},
 		"core.trust_password":            {valueType: "string", hiddenValue: true, setter: daemonConfigSetPassword},
+		"core.macaroon.endpoint":         {valueType: "string", setter: daemonConfigSetMacaroonEndpoint},
 
 		"images.auto_update_cached":    {valueType: "bool", defaultValue: "true"},
 		"images.auto_update_interval":  {valueType: "int", defaultValue: "6", trigger: daemonConfigTriggerAutoUpdateInterval},
@@ -270,8 +271,16 @@ func daemonConfigSetPassword(d *Daemon, key string, value string) (string, error
 }
 
 func daemonConfigSetAddress(d *Daemon, key string, value string) (string, error) {
-	// Update the current https address
-	err := d.UpdateHTTPsPort(value)
+	err := d.endpoints.NetworkUpdateAddress(value)
+	if err != nil {
+		return "", err
+	}
+
+	return value, nil
+}
+
+func daemonConfigSetMacaroonEndpoint(d *Daemon, key string, value string) (string, error) {
+	err := d.setupExternalAuthentication(value)
 	if err != nil {
 		return "", err
 	}
@@ -308,12 +317,12 @@ func daemonConfigSetProxy(d *Daemon, key string, value string) (string, error) {
 
 func daemonConfigTriggerExpiry(d *Daemon, key string, value string) {
 	// Trigger an image pruning run
-	d.pruneChan <- true
+	d.taskPruneImages.Reset()
 }
 
 func daemonConfigTriggerAutoUpdateInterval(d *Daemon, key string, value string) {
 	// Reset the auto-update interval loop
-	d.resetAutoUpdateChan <- true
+	d.taskAutoUpdate.Reset()
 }
 
 func daemonConfigValidateCompression(d *Daemon, key string, value string) error {

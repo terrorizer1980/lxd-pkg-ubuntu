@@ -109,6 +109,11 @@ func HostPath(path string) string {
 		return path
 	}
 
+	// Don't prefix stdin/stdout
+	if path == "-" {
+		return path
+	}
+
 	// Check if we're running in a snap package
 	snap := os.Getenv("SNAP")
 	if snap == "" {
@@ -132,7 +137,7 @@ func HostPath(path string) string {
 	}
 
 	// Check if the path is already snap-aware
-	for _, prefix := range []string{"/snap", "/var/snap", "/var/lib/snapd"} {
+	for _, prefix := range []string{"/dev", "/snap", "/var/snap", "/var/lib/snapd"} {
 		if strings.HasPrefix(path, prefix) {
 			return path
 		}

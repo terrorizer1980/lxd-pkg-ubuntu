@@ -40,8 +40,27 @@ test_storage() {
       lxc storage volume show "$btrfs_storage_pool" "$btrfs_storage_volume"
       lxc storage volume set "$btrfs_storage_pool" "$btrfs_storage_volume" size 256MB
       lxc storage volume delete "$btrfs_storage_pool" "$btrfs_storage_volume"
+
+      # Test generation of unique UUID.
+      lxc init testimage uuid1 -s "lxdtest-$(basename "${LXD_DIR}")-pool-btrfs"
+      POOL="lxdtest-$(basename "${LXD_DIR}")-pool-btrfs"
+      lxc copy uuid1 uuid2
+      lxc start uuid1
+      lxc start uuid2
+      lxc stop --force uuid1
+      lxc stop --force uuid2
+      if [ "$lxd_backend" = "lvm" ]; then
+        [ "$(blkid -s UUID -o value -p /dev/"${POOL}"/containers_uuid1)" != "$(blkid -s UUID -o value -p /dev/"${POOL}"/containers_uuid2)" ]
+      elif [ "$lxd_backend" = "ceph" ]; then
+        [ "$(blkid -s UUID -o value -p /dev/rbd/"${POOL}"/container_uuid1)" != "$(blkid -s UUID -o value -p /dev/rbd/"${POOL}"/container_uuid2)" ]
+      fi
+      lxc delete --force uuid1
+      lxc delete --force uuid2
+      lxc image delete testimage
+
       lxc storage delete "$btrfs_storage_pool"
   fi
+  ensure_import_testimage
 
   (
     set -e
@@ -64,7 +83,7 @@ test_storage() {
       # Let LXD use an already existing storage pool.
       configure_loop_device loop_file_4 loop_device_4
       # shellcheck disable=SC2154
-      zpool create "lxdtest-$(basename "${LXD_DIR}")-pool9-existing-pool" "${loop_device_4}" -f -m none -O compression=on
+      zpool create -f -m none -O compression=on "lxdtest-$(basename "${LXD_DIR}")-pool9-existing-pool" "${loop_device_4}"
       lxc storage create "lxdtest-$(basename "${LXD_DIR}")-pool9" zfs source="lxdtest-$(basename "${LXD_DIR}")-pool9-existing-pool"
 
       # Let LXD create a new dataset and use as pool.

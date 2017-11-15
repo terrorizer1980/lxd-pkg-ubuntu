@@ -11,15 +11,9 @@ import (
 // Global variables
 var debug bool
 var verbose bool
-var execPath string
 
 func init() {
 	rand.Seed(time.Now().UTC().UnixNano())
-	absPath, err := os.Readlink("/proc/self/exe")
-	if err != nil {
-		absPath = "bad-exec-path"
-	}
-	execPath = absPath
 }
 
 func main() {
@@ -64,6 +58,7 @@ var subcommands = map[string]SubCommand{
 	"import":           cmdImport,
 
 	// Internal commands
+	"forkconsole":        cmdForkConsole,
 	"forkgetnet":         cmdForkGetNet,
 	"forkmigrate":        cmdForkMigrate,
 	"forkstart":          cmdForkStart,
