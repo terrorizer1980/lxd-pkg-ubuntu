@@ -1,3 +1,11 @@
+lxd (2.20-0ubuntu4) bionic; urgency=medium
+
+  * Cherry-pick upstream fixes:
+    - 0002-lxd-daemon-Fix-unsetting-https-address.patch
+    - 0003-tests-Deal-with-missing-ttyS0-ttyS1-on-s390x.patch
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Fri, 17 Nov 2017 18:14:19 -0500
+
 lxd (2.20-0ubuntu3) bionic; urgency=medium
 
   * Cherry-pick upstream fixes:
