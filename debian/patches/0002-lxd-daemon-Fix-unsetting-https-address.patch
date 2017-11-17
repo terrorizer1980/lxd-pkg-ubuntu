@@ -1,0 +1,42 @@
+From 43df042d307b1251a41cd8ac16b1bf12c4952736 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Thu, 16 Nov 2017 15:33:39 -0500
+Subject: lxd/daemon: Fix unsetting https address
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ lxd/endpoints/network.go | 11 ++++++++---
+ 1 file changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/lxd/endpoints/network.go b/lxd/endpoints/network.go
+index 4d306e45..01c169b0 100644
+--- a/lxd/endpoints/network.go
++++ b/lxd/endpoints/network.go
+@@ -39,7 +39,10 @@ func (e *Endpoints) NetworkAddress() string {
+ // NetworkUpdateAddress updates the address for the network endpoint, shutting
+ // it down and restarting it.
+ func (e *Endpoints) NetworkUpdateAddress(address string) error {
+-	address = util.CanonicalNetworkAddress(address)
++	if address != "" {
++		address = util.CanonicalNetworkAddress(address)
++	}
++
+ 	if address == e.NetworkAddress() {
+ 		return nil
+ 	}
+@@ -68,8 +71,10 @@ func (e *Endpoints) NetworkUpdateAddress(address string) error {
+ 
+ 	e.closeListener(network)
+ 
+-	e.listeners[network] = networkTLSListener(listener, e.cert)
+-	e.serveHTTP(network)
++	if address != "" {
++		e.listeners[network] = networkTLSListener(listener, e.cert)
++		e.serveHTTP(network)
++	}
+ 
+ 	return nil
+ }

@@ -1,0 +1,29 @@
+From c0010890af09d56ec7b8365a96899a2ad997e110 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Fri, 17 Nov 2017 17:28:36 -0500
+Subject: tests: Deal with missing ttyS0/ttyS1 (on s390x)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ test/suites/config.sh | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/test/suites/config.sh b/test/suites/config.sh
+index 5097bc13..5cce313c 100644
+--- a/test/suites/config.sh
++++ b/test/suites/config.sh
+@@ -25,6 +25,11 @@ dounixdevtest() {
+ }
+ 
+ testunixdevs() {
++  if [ ! -e /dev/ttyS0 ] || [ ! -e /dev/ttyS1 ]; then
++     echo "==> SKIP: /dev/ttyS0 or /dev/ttyS1 are missing"
++     return
++  fi
++
+   echo "Testing passing char device /dev/ttyS0"
+   dounixdevtest path=/dev/ttyS0
+ 
