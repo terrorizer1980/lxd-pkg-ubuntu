@@ -1,3 +1,11 @@
+lxd (2.0.11-0ubuntu1~16.04.2) xenial; urgency=medium
+
+  * Cherry-pick upstream fixes:
+    - 0010-zfs-Fix-slowdown-because-of-mountpoint-check.patch
+    - 0011-tests-Deal-with-missing-ttyS0-ttyS1-on-s390x.patch
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Thu, 23 Nov 2017 15:29:57 -0500
+
 lxd (2.0.11-0ubuntu1~16.04.1) xenial; urgency=medium
 
   * New upstream bugfix release (2.0.11) (LP: #1731146)
