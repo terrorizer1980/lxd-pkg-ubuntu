@@ -7,3 +7,5 @@
 0007-tests-Don-t-use-godeps-for-import-check.patch
 0008-Revert-most-of-the-macaroon-support-in-client.patch
 0009-Revert-Temporary-workaround-for-log15-API-breakage.patch
+0010-zfs-Fix-slowdown-because-of-mountpoint-check.patch
+0011-tests-Deal-with-missing-ttyS0-ttyS1-on-s390x.patch
