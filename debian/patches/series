@@ -11,3 +11,4 @@
 0011-tests-Deal-with-missing-ttyS0-ttyS1-on-s390x.patch
 0012-lxd-init-Re-add-missing-ZFS-pool-name-question.patch
 0013-lxd-init-Re-introduce-bridge-configuration-step.patch
+0014-lxd-init-Fix-bad-handling-of-dir-backend.patch

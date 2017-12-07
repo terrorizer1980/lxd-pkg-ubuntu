@@ -1,0 +1,41 @@
+From 675f4c03128439ab2bbcfec0bb52958cc3b91891 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Thu, 7 Dec 2017 16:18:42 -0500
+Subject: lxd/init: Fix bad handling of dir backend
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ lxd/main_init.go | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/lxd/main_init.go b/lxd/main_init.go
+index d48076b3..7a50e9c4 100644
+--- a/lxd/main_init.go
++++ b/lxd/main_init.go
+@@ -153,9 +153,11 @@ func (cmd *CmdInit) fillDataInteractive(data *cmdInitData, client lxd.ContainerS
+ 		return err
+ 	}
+ 
+-	err = cmd.fillDataWithStorage(data, storage)
+-	if err != nil {
+-		return err
++	if storage != nil && storage.Backend == "zfs" {
++		err = cmd.fillDataWithStorage(data, storage)
++		if err != nil {
++			return err
++		}
+ 	}
+ 
+ 	err = cmd.fillDataWithDefaultPrivileged(data, defaultPrivileged)
+@@ -232,8 +234,6 @@ func (cmd *CmdInit) fillDataWithStorage(data *cmdInitData, storage *cmdInitStora
+ 		if err != nil {
+ 			return fmt.Errorf("Failed to create the ZFS pool: %s", output)
+ 		}
+-	} else {
+-		logger.Warnf("Did not find profile \"default\" so no default storage pool will be set. Manual intervention needed.")
+ 	}
+ 
+ 	data.Config["storage.zfs_pool_name"] = storage.Pool
