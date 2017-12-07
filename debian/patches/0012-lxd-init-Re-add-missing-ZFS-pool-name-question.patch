@@ -1,0 +1,31 @@
+From 7e7623b86b90d3d63c34705308dad407917c4f54 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Thu, 7 Dec 2017 13:43:55 -0500
+Subject: lxd/init: Re-add missing ZFS pool name question
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Closes #4086
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ lxd/main_init.go | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/lxd/main_init.go b/lxd/main_init.go
+index 4c1441b3..feb2f9e7 100644
+--- a/lxd/main_init.go
++++ b/lxd/main_init.go
+@@ -492,6 +492,11 @@ func (cmd *CmdInit) askStorage(client lxd.ContainerServer, availableBackends []s
+ 		storage.LoopSize = -1
+ 		question := fmt.Sprintf("Create a new %s pool (yes/no) [default=yes]? ", strings.ToUpper(storage.Backend))
+ 		if cmd.Context.AskBool(question, "yes") {
++			if storage.Backend == "zfs" {
++				question := fmt.Sprintf("Name of the new %s pool or dataset [default=lxd]: ", strings.ToUpper(storage.Backend))
++				storage.Pool = cmd.Context.AskString(question, "lxd", nil)
++			}
++
+ 			if cmd.Context.AskBool("Would you like to use an existing block device (yes/no) [default=no]? ", "no") {
+ 				deviceExists := func(path string) error {
+ 					if !shared.IsBlockdevPath(path) {

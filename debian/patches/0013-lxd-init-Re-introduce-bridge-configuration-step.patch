@@ -1,0 +1,52 @@
+From 3a16af5b84a8363eadce10240c39a66444bdc459 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Thu, 7 Dec 2017 14:02:39 -0500
+Subject: lxd/init: Re-introduce bridge configuration step
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ lxd/main_init.go | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/lxd/main_init.go b/lxd/main_init.go
+index feb2f9e7..d48076b3 100644
+--- a/lxd/main_init.go
++++ b/lxd/main_init.go
+@@ -148,6 +148,11 @@ func (cmd *CmdInit) fillDataInteractive(data *cmdInitData, client lxd.ContainerS
+ 	defaultPrivileged := cmd.askDefaultPrivileged()
+ 	networking := cmd.askNetworking()
+ 
++	err = cmd.askNetwork()
++	if err != nil {
++		return err
++	}
++
+ 	err = cmd.fillDataWithStorage(data, storage)
+ 	if err != nil {
+ 		return err
+@@ -599,6 +604,22 @@ func (cmd *CmdInit) askNetworking() *cmdInitNetworkingParams {
+ 	return networking
+ }
+ 
++// Ask if the user wants to configure the bridge
++func (cmd *CmdInit) askNetwork() error {
++	if cmd.Context.AskBool("Do you want to configure the LXD bridge (yes/no) [default=yes]? ", "yes") {
++		cmd := exec.Command("dpkg-reconfigure", "-p", "medium", "lxd")
++		cmd.Stdin = os.Stdin
++		cmd.Stdout = os.Stdout
++		cmd.Stderr = os.Stderr
++		err := cmd.Run()
++		if err != nil {
++			return fmt.Errorf("Failed to configure the bridge")
++		}
++	}
++
++	return nil
++}
++
+ // Defines the schema for all possible configuration knobs supported by the
+ // lxd init command, either directly fed via --preseed or populated by
+ // the auto/interactive modes.

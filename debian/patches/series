@@ -9,3 +9,5 @@
 0009-Revert-Temporary-workaround-for-log15-API-breakage.patch
 0010-zfs-Fix-slowdown-because-of-mountpoint-check.patch
 0011-tests-Deal-with-missing-ttyS0-ttyS1-on-s390x.patch
+0012-lxd-init-Re-add-missing-ZFS-pool-name-question.patch
+0013-lxd-init-Re-introduce-bridge-configuration-step.patch
