@@ -1,3 +1,11 @@
+lxd (2.0.11-0ubuntu1~16.04.3) xenial; urgency=medium
+
+  * Fix two regressions in "lxd init" (LP: #1737020):
+    - Missing question for ZFS pool name (when creating new one)
+    - Missing LXD bridge questions
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Thu, 07 Dec 2017 14:02:54 -0500
+
 lxd (2.0.11-0ubuntu1~16.04.2) xenial; urgency=medium
 
   * Cherry-pick upstream fixes:
