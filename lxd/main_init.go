@@ -148,6 +148,11 @@ func (cmd *CmdInit) fillDataInteractive(data *cmdInitData, client lxd.ContainerS
 	defaultPrivileged := cmd.askDefaultPrivileged()
 	networking := cmd.askNetworking()
 
+	err = cmd.askNetwork()
+	if err != nil {
+		return err
+	}
+
 	err = cmd.fillDataWithStorage(data, storage)
 	if err != nil {
 		return err
@@ -597,6 +602,22 @@ func (cmd *CmdInit) askNetworking() *cmdInitNetworkingParams {
 	networking.TrustPassword = cmd.Context.AskPassword("Trust password for new clients: ", cmd.PasswordReader)
 
 	return networking
+}
+
+// Ask if the user wants to configure the bridge
+func (cmd *CmdInit) askNetwork() error {
+	if cmd.Context.AskBool("Do you want to configure the LXD bridge (yes/no) [default=yes]? ", "yes") {
+		cmd := exec.Command("dpkg-reconfigure", "-p", "medium", "lxd")
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		err := cmd.Run()
+		if err != nil {
+			return fmt.Errorf("Failed to configure the bridge")
+		}
+	}
+
+	return nil
 }
 
 // Defines the schema for all possible configuration knobs supported by the
