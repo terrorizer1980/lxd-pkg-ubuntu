@@ -1,3 +1,76 @@
+lxd (2.21-0ubuntu1) bionic; urgency=medium
+
+  * New upstream release (2.21)
+    - The lxc start/stop/restart/pause commands now accept a new --all flag.
+      (LP: #1735718)
+    - Introduced a new infiniband device type which supports physical
+      passthrough of Infiniband devices as well as SR-IOV allocated cards.
+    - Added a new security.devlxd configuration key to control the
+      presence of /dev/lxd inside the container.
+    - Added support for incremental memory copy with container live-migration.
+      This is controlled by a set of new migration.incremental.memory
+      configuration keys.
+    - A new boot.stop.priority configuration key can be used to control
+      container shutdown order when LXD is brought down.
+    - LXD users that use MAAS to manage their networks can now have LXD
+      directly drive MAAS, recording all containers in MAAS and setting up
+      static allocations in MAAS managed subnets.
+      This is controlled with the maas.api.url and maas.api.key
+      daemon keys as well as the maas.subnet.ipv4 and maas.subnet.ipv6
+      network interface configuration keys.
+
+    - client: URL escape all user input
+    - doc: Add example to create an storage pool from existing LVM thinpool.
+    - doc: Fix markdown escaping for prlimits
+    - doc: Update LVM documentation to cover scalability issues
+    - extra: Fix some profile autocompletions
+    - i18n: Update translations from weblate
+    - lxc: Detect first-run based on conf file not dir
+    - lxc/exec: Update help to cover shell behavior
+    - lxc/shell: Switch to using su -l
+    - lxd-benchmark: Change the default count of containers from 100 to 1
+    - lxd/certificates: Add missing name value
+    - lxd/console: Adapt to new liblxc changes
+    - lxd/containers: Actually return an error
+    - lxd/containers: Add new disk-{char,block} path format
+    - lxd/containers: Add new unix-{char,block} path format
+    - lxd/containers: Escape paths fstab style
+    - lxd/containers: Fix insertNetworkDevice()
+    - lxd/containers: Fix race condition in shutdown
+    - lxd/containers: Fix typo in prlimit error
+    - lxd/containers: Log auto-start errors
+    - lxd/containers: Only init the config if needed
+    - lxd/containers: Skip non-existing Nvidia GPU devices
+    - lxd/containers: Skip sockets in tarballs
+    - lxd/daemon: Fix unsetting https address
+    - lxd/daemon: Properly cache the storage information
+    - lxd/dameon: Add LXD_EXEC_PATH to override execPath
+    - lxd/devlxd: Cleanup in preparation for events
+    - lxd/devlxd: Properly lock the internal struct
+    - lxd/migration: Add handler for CRIU feature checking
+    - lxd/migration: Default to pre-copy migration if CRIU supports it
+    - lxd/migration: Move pre-dump check to its own function
+    - lxd/migration: Remove obsolete TODO comment
+    - lxd/networks: Extend allowed character set for interfaces
+    - lxd/patches: Skip containers that don't have a devices dir
+    - lxd/patches: Update to new device name scheme
+    - lxd/storage: Use HostPath for dir/btrfs
+    - lxd/storage/zfs: Fix argument order of zfs get commands
+    - lxd/storage/zfs: Fix storage pool import
+    - lxd/storage/zfs: Make sure to allow devices, setuid and exec
+    - Makefile: Better detect sqlite3.h
+    - shared/idmap: Fix handling of hardlinks
+    - shared/util: Add EscapePathFstab()
+    - shared/utils: Deal with symlinks
+    - tests: Adapt to changes in console API behavior
+    - tests: Deal with missing ttyS0/ttyS1 (on s390x)
+    - tests: Skip console tests on lower liblxc versions
+    - travis: Limit to just Go 1.9
+  * Bump standards to 4.1.2
+  * Update lintian overrides
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Tue, 19 Dec 2017 19:21:56 -0500
+
 lxd (2.20-0ubuntu4) bionic; urgency=medium
 
   * Cherry-pick upstream fixes:
