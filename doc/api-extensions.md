@@ -22,6 +22,15 @@ to stop before killing it.
 
 Its value is only used on clean LXD daemon shutdown. It defaults to 30s.
 
+## container\_stop\_priority
+A `boot.stop.priority` container configuration key was introduced.
+
+It's an integer which indicates the priority of a container during shutdown.
+
+Containers will shutdown starting with the highest priority level.
+
+Containers with the same priority will shutdown in parallel.  It defaults to 0.
+
 ## container\_syscall\_filtering
 A number of new syscalls related container configuration keys were introduced.
 
@@ -359,3 +368,20 @@ This adds support for SR-IOV enabled network devices.
 
 ## console
 This adds support to interact with the container console device and console log.
+
+## restrict\_devlxd
+A new security.devlxd container configuration key was introduced.
+The key controls whether the /dev/lxd interface is made available to the container.
+If set to false, this effectively prevents the container from interacting with the LXD daemon.
+
+## migration\_pre\_copy
+This adds support for optimized memory transfer during live migration.
+
+## infiniband
+This adds support to use infiniband network devices.
+
+## maas\_network
+This adds support for MAAS network integration.
+
+When configured at the daemon level, it's then possible to attach a "nic"
+device to a particular MAAS subnet.

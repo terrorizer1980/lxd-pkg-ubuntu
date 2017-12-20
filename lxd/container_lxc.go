@@ -25,6 +25,7 @@ import (
 	"gopkg.in/yaml.v2"
 
 	"github.com/lxc/lxd/lxd/db"
+	"github.com/lxc/lxd/lxd/maas"
 	"github.com/lxc/lxd/lxd/state"
 	"github.com/lxc/lxd/lxd/types"
 	"github.com/lxc/lxd/lxd/util"
@@ -156,7 +157,7 @@ func lxcSetConfigItem(c *lxc.Container, key string, value string) error {
 
 	if strings.HasPrefix(key, "lxc.prlimit.") {
 		if !util.RuntimeLiblxcVersionAtLeast(2, 1, 0) {
-			return fmt.Errorf(`Process limits require libxc >= 2.1`)
+			return fmt.Errorf(`Process limits require liblxc >= 2.1`)
 		}
 	}
 
@@ -207,6 +208,10 @@ func lxcValidConfig(rawLxc string) error {
 		// Blacklist some keys
 		if key == "lxc.logfile" || key == "lxc.log.file" {
 			return fmt.Errorf("Setting lxc.logfile is not allowed")
+		}
+
+		if key == "lxc.console.logfile" {
+			return fmt.Errorf("Setting lxc.console.logfile is not allowed")
 		}
 
 		if key == "lxc.syslog" || key == "lxc.log.syslog" {
@@ -426,6 +431,14 @@ func containerLXCCreate(s *state.State, args db.ContainerArgs) (container, error
 		return nil, err
 	}
 
+	// Update MAAS
+	err = c.maasUpdate(false)
+	if err != nil {
+		c.Delete()
+		logger.Error("Failed creating container", ctxMap)
+		return nil, err
+	}
+
 	// Update lease files
 	networkUpdateStatic(s, "")
 
@@ -485,6 +498,7 @@ type containerLXC struct {
 
 	// Cache
 	c        *lxc.Container
+	cConfig  bool
 	db       *db.Node
 	state    *state.State
 	idmapset *idmap.IdmapSet
@@ -827,7 +841,7 @@ func (c *containerLXC) init() error {
 	return nil
 }
 
-func (c *containerLXC) initLXC() error {
+func (c *containerLXC) initLXC(config bool) error {
 	// No need to go through all that for snapshots
 	if c.IsSnapshot() {
 		return nil
@@ -840,13 +854,58 @@ func (c *containerLXC) initLXC() error {
 
 	// Check if already initialized
 	if c.c != nil {
-		return nil
+		if !config || c.cConfig {
+			return nil
+		}
 	}
 
 	// Load the go-lxc struct
 	cc, err := lxc.NewContainer(c.Name(), c.state.OS.LxcPath)
 	if err != nil {
 		return err
+	}
+
+	// Setup logging
+	logfile := c.LogFilePath()
+
+	err = cc.SetLogFile(logfile)
+	if err != nil {
+		return err
+	}
+
+	logLevel := "warn"
+	if debug {
+		logLevel = "trace"
+	} else if verbose {
+		logLevel = "info"
+	}
+
+	err = lxcSetConfigItem(cc, "lxc.log.level", logLevel)
+	if err != nil {
+		return err
+	}
+
+	if util.RuntimeLiblxcVersionAtLeast(3, 0, 0) {
+		// 128 kB console ringbuffer.
+		err = lxcSetConfigItem(cc, "lxc.console.buffer.size", "auto")
+		if err != nil {
+			return err
+		}
+
+		// File to dump ringbuffer contents to when requested or
+		// container shutdown.
+		consoleBufferLogFile := c.ConsoleBufferLogPath()
+		err = lxcSetConfigItem(cc, "lxc.console.buffer.logfile", consoleBufferLogFile)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Allow for lightweight init
+	c.cConfig = config
+	if !config {
+		c.c = cc
+		return nil
 	}
 
 	// Base config
@@ -986,26 +1045,6 @@ func (c *containerLXC) initLXC() error {
 		}
 	}
 
-	// Setup logging
-	logfile := c.LogFilePath()
-
-	err = cc.SetLogFile(logfile)
-	if err != nil {
-		return err
-	}
-
-	logLevel := "warn"
-	if debug {
-		logLevel = "trace"
-	} else if verbose {
-		logLevel = "info"
-	}
-
-	err = lxcSetConfigItem(cc, "lxc.log.level", logLevel)
-	if err != nil {
-		return err
-	}
-
 	// Setup architecture
 	personality, err := osarch.ArchitecturePersonality(c.architecture)
 	if err != nil {
@@ -1044,9 +1083,11 @@ func (c *containerLXC) initLXC() error {
 	}
 
 	// Setup devlxd
-	err = lxcSetConfigItem(cc, "lxc.mount.entry", fmt.Sprintf("%s dev/lxd none bind,create=dir 0 0", shared.VarPath("devlxd")))
-	if err != nil {
-		return err
+	if c.expandedConfig["security.devlxd"] == "" || shared.IsTrue(c.expandedConfig["security.devlxd"]) {
+		err = lxcSetConfigItem(cc, "lxc.mount.entry", fmt.Sprintf("%s dev/lxd none bind,create=dir 0 0", shared.VarPath("devlxd")))
+		if err != nil {
+			return err
+		}
 	}
 
 	// Setup AppArmor
@@ -1329,26 +1370,23 @@ func (c *containerLXC) initLXC() error {
 	for _, k := range c.expandedDevices.DeviceNames() {
 		m := c.expandedDevices[k]
 		if shared.StringInSlice(m["type"], []string{"unix-char", "unix-block"}) {
-			// Prepare all the paths
-			srcPath, exist := m["source"]
-			if !exist {
-				srcPath = m["path"]
+			// destination paths
+			destPath := m["path"]
+			if destPath == "" {
+				destPath = m["source"]
 			}
-			relativeSrcPath := strings.TrimPrefix(srcPath, "/")
-			devName := fmt.Sprintf("unix.%s", strings.Replace(relativeSrcPath, "/", "-", -1))
-			devPath := filepath.Join(c.DevicesPath(), devName)
-			tgtPath, exist := m["path"]
-			if !exist {
-				tgtPath = m["source"]
-			}
-			relativeTgtPath := strings.TrimPrefix(tgtPath, "/")
+			relativeDestPath := strings.TrimPrefix(destPath, "/")
+			sourceDevPath := filepath.Join(c.DevicesPath(), fmt.Sprintf("unix.%s.%s", k, strings.Replace(relativeDestPath, "/", "-", -1)))
 
-			// Set the bind-mount entry
-			err = lxcSetConfigItem(cc, "lxc.mount.entry", fmt.Sprintf("%s %s none bind,create=file", devPath, relativeTgtPath))
+			// inform liblxc about the mount
+			err = lxcSetConfigItem(cc, "lxc.mount.entry",
+				fmt.Sprintf("%s %s none bind,create=file",
+					shared.EscapePathFstab(sourceDevPath),
+					shared.EscapePathFstab(relativeDestPath)))
 			if err != nil {
 				return err
 			}
-		} else if m["type"] == "nic" {
+		} else if m["type"] == "nic" || m["type"] == "infiniband" {
 			// Fill in some fields from volatile
 			m, err = c.fillNetworkDevice(k, m)
 			if err != nil {
@@ -1444,14 +1482,20 @@ func (c *containerLXC) initLXC() error {
 					return err
 				}
 			}
+
 			// bump network index
 			networkidx++
 		} else if m["type"] == "disk" {
-			// Prepare all the paths
+			isRootfs := isRootDiskDevice(m)
+
+			// source paths
 			srcPath := shared.HostPath(m["source"])
-			tgtPath := strings.TrimPrefix(m["path"], "/")
-			devName := fmt.Sprintf("disk.%s", strings.Replace(tgtPath, "/", "-", -1))
-			devPath := filepath.Join(c.DevicesPath(), devName)
+
+			// destination paths
+			destPath := m["path"]
+			relativeDestPath := strings.TrimPrefix(destPath, "/")
+
+			sourceDevPath := filepath.Join(c.DevicesPath(), fmt.Sprintf("disk.%s.%s", k, strings.Replace(relativeDestPath, "/", "-", -1)))
 
 			// Various option checks
 			isOptional := shared.IsTrue(m["optional"])
@@ -1467,7 +1511,7 @@ func (c *containerLXC) initLXC() error {
 			}
 
 			// Deal with a rootfs
-			if tgtPath == "" {
+			if isRootfs {
 				if !util.RuntimeLiblxcVersionAtLeast(2, 1, 0) {
 					// Set the rootfs backend type if supported (must happen before any other lxc.rootfs)
 					err := lxcSetConfigItem(cc, "lxc.rootfs.backend", "dir")
@@ -1519,7 +1563,11 @@ func (c *containerLXC) initLXC() error {
 					options = append(options, "create=dir")
 				}
 
-				err = lxcSetConfigItem(cc, "lxc.mount.entry", fmt.Sprintf("%s %s none %sbind,%s", devPath, tgtPath, rbind, strings.Join(options, ",")))
+				err = lxcSetConfigItem(cc, "lxc.mount.entry",
+					fmt.Sprintf("%s %s none %sbind,%s",
+						shared.EscapePathFstab(sourceDevPath),
+						shared.EscapePathFstab(relativeDestPath), rbind,
+						strings.Join(options, ",")))
 				if err != nil {
 					return err
 				}
@@ -1624,7 +1672,7 @@ func (c *containerLXC) expandDevices() error {
 
 // setupUnixDevice() creates the unix device and sets up the necessary low-level
 // liblxc configuration items.
-func (c *containerLXC) setupUnixDevice(devType string, dev types.Device, major int, minor int, path string, createMustSucceed bool) error {
+func (c *containerLXC) setupUnixDevice(prefix string, dev types.Device, major int, minor int, path string, createMustSucceed bool) error {
 	if c.IsPrivileged() && !c.state.OS.RunningInUserNS && c.state.OS.CGroupDevicesController {
 		err := lxcSetConfigItem(c.c, "lxc.cgroup.devices.allow", fmt.Sprintf("c %d:%d rwm", major, minor))
 		if err != nil {
@@ -1641,9 +1689,9 @@ func (c *containerLXC) setupUnixDevice(devType string, dev types.Device, major i
 	temp["minor"] = fmt.Sprintf("%d", minor)
 	temp["path"] = path
 
-	paths, err := c.createUnixDevice(temp)
+	paths, err := c.createUnixDevice(prefix, temp)
 	if err != nil {
-		logger.Debug("failed to create device", log.Ctx{"err": err, "device": devType})
+		logger.Debug("failed to create device", log.Ctx{"err": err, "device": prefix})
 		if createMustSucceed {
 			return err
 		}
@@ -1652,7 +1700,9 @@ func (c *containerLXC) setupUnixDevice(devType string, dev types.Device, major i
 	devPath := paths[0]
 	tgtPath := paths[1]
 
-	err = lxcSetConfigItem(c.c, "lxc.mount.entry", fmt.Sprintf("%s %s none bind,create=file", devPath, tgtPath))
+	err = lxcSetConfigItem(c.c, "lxc.mount.entry",
+		fmt.Sprintf("%s %s none bind,create=file",
+			shared.EscapePathFstab(devPath), shared.EscapePathFstab(tgtPath)))
 	if err != nil {
 		return err
 	}
@@ -1662,7 +1712,7 @@ func (c *containerLXC) setupUnixDevice(devType string, dev types.Device, major i
 // Start functions
 func (c *containerLXC) startCommon() (string, error) {
 	// Load the go-lxc struct
-	err := c.initLXC()
+	err := c.initLXC(true)
 	if err != nil {
 		return "", err
 	}
@@ -1837,6 +1887,7 @@ func (c *containerLXC) startCommon() (string, error) {
 
 	var usbs []usbDevice
 	var gpus []gpuDevice
+	var sriov []string
 	var nvidiaDevices []nvidiaGpuDevices
 	diskDevices := map[string]types.Device{}
 
@@ -1845,7 +1896,7 @@ func (c *containerLXC) startCommon() (string, error) {
 		m := c.expandedDevices[k]
 		if shared.StringInSlice(m["type"], []string{"unix-char", "unix-block"}) {
 			// Unix device
-			paths, err := c.createUnixDevice(m)
+			paths, err := c.createUnixDevice(fmt.Sprintf("unix.%s", k), m)
 			if err != nil {
 				return "", err
 			}
@@ -1875,7 +1926,7 @@ func (c *containerLXC) startCommon() (string, error) {
 					continue
 				}
 
-				err := c.setupUnixDevice(k, m, usb.major, usb.minor, usb.path, shared.IsTrue(m["required"]))
+				err := c.setupUnixDevice(fmt.Sprintf("unix.%s", k), m, usb.major, usb.minor, usb.path, shared.IsTrue(m["required"]))
 				if err != nil {
 					return "", err
 				}
@@ -1900,7 +1951,7 @@ func (c *containerLXC) startCommon() (string, error) {
 
 				found = true
 
-				err := c.setupUnixDevice(k, m, gpu.major, gpu.minor, gpu.path, true)
+				err := c.setupUnixDevice(fmt.Sprintf("unix.%s", k), m, gpu.major, gpu.minor, gpu.path, true)
 				if err != nil {
 					return "", err
 				}
@@ -1909,7 +1960,7 @@ func (c *containerLXC) startCommon() (string, error) {
 					continue
 				}
 
-				err = c.setupUnixDevice(k, m, gpu.nvidia.major, gpu.nvidia.minor, gpu.nvidia.path, true)
+				err = c.setupUnixDevice(fmt.Sprintf("unix.%s", k), m, gpu.nvidia.major, gpu.nvidia.minor, gpu.nvidia.path, true)
 				if err != nil {
 					return "", err
 				}
@@ -1919,7 +1970,7 @@ func (c *containerLXC) startCommon() (string, error) {
 
 			if sawNvidia {
 				for _, gpu := range nvidiaDevices {
-					err := c.setupUnixDevice(k, m, gpu.major, gpu.minor, gpu.path, true)
+					err := c.setupUnixDevice(fmt.Sprintf("unix.%s", k), m, gpu.major, gpu.minor, gpu.path, true)
 					if err != nil {
 						return "", err
 					}
@@ -1935,7 +1986,16 @@ func (c *containerLXC) startCommon() (string, error) {
 			if m["path"] != "/" {
 				diskDevices[k] = m
 			}
-		} else if m["type"] == "nic" {
+		} else if m["type"] == "nic" || m["type"] == "infiniband" {
+			var err error
+			var infiniband map[string]IBF
+			if m["type"] == "infiniband" {
+				infiniband, err = deviceLoadInfiniband()
+				if err != nil {
+					return "", err
+				}
+			}
+
 			networkKeyPrefix := "lxc.net"
 			if !util.RuntimeLiblxcVersionAtLeast(2, 1, 0) {
 				networkKeyPrefix = "lxc.network"
@@ -1948,22 +2008,44 @@ func (c *containerLXC) startCommon() (string, error) {
 
 			networkidx := -1
 			reserved := []string{}
-			for _, k := range c.expandedDevices.DeviceNames() {
-				m := c.expandedDevices[k]
-				if m["type"] != "nic" {
+			// Record nictype == physical devices since those won't
+			// be available for nictype == sriov.
+			for _, dName := range c.expandedDevices.DeviceNames() {
+				m := c.expandedDevices[dName]
+				if m["type"] != "nic" && m["type"] != "infiniband" {
+					continue
+				}
+
+				if m["nictype"] != "physical" {
+					continue
+				}
+
+				reserved = append(reserved, m["parent"])
+			}
+
+			for _, dName := range c.expandedDevices.DeviceNames() {
+				m := c.expandedDevices[dName]
+				if m["type"] != "nic" && m["type"] != "infiniband" {
 					continue
 				}
 				networkidx++
+
+				if shared.StringInSlice(dName, sriov) {
+					continue
+				} else {
+					sriov = append(sriov, dName)
+				}
 
 				if m["nictype"] != "sriov" {
 					continue
 				}
 
-				m, err = c.fillSriovNetworkDevice(k, m, reserved)
+				m, err = c.fillSriovNetworkDevice(dName, m, reserved)
 				if err != nil {
 					return "", err
 				}
 
+				// Make sure that no one called dibs.
 				reserved = append(reserved, m["host_name"])
 
 				val := c.c.ConfigItem(fmt.Sprintf("%s.%d.type", networkKeyPrefix, networkidx))
@@ -1973,6 +2055,32 @@ func (c *containerLXC) startCommon() (string, error) {
 
 				// Fill in correct name right now
 				err = lxcSetConfigItem(c.c, fmt.Sprintf("%s.%d.link", networkKeyPrefix, networkidx), m["host_name"])
+				if err != nil {
+					return "", err
+				}
+
+				if m["type"] == "infiniband" {
+					key := m["host_name"]
+					ifDev, ok := infiniband[key]
+					if !ok {
+						return "", fmt.Errorf("Specified infiniband device \"%s\" not found", key)
+					}
+
+					err := c.addInfinibandDevices(dName, &ifDev, false)
+					if err != nil {
+						return "", err
+					}
+				}
+			}
+
+			if m["type"] == "infiniband" && m["nictype"] == "physical" {
+				key := m["parent"]
+				ifDev, ok := infiniband[key]
+				if !ok {
+					return "", fmt.Errorf("Specified infiniband device \"%s\" not found", key)
+				}
+
+				err := c.addInfinibandDevices(k, &ifDev, false)
 				if err != nil {
 					return "", err
 				}
@@ -2144,7 +2252,17 @@ func (c *containerLXC) Start(stateful bool) error {
 			return fmt.Errorf("Container has no existing state to restore.")
 		}
 
-		err := c.Migrate(lxc.MIGRATE_RESTORE, c.StatePath(), "snapshot", false, false)
+		criuMigrationArgs := CriuMigrationArgs{
+			cmd:          lxc.MIGRATE_RESTORE,
+			stateDir:     c.StatePath(),
+			function:     "snapshot",
+			stop:         false,
+			actionScript: false,
+			dumpDir:      "",
+			preDumpDir:   "",
+		}
+
+		err := c.Migrate(&criuMigrationArgs)
 		if err != nil && !c.IsRunning() {
 			return err
 		}
@@ -2298,7 +2416,7 @@ func (c *containerLXC) OnStart() error {
 	// Apply network limits
 	for _, name := range c.expandedDevices.DeviceNames() {
 		m := c.expandedDevices[name]
-		if m["type"] != "nic" {
+		if m["type"] != "nic" && m["type"] != "infiniband" {
 			continue
 		}
 
@@ -2361,8 +2479,18 @@ func (c *containerLXC) Stop(stateful bool) error {
 			return err
 		}
 
+		criuMigrationArgs := CriuMigrationArgs{
+			cmd:          lxc.MIGRATE_DUMP,
+			stateDir:     stateDir,
+			function:     "snapshot",
+			stop:         true,
+			actionScript: false,
+			dumpDir:      "",
+			preDumpDir:   "",
+		}
+
 		// Checkpoint
-		err = c.Migrate(lxc.MIGRATE_DUMP, stateDir, "snapshot", true, false)
+		err = c.Migrate(&criuMigrationArgs)
 		if err != nil {
 			op.Done(err)
 			logger.Error("Failed stopping container", ctxMap)
@@ -2385,7 +2513,7 @@ func (c *containerLXC) Stop(stateful bool) error {
 	}
 
 	// Load the go-lxc struct
-	err = c.initLXC()
+	err = c.initLXC(false)
 	if err != nil {
 		op.Done(err)
 		logger.Error("Failed stopping container", ctxMap)
@@ -2445,7 +2573,7 @@ func (c *containerLXC) Shutdown(timeout time.Duration) error {
 	logger.Info("Shutting down container", ctxMap)
 
 	// Load the go-lxc struct
-	err = c.initLXC()
+	err = c.initLXC(false)
 	if err != nil {
 		op.Done(err)
 		logger.Error("Failed shutting down container", ctxMap)
@@ -2588,7 +2716,7 @@ func (c *containerLXC) Freeze() error {
 	logger.Info("Freezing container", ctxMap)
 
 	// Load the go-lxc struct
-	err := c.initLXC()
+	err := c.initLXC(false)
 	if err != nil {
 		ctxMap["err"] = err
 		logger.Error("Failed freezing container", ctxMap)
@@ -2626,7 +2754,7 @@ func (c *containerLXC) Unfreeze() error {
 	logger.Info("Unfreezing container", ctxMap)
 
 	// Load the go-lxc struct
-	err := c.initLXC()
+	err := c.initLXC(false)
 	if err != nil {
 		logger.Error("Failed unfreezing container", ctxMap)
 		return err
@@ -2651,6 +2779,12 @@ func (c *containerLXC) getLxcState() (lxc.State, error) {
 		return lxc.StateMap["STOPPED"], nil
 	}
 
+	// Load the go-lxc struct
+	err := c.initLXC(false)
+	if err != nil {
+		return lxc.StateMap["STOPPED"], err
+	}
+
 	monitor := make(chan lxc.State, 1)
 
 	go func(c *lxc.Container) {
@@ -2666,12 +2800,6 @@ func (c *containerLXC) getLxcState() (lxc.State, error) {
 }
 
 func (c *containerLXC) Render() (interface{}, interface{}, error) {
-	// Load the go-lxc struct
-	err := c.initLXC()
-	if err != nil {
-		return nil, nil, err
-	}
-
 	// Ignore err as the arch string on error is correct (unknown)
 	architectureName, _ := osarch.ArchitectureName(c.architecture)
 
@@ -2723,12 +2851,6 @@ func (c *containerLXC) Render() (interface{}, interface{}, error) {
 }
 
 func (c *containerLXC) RenderState() (*api.ContainerState, error) {
-	// Load the go-lxc struct
-	err := c.initLXC()
-	if err != nil {
-		return nil, err
-	}
-
 	cState, err := c.getLxcState()
 	if err != nil {
 		return nil, err
@@ -2874,7 +2996,19 @@ func (c *containerLXC) Restore(sourceContainer container, stateful bool) error {
 
 		logger.Debug("Performing stateful restore", ctxMap)
 		c.stateful = true
-		err := c.Migrate(lxc.MIGRATE_RESTORE, c.StatePath(), "snapshot", false, false)
+
+		criuMigrationArgs := CriuMigrationArgs{
+			cmd:          lxc.MIGRATE_RESTORE,
+			stateDir:     c.StatePath(),
+			function:     "snapshot",
+			stop:         false,
+			actionScript: false,
+			dumpDir:      "",
+			preDumpDir:   "",
+		}
+
+		// Checkpoint
+		err := c.Migrate(&criuMigrationArgs)
 		if err != nil {
 			return err
 		}
@@ -2968,6 +3102,13 @@ func (c *containerLXC) Delete() error {
 				}
 			}
 		}
+
+		// Delete the MAAS entry
+		err = c.maasDelete()
+		if err != nil {
+			logger.Error("Failed deleting container MAAS record", log.Ctx{"name": c.Name(), "err": err})
+			return err
+		}
 	}
 
 	// Remove the database record
@@ -2993,7 +3134,7 @@ func (c *containerLXC) Delete() error {
 	// Update network files
 	networkUpdateStatic(c.state, "")
 	for k, m := range c.expandedDevices {
-		if m["type"] != "nic" || m["nictype"] != "bridged" || (m["ipv4.address"] == "" && m["ipv6.address"] == "") {
+		if (m["type"] != "nic" && m["type"] != "infiniband") || m["nictype"] != "bridged" || (m["ipv4.address"] == "" && m["ipv6.address"] == "") {
 			continue
 		}
 
@@ -3037,6 +3178,12 @@ func (c *containerLXC) Rename(newName string) error {
 
 	// Clean things up
 	c.cleanup()
+
+	// Rename the MAAS entry
+	err = c.maasRename(newName)
+	if err != nil {
+		return err
+	}
 
 	// Rename the logging path
 	os.RemoveAll(shared.LogPath(newName))
@@ -3114,6 +3261,7 @@ func (c *containerLXC) Rename(newName string) error {
 
 	// Invalidate the go-lxc cache
 	c.c = nil
+	c.cConfig = false
 
 	// Update lease files
 	networkUpdateStatic(c.state, "")
@@ -3125,7 +3273,7 @@ func (c *containerLXC) Rename(newName string) error {
 
 func (c *containerLXC) CGroupGet(key string) (string, error) {
 	// Load the go-lxc struct
-	err := c.initLXC()
+	err := c.initLXC(false)
 	if err != nil {
 		return "", err
 	}
@@ -3141,7 +3289,7 @@ func (c *containerLXC) CGroupGet(key string) (string, error) {
 
 func (c *containerLXC) CGroupSet(key string, value string) error {
 	// Load the go-lxc struct
-	err := c.initLXC()
+	err := c.initLXC(false)
 	if err != nil {
 		return err
 	}
@@ -3396,7 +3544,8 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 			c.localDevices = oldLocalDevices
 			c.profiles = oldProfiles
 			c.c = nil
-			c.initLXC()
+			c.cConfig = false
+			c.initLXC(true)
 			deviceTaskSchedulerTrigger("container", c.name, "changed")
 		}
 	}()
@@ -3455,7 +3604,8 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 
 	// Run through initLXC to catch anything we missed
 	c.c = nil
-	err = c.initLXC()
+	c.cConfig = false
+	err = c.initLXC(true)
 	if err != nil {
 		return err
 	}
@@ -3591,6 +3741,22 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 		}
 	}
 
+	// Update MAAS
+	updateMAAS := false
+	for _, key := range []string{"maas.subnet.ipv4", "maas.subnet.ipv6", "ipv4.address", "ipv6.address"} {
+		if shared.StringInSlice(key, updateDiff) {
+			updateMAAS = true
+			break
+		}
+	}
+
+	if updateMAAS {
+		err = c.maasUpdate(true)
+		if err != nil {
+			return err
+		}
+	}
+
 	// Apply the live changes
 	if isRunning {
 		// Live update the container config
@@ -3602,6 +3768,23 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 				err = AALoadProfile(c)
 				if err != nil {
 					return err
+				}
+			} else if key == "security.devlxd" {
+				if value == "" || shared.IsTrue(value) {
+					err = c.insertMount(shared.VarPath("devlxd"), "/dev/lxd", "none", syscall.MS_BIND)
+					if err != nil {
+						return err
+					}
+				} else if c.FileExists("/dev/lxd") == nil {
+					err = c.removeMount("/dev/lxd")
+					if err != nil {
+						return err
+					}
+
+					err = c.FileRemove("/dev/lxd")
+					if err != nil {
+						return err
+					}
 				}
 			} else if key == "linux.kernel_modules" && value != "" {
 				for _, module := range strings.Split(value, ",") {
@@ -3855,7 +4038,7 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 		// Live update the devices
 		for k, m := range removeDevices {
 			if shared.StringInSlice(m["type"], []string{"unix-char", "unix-block"}) {
-				err = c.removeUnixDevice(m)
+				err = c.removeUnixDevice(fmt.Sprintf("unix.%s", k), m, true)
 				if err != nil {
 					return err
 				}
@@ -3864,8 +4047,13 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 				if err != nil {
 					return err
 				}
-			} else if m["type"] == "nic" {
+			} else if m["type"] == "nic" || m["type"] == "infiniband" {
 				err = c.removeNetworkDevice(k, m)
+				if err != nil {
+					return err
+				}
+
+				err = c.removeInfinibandDevices(k, m)
 				if err != nil {
 					return err
 				}
@@ -3883,7 +4071,7 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 						continue
 					}
 
-					err := c.removeUnixDeviceNum(m, usb.major, usb.minor, usb.path)
+					err := c.removeUnixDeviceNum(fmt.Sprintf("unix.%s", k), m, usb.major, usb.minor, usb.path)
 					if err != nil {
 						return err
 					}
@@ -3904,7 +4092,7 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 						continue
 					}
 
-					err := c.removeUnixDeviceNum(m, gpu.major, gpu.minor, gpu.path)
+					err := c.removeUnixDeviceNum(fmt.Sprintf("unix.%s", k), m, gpu.major, gpu.minor, gpu.path)
 					if err != nil {
 						logger.Error("Failed to remove GPU device.", log.Ctx{"err": err, "gpu": gpu, "container": c.Name()})
 						return err
@@ -3914,7 +4102,7 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 						continue
 					}
 
-					err = c.removeUnixDeviceNum(m, gpu.nvidia.major, gpu.nvidia.minor, gpu.nvidia.path)
+					err = c.removeUnixDeviceNum(fmt.Sprintf("unix.%s", k), m, gpu.nvidia.major, gpu.nvidia.minor, gpu.nvidia.path)
 					if err != nil {
 						logger.Error("Failed to remove GPU device.", log.Ctx{"err": err, "gpu": gpu, "container": c.Name()})
 						return err
@@ -3924,7 +4112,7 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 				nvidiaExists := false
 				for _, gpu := range gpus {
 					if gpu.nvidia.path != "" {
-						if c.deviceExists(gpu.path) {
+						if c.deviceExists(k, gpu.path) {
 							nvidiaExists = true
 							break
 						}
@@ -3933,10 +4121,10 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 
 				if !nvidiaExists {
 					for _, gpu := range nvidiaDevices {
-						if !c.deviceExists(gpu.path) {
+						if !c.deviceExists(k, gpu.path) {
 							continue
 						}
-						err = c.removeUnixDeviceNum(m, gpu.major, gpu.minor, gpu.path)
+						err = c.removeUnixDeviceNum(fmt.Sprintf("unix.%s", k), m, gpu.major, gpu.minor, gpu.path)
 						if err != nil {
 							logger.Error("Failed to remove GPU device.", log.Ctx{"err": err, "gpu": gpu, "container": c.Name()})
 							return err
@@ -3947,19 +4135,45 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 		}
 
 		diskDevices := map[string]types.Device{}
-
 		for k, m := range addDevices {
 			if shared.StringInSlice(m["type"], []string{"unix-char", "unix-block"}) {
-				err = c.insertUnixDevice(m)
+				err = c.insertUnixDevice(fmt.Sprintf("unix.%s", k), m)
 				if err != nil {
 					return err
 				}
 			} else if m["type"] == "disk" && m["path"] != "/" {
 				diskDevices[k] = m
-			} else if m["type"] == "nic" {
-				err = c.insertNetworkDevice(k, m)
+			} else if m["type"] == "nic" || m["type"] == "infiniband" {
+				var err error
+				var infiniband map[string]IBF
+				if m["type"] == "infiniband" {
+					infiniband, err = deviceLoadInfiniband()
+					if err != nil {
+						return err
+					}
+				}
+
+				m, err = c.insertNetworkDevice(k, m)
 				if err != nil {
 					return err
+				}
+
+				// Plugin in all character devices
+				if m["type"] == "infiniband" {
+					key := m["parent"]
+					if m["nictype"] == "sriov" {
+						key = m["host_name"]
+					}
+
+					ifDev, ok := infiniband[key]
+					if !ok {
+						return fmt.Errorf("Specified infiniband device \"%s\" not found", key)
+					}
+
+					err := c.addInfinibandDevices(k, &ifDev, true)
+					if err != nil {
+						return err
+					}
 				}
 			} else if m["type"] == "usb" {
 				if usbs == nil {
@@ -3974,7 +4188,7 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 						continue
 					}
 
-					err = c.insertUnixDeviceNum(m, usb.major, usb.minor, usb.path)
+					err = c.insertUnixDeviceNum(fmt.Sprintf("unix.%s", k), m, usb.major, usb.minor, usb.path)
 					if err != nil {
 						logger.Error("failed to insert usb device", log.Ctx{"err": err, "usb": usb, "container": c.Name()})
 					}
@@ -3999,7 +4213,7 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 
 					found = true
 
-					err = c.insertUnixDeviceNum(m, gpu.major, gpu.minor, gpu.path)
+					err = c.insertUnixDeviceNum(fmt.Sprintf("unix.%s", k), m, gpu.major, gpu.minor, gpu.path)
 					if err != nil {
 						logger.Error("Failed to insert GPU device.", log.Ctx{"err": err, "gpu": gpu, "container": c.Name()})
 						return err
@@ -4009,7 +4223,7 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 						continue
 					}
 
-					err = c.insertUnixDeviceNum(m, gpu.nvidia.major, gpu.nvidia.minor, gpu.nvidia.path)
+					err = c.insertUnixDeviceNum(fmt.Sprintf("unix.%s", k), m, gpu.nvidia.major, gpu.nvidia.minor, gpu.nvidia.path)
 					if err != nil {
 						logger.Error("Failed to insert GPU device.", log.Ctx{"err": err, "gpu": gpu, "container": c.Name()})
 						return err
@@ -4020,10 +4234,10 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 
 				if sawNvidia {
 					for _, gpu := range nvidiaDevices {
-						if c.deviceExists(gpu.path) {
+						if c.deviceExists(k, gpu.path) {
 							continue
 						}
-						err = c.insertUnixDeviceNum(m, gpu.major, gpu.minor, gpu.path)
+						err = c.insertUnixDeviceNum(fmt.Sprintf("unix.%s", k), m, gpu.major, gpu.minor, gpu.path)
 						if err != nil {
 							logger.Error("failed to insert GPU device", log.Ctx{"err": err, "gpu": gpu, "container": c.Name()})
 							return err
@@ -4048,7 +4262,7 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 		for k, m := range updateDevices {
 			if m["type"] == "disk" {
 				updateDiskLimit = true
-			} else if m["type"] == "nic" {
+			} else if m["type"] == "nic" || m["type"] == "infiniband" {
 				needsUpdate := false
 				for _, v := range containerNetworkLimitKeys {
 					needsUpdate = shared.StringInSlice(v, updateDiff)
@@ -4102,7 +4316,7 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 	netNames := []string{}
 	for _, k := range c.expandedDevices.DeviceNames() {
 		v := c.expandedDevices[k]
-		if v["type"] == "nic" {
+		if v["type"] == "nic" || v["type"] == "infiniband" {
 			netNames = append(netNames, k)
 		}
 	}
@@ -4462,14 +4676,27 @@ func getCRIULogErrors(imagesDir string, method string) (string, error) {
 	return strings.Join(ret, "\n"), nil
 }
 
-func (c *containerLXC) Migrate(cmd uint, stateDir string, function string, stop bool, actionScript bool) error {
+type CriuMigrationArgs struct {
+	cmd          uint
+	stateDir     string
+	function     string
+	stop         bool
+	actionScript bool
+	dumpDir      string
+	preDumpDir   string
+	features     lxc.CriuFeatures
+}
+
+func (c *containerLXC) Migrate(args *CriuMigrationArgs) error {
 	ctxMap := log.Ctx{"name": c.name,
 		"created":      c.creationDate,
 		"ephemeral":    c.ephemeral,
 		"used":         c.lastUsedDate,
-		"statedir":     stateDir,
-		"actionscript": actionScript,
-		"stop":         stop}
+		"statedir":     args.stateDir,
+		"actionscript": args.actionScript,
+		"predumpdir":   args.preDumpDir,
+		"features":     args.features,
+		"stop":         args.stop}
 
 	_, err := exec.LookPath("criu")
 	if err != nil {
@@ -4485,16 +4712,18 @@ func (c *containerLXC) Migrate(cmd uint, stateDir string, function string, stop 
 	}
 
 	prettyCmd := ""
-	switch cmd {
+	switch args.cmd {
 	case lxc.MIGRATE_PRE_DUMP:
 		prettyCmd = "pre-dump"
 	case lxc.MIGRATE_DUMP:
 		prettyCmd = "dump"
 	case lxc.MIGRATE_RESTORE:
 		prettyCmd = "restore"
+	case lxc.MIGRATE_FEATURE_CHECK:
+		prettyCmd = "feature-check"
 	default:
 		prettyCmd = "unknown"
-		logger.Warn("unknown migrate call", log.Ctx{"cmd": cmd})
+		logger.Warn("unknown migrate call", log.Ctx{"cmd": args.cmd})
 	}
 
 	preservesInodes := c.storage.PreservesInodes()
@@ -4505,13 +4734,14 @@ func (c *containerLXC) Migrate(cmd uint, stateDir string, function string, stop 
 		preservesInodes = false
 	}
 
+	finalStateDir := args.stateDir
 	var migrateErr error
 
 	/* For restore, we need an extra fork so that we daemonize monitor
 	 * instead of having it be a child of LXD, so let's hijack the command
 	 * here and do the extra fork.
 	 */
-	if cmd == lxc.MIGRATE_RESTORE {
+	if args.cmd == lxc.MIGRATE_RESTORE {
 		// Run the shared start
 		_, err := c.startCommon()
 		if err != nil {
@@ -4535,7 +4765,7 @@ func (c *containerLXC) Migrate(cmd uint, stateDir string, function string, stop 
 				return err
 			}
 
-			err = idmapset.ShiftRootfs(stateDir)
+			err = idmapset.ShiftRootfs(args.stateDir)
 			if ourStart {
 				_, err2 := c.StorageStop()
 				if err != nil {
@@ -4550,6 +4780,10 @@ func (c *containerLXC) Migrate(cmd uint, stateDir string, function string, stop 
 
 		configPath := filepath.Join(c.LogPath(), "lxc.conf")
 
+		if args.dumpDir != "" {
+			finalStateDir = fmt.Sprintf("%s/%s", args.stateDir, args.dumpDir)
+		}
+
 		var out string
 		out, migrateErr = shared.RunCommand(
 			c.state.OS.ExecPath,
@@ -4557,7 +4791,7 @@ func (c *containerLXC) Migrate(cmd uint, stateDir string, function string, stop 
 			c.name,
 			c.state.OS.LxcPath,
 			configPath,
-			stateDir,
+			finalStateDir,
 			fmt.Sprintf("%v", preservesInodes))
 
 		if out != "" {
@@ -4565,16 +4799,30 @@ func (c *containerLXC) Migrate(cmd uint, stateDir string, function string, stop 
 				logger.Debugf("forkmigrate: %s", line)
 			}
 		}
+	} else if args.cmd == lxc.MIGRATE_FEATURE_CHECK {
 
+		opts := lxc.MigrateOptions{
+			FeaturesToCheck: args.features,
+		}
+		migrateErr = c.c.Migrate(args.cmd, opts)
+		if migrateErr != nil {
+			logger.Info("CRIU feature check failed", ctxMap)
+			return migrateErr
+		}
+		return nil
 	} else {
-		err := c.initLXC()
+		err := c.initLXC(true)
 		if err != nil {
 			return err
 		}
 
 		script := ""
-		if actionScript {
-			script = filepath.Join(stateDir, "action.sh")
+		if args.actionScript {
+			script = filepath.Join(args.stateDir, "action.sh")
+		}
+
+		if args.dumpDir != "" {
+			finalStateDir = fmt.Sprintf("%s/%s", args.stateDir, args.dumpDir)
 		}
 
 		// TODO: make this configurable? Ultimately I think we don't
@@ -4586,27 +4834,30 @@ func (c *containerLXC) Migrate(cmd uint, stateDir string, function string, stop 
 		ghostLimit := uint64(256 * 1024 * 1024)
 
 		opts := lxc.MigrateOptions{
-			Stop:            stop,
-			Directory:       stateDir,
+			Stop:            args.stop,
+			Directory:       finalStateDir,
 			Verbose:         true,
 			PreservesInodes: preservesInodes,
 			ActionScript:    script,
 			GhostLimit:      ghostLimit,
 		}
+		if args.preDumpDir != "" {
+			opts.PredumpDir = fmt.Sprintf("../%s", args.preDumpDir)
+		}
 
-		migrateErr = c.c.Migrate(cmd, opts)
+		migrateErr = c.c.Migrate(args.cmd, opts)
 	}
 
-	collectErr := collectCRIULogFile(c, stateDir, function, prettyCmd)
+	collectErr := collectCRIULogFile(c, finalStateDir, args.function, prettyCmd)
 	if collectErr != nil {
 		logger.Error("Error collecting checkpoint log file", log.Ctx{"err": collectErr})
 	}
 
 	if migrateErr != nil {
-		log, err2 := getCRIULogErrors(stateDir, prettyCmd)
+		log, err2 := getCRIULogErrors(finalStateDir, prettyCmd)
 		if err2 == nil {
 			logger.Info("Failed migrating container", ctxMap)
-			migrateErr = fmt.Errorf("%s %s failed\n%s", function, prettyCmd, log)
+			migrateErr = fmt.Errorf("%s %s failed\n%s", args.function, prettyCmd, log)
 		}
 
 		return migrateErr
@@ -5378,6 +5629,11 @@ func (c *containerLXC) tarStoreFile(linkmap map[uint64]string, offset int, tw *t
 		}
 	}
 
+	// Sockets cannot be stored in tarballs, just skip them (consistent with tar)
+	if fi.Mode()&os.ModeSocket == os.ModeSocket {
+		return nil
+	}
+
 	hdr, err := tar.FileInfoHeader(fi, link)
 	if err != nil {
 		return fmt.Errorf("failed to create tar info header: %s", err)
@@ -5590,26 +5846,18 @@ func (c *containerLXC) removeMount(mount string) error {
 }
 
 // Check if the unix device already exists.
-func (c *containerLXC) deviceExists(path string) bool {
-	tgtPath := strings.TrimPrefix(path, "/")
-	devName := fmt.Sprintf("unix.%s", strings.Replace(tgtPath, "/", "-", -1))
+func (c *containerLXC) deviceExists(prefix string, path string) bool {
+	relativeDestPath := strings.TrimPrefix(path, "/")
+	devName := fmt.Sprintf("%s.%s", prefix, strings.Replace(relativeDestPath, "/", "-", -1))
 	devPath := filepath.Join(c.DevicesPath(), devName)
+
 	return shared.PathExists(devPath)
 }
 
 // Unix devices handling
-func (c *containerLXC) createUnixDevice(m types.Device) ([]string, error) {
+func (c *containerLXC) createUnixDevice(prefix string, m types.Device) ([]string, error) {
 	var err error
 	var major, minor int
-
-	// Our device paths
-	srcPath, exist := m["source"]
-	if !exist {
-		srcPath = m["path"]
-	}
-	relativeSrcPath := strings.TrimPrefix(srcPath, "/")
-	devName := fmt.Sprintf("unix.%s", strings.Replace(relativeSrcPath, "/", "-", -1))
-	devPath := filepath.Join(c.DevicesPath(), devName)
 
 	// Extra checks for nesting
 	if c.state.OS.RunningInUserNS {
@@ -5619,6 +5867,12 @@ func (c *containerLXC) createUnixDevice(m types.Device) ([]string, error) {
 			}
 		}
 	}
+
+	srcPath := m["source"]
+	if srcPath == "" {
+		srcPath = m["path"]
+	}
+	srcPath = shared.HostPath(srcPath)
 
 	// Get the major/minor of the device we want to create
 	if m["major"] == "" && m["minor"] == "" {
@@ -5683,17 +5937,13 @@ func (c *containerLXC) createUnixDevice(m types.Device) ([]string, error) {
 		}
 	}
 
-	// Clean any existing entry
-	if shared.PathExists(devPath) {
-		if c.state.OS.RunningInUserNS {
-			syscall.Unmount(devPath, syscall.MNT_DETACH)
-		}
-
-		err = os.Remove(devPath)
-		if err != nil {
-			return nil, fmt.Errorf("Failed to remove existing entry: %s", err)
-		}
+	destPath := m["path"]
+	if destPath == "" {
+		destPath = m["source"]
 	}
+	relativeDestPath := strings.TrimPrefix(destPath, "/")
+	devName := fmt.Sprintf("%s.%s", prefix, strings.Replace(relativeDestPath, "/", "-", -1))
+	devPath := filepath.Join(c.DevicesPath(), devName)
 
 	// Create the new entry
 	if !c.state.OS.RunningInUserNS {
@@ -5735,23 +5985,17 @@ func (c *containerLXC) createUnixDevice(m types.Device) ([]string, error) {
 		}
 	}
 
-	// generate relative target path
-	tgtPath, exist := m["path"]
-	if !exist {
-		tgtPath = m["source"]
-	}
-	relativeTgtPath := strings.TrimPrefix(tgtPath, "/")
-	return []string{devPath, relativeTgtPath}, nil
+	return []string{devPath, relativeDestPath}, nil
 }
 
-func (c *containerLXC) insertUnixDevice(m types.Device) error {
+func (c *containerLXC) insertUnixDevice(prefix string, m types.Device) error {
 	// Check that the container is running
 	if !c.IsRunning() {
 		return fmt.Errorf("Can't insert device into stopped container")
 	}
 
 	// Create the device on the host
-	paths, err := c.createUnixDevice(m)
+	paths, err := c.createUnixDevice(prefix, m)
 	if err != nil {
 		return fmt.Errorf("Failed to setup device: %s", err)
 	}
@@ -5806,7 +6050,7 @@ func (c *containerLXC) insertUnixDevice(m types.Device) error {
 	return nil
 }
 
-func (c *containerLXC) insertUnixDeviceNum(m types.Device, major int, minor int, path string) error {
+func (c *containerLXC) insertUnixDeviceNum(name string, m types.Device, major int, minor int, path string) error {
 	temp := types.Device{}
 	if err := shared.DeepCopy(&m, &temp); err != nil {
 		return err
@@ -5816,24 +6060,15 @@ func (c *containerLXC) insertUnixDeviceNum(m types.Device, major int, minor int,
 	temp["minor"] = fmt.Sprintf("%d", minor)
 	temp["path"] = path
 
-	return c.insertUnixDevice(temp)
+	return c.insertUnixDevice(name, temp)
 }
 
-func (c *containerLXC) removeUnixDevice(m types.Device) error {
+func (c *containerLXC) removeUnixDevice(prefix string, m types.Device, eject bool) error {
 	// Check that the container is running
 	pid := c.InitPID()
 	if pid == -1 {
 		return fmt.Errorf("Can't remove device from stopped container")
 	}
-
-	// Figure out the paths
-	srcPath, exist := m["source"]
-	if !exist {
-		srcPath = m["path"]
-	}
-	relativeSrcPath := strings.TrimPrefix(srcPath, "/")
-	devName := fmt.Sprintf("unix.%s", strings.Replace(relativeSrcPath, "/", "-", -1))
-	devPath := filepath.Join(c.DevicesPath(), devName)
 
 	// Check if we've been passed major and minor numbers already.
 	var tmp int
@@ -5861,6 +6096,15 @@ func (c *containerLXC) removeUnixDevice(m types.Device) error {
 		dType = "b"
 	}
 
+	// Figure out the paths
+	destPath := m["path"]
+	if destPath == "" {
+		destPath = m["source"]
+	}
+	relativeDestPath := strings.TrimPrefix(destPath, "/")
+	devName := fmt.Sprintf("%s.%s", prefix, strings.Replace(relativeDestPath, "/", "-", -1))
+	devPath := filepath.Join(c.DevicesPath(), devName)
+
 	if dType == "" || dMajor < 0 || dMinor < 0 {
 		dType, dMajor, dMinor, err = deviceGetAttributes(devPath)
 		if err != nil {
@@ -5876,19 +6120,13 @@ func (c *containerLXC) removeUnixDevice(m types.Device) error {
 		}
 	}
 
-	// Remove the bind-mount from the container
-	tgtPath, exist := m["path"]
-	if !exist {
-		tgtPath = m["source"]
-	}
-	relativeTgtPath := strings.TrimPrefix(tgtPath, "/")
-	if c.FileExists(relativeTgtPath) == nil {
-		err = c.removeMount(tgtPath)
+	if eject && c.FileExists(relativeDestPath) == nil {
+		err = c.removeMount(destPath)
 		if err != nil {
 			return fmt.Errorf("Error unmounting the device: %s", err)
 		}
 
-		err = c.FileRemove(relativeTgtPath)
+		err = c.FileRemove(relativeDestPath)
 		if err != nil {
 			return fmt.Errorf("Error removing the device: %s", err)
 		}
@@ -5907,7 +6145,7 @@ func (c *containerLXC) removeUnixDevice(m types.Device) error {
 	return nil
 }
 
-func (c *containerLXC) removeUnixDeviceNum(m types.Device, major int, minor int, path string) error {
+func (c *containerLXC) removeUnixDeviceNum(prefix string, m types.Device, major int, minor int, path string) error {
 	pid := c.InitPID()
 	if pid == -1 {
 		return fmt.Errorf("Can't remove device from stopped container")
@@ -5922,13 +6160,240 @@ func (c *containerLXC) removeUnixDeviceNum(m types.Device, major int, minor int,
 	temp["minor"] = fmt.Sprintf("%d", minor)
 	temp["path"] = path
 
-	err := c.removeUnixDevice(temp)
+	err := c.removeUnixDevice(prefix, temp, true)
 	if err != nil {
 		logger.Error("failed to remove device", log.Ctx{"err": err, m["type"]: path, "container": c.Name()})
 		return err
 	}
 
 	c.FileRemove(filepath.Dir(path))
+	return nil
+}
+
+func (c *containerLXC) addInfinibandDevicesPerPort(deviceName string, ifDev *IBF, devices []os.FileInfo, inject bool) error {
+	for _, unixCharDev := range ifDev.PerPortDevices {
+		destPath := fmt.Sprintf("/dev/infiniband/%s", unixCharDev)
+		relDestPath := destPath[1:]
+		devPrefix := fmt.Sprintf("infiniband.unix.%s", deviceName)
+
+		// Unix device
+		dummyDevice := types.Device{
+			"source": destPath,
+		}
+
+		deviceExists := false
+		// only handle infiniband.unix.<device-name>.
+		prefix := fmt.Sprintf("infiniband.unix.")
+		for _, ent := range devices {
+
+			// skip non infiniband.unix.<device-name> devices
+			devName := ent.Name()
+			if !strings.HasPrefix(devName, prefix) {
+				continue
+			}
+
+			// extract the path inside the container
+			idx := strings.LastIndex(devName, ".")
+			if idx == -1 {
+				return fmt.Errorf("Invalid infiniband device name \"%s\"", devName)
+			}
+			rPath := devName[idx+1:]
+			rPath = strings.Replace(rPath, "-", "/", -1)
+			if rPath != relDestPath {
+				continue
+			}
+
+			deviceExists = true
+			break
+		}
+
+		if inject && !deviceExists {
+			err := c.insertUnixDevice(devPrefix, dummyDevice)
+			if err != nil {
+				return err
+			}
+			continue
+		}
+
+		paths, err := c.createUnixDevice(devPrefix, dummyDevice)
+		if err != nil {
+			return err
+		}
+		devPath := paths[0]
+
+		if deviceExists {
+			continue
+		}
+
+		// inform liblxc about the mount
+		err = lxcSetConfigItem(c.c, "lxc.mount.entry",
+			fmt.Sprintf("%s %s none bind,create=file",
+				shared.EscapePathFstab(devPath),
+				shared.EscapePathFstab(relDestPath)))
+		if err != nil {
+			return err
+		}
+
+		if c.IsPrivileged() && !c.state.OS.RunningInUserNS && c.state.OS.CGroupDevicesController {
+			// Add the new device cgroup rule
+			dType, dMajor, dMinor, err := deviceGetAttributes(devPath)
+			if err != nil {
+				return err
+			}
+
+			err = lxcSetConfigItem(c.c, "lxc.cgroup.devices.allow", fmt.Sprintf("%s %d:%d rwm", dType, dMajor, dMinor))
+			if err != nil {
+				return fmt.Errorf("Failed to add cgroup rule for device")
+			}
+		}
+	}
+
+	return nil
+}
+
+func (c *containerLXC) addInfinibandDevicesPerFun(deviceName string, ifDev *IBF, inject bool) error {
+	for _, unixCharDev := range ifDev.PerFunDevices {
+		destPath := fmt.Sprintf("/dev/infiniband/%s", unixCharDev)
+		uniqueDevPrefix := fmt.Sprintf("infiniband.unix.%s", deviceName)
+		relativeDestPath := fmt.Sprintf("dev/infiniband/%s", unixCharDev)
+		uniqueDevName := fmt.Sprintf("%s.%s", uniqueDevPrefix, strings.Replace(relativeDestPath, "/", "-", -1))
+		hostDevPath := filepath.Join(c.DevicesPath(), uniqueDevName)
+
+		dummyDevice := types.Device{
+			"source": destPath,
+		}
+
+		if inject {
+			err := c.insertUnixDevice(uniqueDevPrefix, dummyDevice)
+			if err != nil {
+				return err
+			}
+			continue
+		}
+
+		// inform liblxc about the mount
+		err := lxcSetConfigItem(c.c, "lxc.mount.entry", fmt.Sprintf("%s %s none bind,create=file", hostDevPath, relativeDestPath))
+		if err != nil {
+			return err
+		}
+
+		paths, err := c.createUnixDevice(uniqueDevPrefix, dummyDevice)
+		if err != nil {
+			return err
+		}
+		devPath := paths[0]
+		if c.IsPrivileged() && !c.state.OS.RunningInUserNS && c.state.OS.CGroupDevicesController {
+			// Add the new device cgroup rule
+			dType, dMajor, dMinor, err := deviceGetAttributes(devPath)
+			if err != nil {
+				return err
+			}
+
+			err = lxcSetConfigItem(c.c, "lxc.cgroup.devices.allow", fmt.Sprintf("%s %d:%d rwm", dType, dMajor, dMinor))
+			if err != nil {
+				return fmt.Errorf("Failed to add cgroup rule for device")
+			}
+		}
+	}
+
+	return nil
+}
+
+func (c *containerLXC) addInfinibandDevices(deviceName string, ifDev *IBF, inject bool) error {
+	// load all devices
+	dents, err := ioutil.ReadDir(c.DevicesPath())
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+	}
+
+	err = c.addInfinibandDevicesPerPort(deviceName, ifDev, dents, inject)
+	if err != nil {
+		return err
+	}
+
+	return c.addInfinibandDevicesPerFun(deviceName, ifDev, inject)
+}
+
+func (c *containerLXC) removeInfinibandDevices(deviceName string, device types.Device) error {
+	// load all devices
+	dents, err := ioutil.ReadDir(c.DevicesPath())
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+	}
+
+	tmp := []string{}
+	ourInfinibandDevs := []string{}
+	prefix := fmt.Sprintf("infiniband.unix.")
+	ourPrefix := fmt.Sprintf("infiniband.unix.%s.", deviceName)
+	for _, ent := range dents {
+		// skip non infiniband.unix.<device-name> devices
+		devName := ent.Name()
+		if !strings.HasPrefix(devName, prefix) {
+			continue
+		}
+
+		// this is our infiniband device
+		if strings.HasPrefix(devName, ourPrefix) {
+			ourInfinibandDevs = append(ourInfinibandDevs, devName)
+			continue
+		}
+
+		// this someone else's infiniband device
+		tmp = append(tmp, devName)
+	}
+
+	residualInfinibandDevs := []string{}
+	for _, peerDevName := range tmp {
+		idx := strings.LastIndex(peerDevName, ".")
+		if idx == -1 {
+			return fmt.Errorf("Invalid infiniband device name \"%s\"", peerDevName)
+		}
+		rPeerPath := peerDevName[idx+1:]
+		rPeerPath = strings.Replace(rPeerPath, "-", "/", -1)
+		absPeerPath := fmt.Sprintf("/%s", rPeerPath)
+		residualInfinibandDevs = append(residualInfinibandDevs, absPeerPath)
+	}
+
+	ourName := fmt.Sprintf("infiniband.unix.%s", deviceName)
+	for _, devName := range ourInfinibandDevs {
+		idx := strings.LastIndex(devName, ".")
+		if idx == -1 {
+			return fmt.Errorf("Invalid infiniband device name \"%s\"", devName)
+		}
+		rPath := devName[idx+1:]
+		rPath = strings.Replace(rPath, "-", "/", -1)
+		absPath := fmt.Sprintf("/%s", rPath)
+
+		dummyDevice := types.Device{
+			"path": absPath,
+		}
+
+		if len(residualInfinibandDevs) == 0 {
+			err := c.removeUnixDevice(ourName, dummyDevice, true)
+			if err != nil {
+				return err
+			}
+			continue
+		}
+
+		eject := true
+		for _, peerDevPath := range residualInfinibandDevs {
+			if peerDevPath == absPath {
+				eject = false
+				break
+			}
+		}
+
+		err := c.removeUnixDevice(ourName, dummyDevice, eject)
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -5947,7 +6412,7 @@ func (c *containerLXC) removeUnixDevices() error {
 	// Go through all the unix devices
 	for _, f := range dents {
 		// Skip non-Unix devices
-		if !strings.HasPrefix(f.Name(), "unix.") {
+		if !strings.HasPrefix(f.Name(), "unix.") && !strings.HasPrefix(f.Name(), "infiniband.unix.") {
 			continue
 		}
 
@@ -6137,21 +6602,23 @@ func (c *containerLXC) fillSriovNetworkDevice(name string, m types.Device, reser
 			return nil, err
 		}
 
-		if len(ents) != 1 {
-			continue
-		}
+		for _, ent := range ents {
+			// another nic device entry called dibs
+			if shared.StringInSlice(ent.Name(), reserved) {
+				continue
+			}
 
-		// another nic device entry called dibs
-		if shared.StringInSlice(ents[0].Name(), reserved) {
-			continue
+			nicName = ent.Name()
+			break
 		}
 
 		// found a free one
-		nicName = ents[0].Name()
-		break
+		if nicName != "" {
+			break
+		}
 	}
 
-	if nicName == "" {
+	if nicName == "" && m["type"] != "infiniband" {
 		if sriovNum == sriovTotal {
 			return nil, fmt.Errorf("All virtual functions of sriov device '%s' seem to be in use", m["parent"])
 		}
@@ -6248,10 +6715,16 @@ func (c *containerLXC) fillNetworkDevice(name string, m types.Device) (types.Dev
 			}
 		}
 
-		// Find a free ethX device
 		i := 0
+		name := ""
 		for {
-			name := fmt.Sprintf("eth%d", i)
+			if m["type"] == "infiniband" {
+				name = fmt.Sprintf("ib%d", i)
+			} else {
+				name = fmt.Sprintf("eth%d", i)
+			}
+
+			// Find a free device name
 			if !shared.StringInSlice(name, devNames) {
 				return name, nil
 			}
@@ -6281,7 +6754,7 @@ func (c *containerLXC) fillNetworkDevice(name string, m types.Device) (types.Dev
 	}
 
 	// Fill in the MAC address
-	if m["nictype"] != "physical" && m["hwaddr"] == "" {
+	if m["nictype"] != "physical" && m["hwaddr"] == "" && m["type"] != "infiniband" {
 		configKey := fmt.Sprintf("volatile.%s.hwaddr", name)
 		volatileHwaddr := c.localConfig[configKey]
 		if volatileHwaddr == "" {
@@ -6417,60 +6890,54 @@ func (c *containerLXC) removeNetworkFilters() error {
 	return nil
 }
 
-func (c *containerLXC) insertNetworkDevice(name string, m types.Device) error {
+func (c *containerLXC) insertNetworkDevice(name string, m types.Device) (types.Device, error) {
 	// Load the go-lxc struct
-	err := c.initLXC()
+	err := c.initLXC(false)
 	if err != nil {
-		return nil
+		return m, nil
 	}
 
 	// Fill in some fields from volatile
 	m, err = c.fillNetworkDevice(name, m)
 	if err != nil {
-		return nil
+		return m, nil
 	}
 
 	if m["parent"] != "" && !shared.PathExists(fmt.Sprintf("/sys/class/net/%s", m["parent"])) {
-		return fmt.Errorf("Parent device '%s' doesn't exist", m["parent"])
+		return nil, fmt.Errorf("Parent device '%s' doesn't exist", m["parent"])
 	}
 
 	// Return empty list if not running
 	if !c.IsRunning() {
-		return fmt.Errorf("Can't insert device into stopped container")
+		return nil, fmt.Errorf("Can't insert device into stopped container")
 	}
 
 	// Fill in some fields from volatile
 	m, err = c.fillSriovNetworkDevice(name, m, []string{})
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
 	// Create the interface
 	devName, err := c.createNetworkDevice(name, m)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Add the interface to the container
 	err = c.c.AttachInterface(devName, m["name"])
 	if err != nil {
-		return fmt.Errorf("Failed to attach interface: %s: %s", devName, err)
+		return nil, fmt.Errorf("Failed to attach interface: %s: %s", devName, err)
 	}
 
-	return nil
+	return m, nil
 }
 
 func (c *containerLXC) removeNetworkDevice(name string, m types.Device) error {
-	// Load the go-lxc struct
-	err := c.initLXC()
-	if err != nil {
-		return nil
-	}
-
 	// Fill in some fields from volatile
-	m, err = c.fillNetworkDevice(name, m)
+	m, err := c.fillNetworkDevice(name, m)
 	if err != nil {
-		return nil
+		return err
 	}
 
 	// Return empty list if not running
@@ -6518,11 +6985,11 @@ func (c *containerLXC) removeNetworkDevice(name string, m types.Device) error {
 
 // Disk device handling
 func (c *containerLXC) createDiskDevice(name string, m types.Device) (string, error) {
-	// Prepare all the paths
-	srcPath := shared.HostPath(m["source"])
-	tgtPath := strings.TrimPrefix(m["path"], "/")
-	devName := fmt.Sprintf("disk.%s", strings.Replace(tgtPath, "/", "-", -1))
+	// source paths
+	relativeDestPath := strings.TrimPrefix(m["path"], "/")
+	devName := fmt.Sprintf("disk.%s.%s", name, strings.Replace(relativeDestPath, "/", "-", -1))
 	devPath := filepath.Join(c.DevicesPath(), devName)
+	srcPath := shared.HostPath(m["source"])
 
 	// Check if read-only
 	isOptional := shared.IsTrue(m["optional"])
@@ -6664,8 +7131,8 @@ func (c *containerLXC) insertDiskDevice(name string, m types.Device) error {
 	}
 
 	// Bind-mount it into the container
-	tgtPath := strings.TrimSuffix(m["path"], "/")
-	err = c.insertMount(devPath, tgtPath, "none", flags)
+	destPath := strings.TrimSuffix(m["path"], "/")
+	err = c.insertMount(devPath, destPath, "none", flags)
 	if err != nil {
 		return fmt.Errorf("Failed to add mount for device: %s", err)
 	}
@@ -6696,7 +7163,16 @@ func (c *containerLXC) addDiskDevices(devices map[string]types.Device, handler f
 
 	sort.Sort(ordered)
 	for _, d := range ordered {
-		err := handler(d["path"], d)
+		key := ""
+		for k, dd := range devices {
+			key = ""
+			if reflect.DeepEqual(d, dd) {
+				key = k
+				break
+			}
+		}
+
+		err := handler(key, d)
 		if err != nil {
 			return err
 		}
@@ -6713,25 +7189,23 @@ func (c *containerLXC) removeDiskDevice(name string, m types.Device) error {
 	}
 
 	// Figure out the paths
-	tgtPath := strings.TrimPrefix(m["path"], "/")
-	devName := fmt.Sprintf("disk.%s", strings.Replace(tgtPath, "/", "-", -1))
+	destPath := strings.TrimPrefix(m["path"], "/")
+	devName := fmt.Sprintf("disk.%s.%s", name, strings.Replace(destPath, "/", "-", -1))
 	devPath := filepath.Join(c.DevicesPath(), devName)
 
-	// The dsk device doesn't exist and cannot be mounted.
+	// The disk device doesn't exist.
 	if !shared.PathExists(devPath) {
 		return nil
 	}
 
 	// Remove the bind-mount from the container
-	if c.FileExists(tgtPath) == nil {
-		err := c.removeMount(m["path"])
-		if err != nil {
-			return fmt.Errorf("Error unmounting the device: %s", err)
-		}
+	err := c.removeMount(m["path"])
+	if err != nil {
+		return fmt.Errorf("Error unmounting the device: %s", err)
 	}
 
 	// Unmount the host side
-	err := syscall.Unmount(devPath, syscall.MNT_DETACH)
+	err = syscall.Unmount(devPath, syscall.MNT_DETACH)
 	if err != nil {
 		return err
 	}
@@ -6759,7 +7233,7 @@ func (c *containerLXC) removeDiskDevices() error {
 
 	// Go through all the unix devices
 	for _, f := range dents {
-		// Skip non-Unix devices
+		// Skip non-disk devices
 		if !strings.HasPrefix(f.Name(), "disk.") {
 			continue
 		}
@@ -6997,7 +7471,7 @@ func (c *containerLXC) getHostInterface(name string) string {
 
 	for _, k := range c.expandedDevices.DeviceNames() {
 		dev := c.expandedDevices[k]
-		if dev["type"] != "nic" {
+		if dev["type"] != "nic" && dev["type"] != "infiniband" {
 			continue
 		}
 
@@ -7022,19 +7496,13 @@ func (c *containerLXC) setNetworkLimits(name string, m types.Device) error {
 		return fmt.Errorf("Network limits are only supported on bridged and p2p interfaces")
 	}
 
-	// Load the go-lxc struct
-	err := c.initLXC()
-	if err != nil {
-		return err
-	}
-
 	// Check that the container is running
 	if !c.IsRunning() {
 		return fmt.Errorf("Can't set network limits on stopped container")
 	}
 
 	// Fill in some fields from volatile
-	m, err = c.fillNetworkDevice(name, m)
+	m, err := c.fillNetworkDevice(name, m)
 	if err != nil {
 		return nil
 	}
@@ -7179,7 +7647,7 @@ func (c *containerLXC) IdmapSet() (*idmap.IdmapSet, error) {
 
 func (c *containerLXC) InitPID() int {
 	// Load the go-lxc struct
-	err := c.initLXC()
+	err := c.initLXC(false)
 	if err != nil {
 		return -1
 	}
@@ -7244,12 +7712,6 @@ func (c *containerLXC) Profiles() []string {
 }
 
 func (c *containerLXC) State() string {
-	// Load the go-lxc struct
-	err := c.initLXC()
-	if err != nil {
-		return "Broken"
-	}
-
 	state, err := c.getLxcState()
 	if err != nil {
 		return api.Error.String()
@@ -7272,6 +7734,10 @@ func (c *containerLXC) LogPath() string {
 
 func (c *containerLXC) LogFilePath() string {
 	return filepath.Join(c.LogPath(), "lxc.log")
+}
+
+func (c *containerLXC) ConsoleBufferLogPath() string {
+	return filepath.Join(c.LogPath(), "console.log")
 }
 
 func (c *containerLXC) RootfsPath() string {
@@ -7301,4 +7767,146 @@ func (c *containerLXC) StoragePool() (string, error) {
 	}
 
 	return poolName, nil
+}
+
+func (c *containerLXC) maasInterfaces() ([]maas.ContainerInterface, error) {
+	interfaces := []maas.ContainerInterface{}
+	for k, m := range c.expandedDevices {
+		if m["type"] != "nic" {
+			continue
+		}
+
+		if m["maas.subnet.ipv4"] == "" && m["maas.subnet.ipv6"] == "" {
+			continue
+		}
+
+		m, err := c.fillNetworkDevice(k, m)
+		if err != nil {
+			return nil, err
+		}
+
+		subnets := []maas.ContainerInterfaceSubnet{}
+
+		// IPv4
+		if m["maas.subnet.ipv4"] != "" {
+			subnet := maas.ContainerInterfaceSubnet{
+				Name:    m["maas.subnet.ipv4"],
+				Address: m["ipv4.address"],
+			}
+
+			subnets = append(subnets, subnet)
+		}
+
+		// IPv6
+		if m["maas.subnet.ipv6"] != "" {
+			subnet := maas.ContainerInterfaceSubnet{
+				Name:    m["maas.subnet.ipv6"],
+				Address: m["ipv6.address"],
+			}
+
+			subnets = append(subnets, subnet)
+		}
+
+		iface := maas.ContainerInterface{
+			Name:       m["name"],
+			MACAddress: m["hwaddr"],
+			Subnets:    subnets,
+		}
+
+		interfaces = append(interfaces, iface)
+	}
+
+	return interfaces, nil
+}
+
+func (c *containerLXC) maasConnected() bool {
+	for _, m := range c.expandedDevices {
+		if m["type"] != "nic" {
+			continue
+		}
+
+		if m["maas.subnet.ipv4"] != "" || m["maas.subnet.ipv6"] != "" {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (c *containerLXC) maasUpdate(force bool) error {
+	if c.state.MAAS == nil {
+		return nil
+	}
+
+	if !c.maasConnected() {
+		if force {
+			exists, err := c.state.MAAS.DefinedContainer(c.name)
+			if err != nil {
+				return err
+			}
+
+			if exists {
+				return c.state.MAAS.DeleteContainer(c.name)
+			}
+		}
+		return nil
+	}
+
+	interfaces, err := c.maasInterfaces()
+	if err != nil {
+		return err
+	}
+
+	exists, err := c.state.MAAS.DefinedContainer(c.name)
+	if err != nil {
+		return err
+	}
+
+	if exists {
+		return c.state.MAAS.UpdateContainer(c.name, interfaces)
+	}
+
+	return c.state.MAAS.CreateContainer(c.name, interfaces)
+}
+
+func (c *containerLXC) maasRename(newName string) error {
+	if c.state.MAAS == nil {
+		return nil
+	}
+
+	if !c.maasConnected() {
+		return nil
+	}
+
+	exists, err := c.state.MAAS.DefinedContainer(c.name)
+	if err != nil {
+		return err
+	}
+
+	if !exists {
+		return c.maasUpdate(false)
+	}
+
+	return c.state.MAAS.RenameContainer(c.name, newName)
+}
+
+func (c *containerLXC) maasDelete() error {
+	if c.state.MAAS == nil {
+		return nil
+	}
+
+	if !c.maasConnected() {
+		return nil
+	}
+
+	exists, err := c.state.MAAS.DefinedContainer(c.name)
+	if err != nil {
+		return err
+	}
+
+	if !exists {
+		return nil
+	}
+
+	return c.state.MAAS.DeleteContainer(c.name)
 }

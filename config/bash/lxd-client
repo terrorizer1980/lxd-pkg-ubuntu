@@ -69,16 +69,20 @@ _have lxc && {
       core.https_allowed_origin core.macaroon.endpoint core.proxy_https \
       core.proxy_http core.proxy_ignore_hosts core.trust_password \
       images.auto_update_cached images.auto_update_interval \
-      images.compression_algorithm images.remote_cache_expiry"
+      images.compression_algorithm images.remote_cache_expiry \
+      maas.api.url maas.api.key maas.machine"
 
     container_keys="boot.autostart boot.autostart.delay \
-      boot.autostart.priority boot.host_shutdown_timeout environment. \
+      boot.autostart.priority boot.stop.priority \
+      boot.host_shutdown_timeout environment. \
       limits.cpu limits.cpu.allowance limits.cpu.priority \
       limits.disk.priority limits.memory limits.memory.enforce \
       limits.memory.swap limits.memory.swap.priority limits.network.priority \
-      limits.processes linux.kernel_modules raw.apparmor raw.idmap raw.lxc \
+      limits.processes linux.kernel_modules migration.incremental.memory \
+      migration.incremental.memory.goal \
+      migration.incremental.memory.iterations raw.apparmor raw.idmap raw.lxc \
       raw.seccomp security.idmap.base security.idmap.isolated \
-      security.idmap.size security.nesting security.privileged \
+      security.idmap.size security.devlxd security.nesting security.privileged \
       security.syscalls.blacklist security.syscalls.blacklist_compat \
       security.syscalls.blacklist_default \
       volatile.apply_quota volatile.apply_template volatile.base_image \
@@ -230,6 +234,9 @@ _have lxc && {
               "device")
                 COMPREPLY=( $(compgen -W "list show remove get set unset add" -- $cur) )
                 ;;
+              "add"|"assign"|"remove")
+                _lxd_names
+                ;;
               *)
                 _lxd_profiles
                 ;;
@@ -237,7 +244,7 @@ _have lxc && {
             ;;
           4)
             case ${no_dashargs[2]} in
-              "device")
+              "device"|"add"|"assign"|"remove")
                 _lxd_profiles
                 ;;
               *)

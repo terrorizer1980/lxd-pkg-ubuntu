@@ -86,7 +86,8 @@ func (s *storageZfs) StoragePoolCheck() error {
 	}
 
 	poolName := s.getOnDiskPoolName()
-	exists := zfsFilesystemEntityExists(poolName, "")
+	purePoolName := strings.Split(poolName, "/")[0]
+	exists := zfsFilesystemEntityExists(purePoolName, "")
 	if exists {
 		return nil
 	}
@@ -99,7 +100,6 @@ func (s *storageZfs) StoragePoolCheck() error {
 		disksPath := shared.VarPath("disks")
 		msg, err = shared.RunCommand("zpool", "import", "-d", disksPath, poolName)
 	} else {
-		purePoolName := strings.Split(poolName, "/")[0]
 		msg, err = shared.RunCommand("zpool", "import", purePoolName)
 	}
 
@@ -236,6 +236,18 @@ func (s *storageZfs) zfsPoolCreate() error {
 			}
 
 			if err := zfsPoolVolumeSet(vdev, "", "mountpoint", "none"); err != nil {
+				return err
+			}
+
+			if err := zfsPoolVolumeSet(vdev, "", "setuid", "on"); err != nil {
+				return err
+			}
+
+			if err := zfsPoolVolumeSet(vdev, "", "exec", "on"); err != nil {
+				return err
+			}
+
+			if err := zfsPoolVolumeSet(vdev, "", "devices", "on"); err != nil {
 				return err
 			}
 		}

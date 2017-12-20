@@ -94,6 +94,7 @@ var KnownContainerConfigKeys = map[string]func(value string) error{
 	"boot.autostart":             IsBool,
 	"boot.autostart.delay":       IsInt64,
 	"boot.autostart.priority":    IsInt64,
+	"boot.stop.priority":         IsInt64,
 	"boot.host_shutdown_timeout": IsInt64,
 
 	"limits.cpu": IsAny,
@@ -167,8 +168,13 @@ var KnownContainerConfigKeys = map[string]func(value string) error{
 
 	"linux.kernel_modules": IsAny,
 
+	"migration.incremental.memory":            IsBool,
+	"migration.incremental.memory.iterations": IsUint32,
+	"migration.incremental.memory.goal":       IsUint32,
+
 	"security.nesting":    IsBool,
 	"security.privileged": IsBool,
+	"security.devlxd":     IsBool,
 
 	"security.idmap.base":     IsUint32,
 	"security.idmap.isolated": IsBool,

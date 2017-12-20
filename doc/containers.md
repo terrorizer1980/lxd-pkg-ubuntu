@@ -22,39 +22,44 @@ currently supported:
 
 The currently supported keys are:
 
-Key                                  | Type      | Default       | Live update   | API extension                        | Description
-:--                                  | :---      | :------       | :----------   | :------------                        | :----------
-boot.autostart                       | boolean   | -             | n/a           | -                                    | Always start the container when LXD starts (if not set, restore last state)
-boot.autostart.delay                 | integer   | 0             | n/a           | -                                    | Number of seconds to wait after the container started before starting the next one
-boot.autostart.priority              | integer   | 0             | n/a           | -                                    | What order to start the containers in (starting with highest)
-boot.host\_shutdown\_timeout         | integer   | 30            | yes           | container\_host\_shutdown\_timeout   | Seconds to wait for container to shutdown before it is force stopped
-environment.\*                       | string    | -             | yes (exec)    | -                                    | key/value environment variables to export to the container and set on exec
-limits.cpu                           | string    | - (all)       | yes           | -                                    | Number or range of CPUs to expose to the container
-limits.cpu.allowance                 | string    | 100%          | yes           | -                                    | How much of the CPU can be used. Can be a percentage (e.g. 50%) for a soft limit or hard a chunk of time (25ms/100ms)
-limits.cpu.priority                  | integer   | 10 (maximum)  | yes           | -                                    | CPU scheduling priority compared to other containers sharing the same CPUs (overcommit) (integer between 0 and 10)
-limits.disk.priority                 | integer   | 5 (medium)    | yes           | -                                    | When under load, how much priority to give to the container's I/O requests (integer between 0 and 10)
-limits.kernel.\*                     | string    | -             | no            | kernel\_limits                       | This limits kernel resources per container (e.g. number of open files)
-limits.memory                        | string    | - (all)       | yes           | -                                    | Percentage of the host's memory or fixed value in bytes (supports kB, MB, GB, TB, PB and EB suffixes)
-limits.memory.enforce                | string    | hard          | yes           | -                                    | If hard, container can't exceed its memory limit. If soft, the container can exceed its memory limit when extra host memory is available.
-limits.memory.swap                   | boolean   | true          | yes           | -                                    | Whether to allow some of the container's memory to be swapped out to disk
-limits.memory.swap.priority          | integer   | 10 (maximum)  | yes           | -                                    | The higher this is set, the least likely the container is to be swapped to disk (integer between 0 and 10)
-limits.network.priority              | integer   | 0 (minimum)   | yes           | -                                    | When under load, how much priority to give to the container's network requests (integer between 0 and 10)
-limits.processes                     | integer   | - (max)       | yes           | -                                    | Maximum number of processes that can run in the container
-linux.kernel\_modules                | string    | -             | yes           | -                                    | Comma separated list of kernel modules to load before starting the container
-raw.apparmor                         | blob      | -             | yes           | -                                    | Apparmor profile entries to be appended to the generated profile
-raw.idmap                            | blob      | -             | no            | id\_map                              | Raw idmap configuration (e.g. "both 1000 1000")
-raw.lxc                              | blob      | -             | no            | -                                    | Raw LXC configuration to be appended to the generated one
-raw.seccomp                          | blob      | -             | no            | container\_syscall\_filtering        | Raw Seccomp configuration
-security.idmap.base                  | integer   | -             | no            | id\_map\_base                        | The base host ID to use for the allocation (overrides auto-detection)
-security.idmap.isolated              | boolean   | false         | no            | id\_map                              | Use an idmap for this container that is unique among containers with isolated set.
-security.idmap.size                  | integer   | -             | no            | id\_map                              | The size of the idmap to use
-security.nesting                     | boolean   | false         | yes           | -                                    | Support running lxd (nested) inside the container
-security.privileged                  | boolean   | false         | no            | -                                    | Runs the container in privileged mode
-security.syscalls.blacklist          | string    | -             | no            | container\_syscall\_filtering        | A '\n' separated list of syscalls to blacklist
-security.syscalls.blacklist\_compat  | boolean   | false         | no            | container\_syscall\_filtering        | On x86\_64 this enables blocking of compat\_\* syscalls, it is a no-op on other arches
-security.syscalls.blacklist\_default | boolean   | true          | no            | container\_syscall\_filtering        | Enables the default syscall blacklist
-security.syscalls.whitelist          | string    | -             | no            | container\_syscall\_filtering        | A '\n' separated list of syscalls to whitelist (mutually exclusive with security.syscalls.blacklist\*)
-user.\*                              | string    | -             | n/a           | -                                    | Free form user key/value storage (can be used in search)
+Key                                     | Type      | Default       | Live update   | API extension                        | Description
+:--                                     | :---      | :------       | :----------   | :------------                        | :----------
+boot.autostart                          | boolean   | -             | n/a           | -                                    | Always start the container when LXD starts (if not set, restore last state)
+boot.autostart.delay                    | integer   | 0             | n/a           | -                                    | Number of seconds to wait after the container started before starting the next one
+boot.autostart.priority                 | integer   | 0             | n/a           | -                                    | What order to start the containers in (starting with highest)
+boot.host\_shutdown\_timeout            | integer   | 30            | yes           | container\_host\_shutdown\_timeout   | Seconds to wait for container to shutdown before it is force stopped
+boot.stop.priority                      | integer   | 0             | n/a           | container\_stop\_priority            | What order to shutdown the containers (starting with highest)
+environment.\*                          | string    | -             | yes (exec)    | -                                    | key/value environment variables to export to the container and set on exec
+limits.cpu                              | string    | - (all)       | yes           | -                                    | Number or range of CPUs to expose to the container
+limits.cpu.allowance                    | string    | 100%          | yes           | -                                    | How much of the CPU can be used. Can be a percentage (e.g. 50%) for a soft limit or hard a chunk of time (25ms/100ms)
+limits.cpu.priority                     | integer   | 10 (maximum)  | yes           | -                                    | CPU scheduling priority compared to other containers sharing the same CPUs (overcommit) (integer between 0 and 10)
+limits.disk.priority                    | integer   | 5 (medium)    | yes           | -                                    | When under load, how much priority to give to the container's I/O requests (integer between 0 and 10)
+limits.kernel.\*                        | string    | -             | no            | kernel\_limits                       | This limits kernel resources per container (e.g. number of open files)
+limits.memory                           | string    | - (all)       | yes           | -                                    | Percentage of the host's memory or fixed value in bytes (supports kB, MB, GB, TB, PB and EB suffixes)
+limits.memory.enforce                   | string    | hard          | yes           | -                                    | If hard, container can't exceed its memory limit. If soft, the container can exceed its memory limit when extra host memory is available.
+limits.memory.swap                      | boolean   | true          | yes           | -                                    | Whether to allow some of the container's memory to be swapped out to disk
+limits.memory.swap.priority             | integer   | 10 (maximum)  | yes           | -                                    | The higher this is set, the least likely the container is to be swapped to disk (integer between 0 and 10)
+limits.network.priority                 | integer   | 0 (minimum)   | yes           | -                                    | When under load, how much priority to give to the container's network requests (integer between 0 and 10)
+limits.processes                        | integer   | - (max)       | yes           | -                                    | Maximum number of processes that can run in the container
+linux.kernel\_modules                   | string    | -             | yes           | -                                    | Comma separated list of kernel modules to load before starting the container
+migration.incremental.memory            | boolean   | false         | yes           | migration\_pre\_copy                 | Incremental memory transfer of the container's memory to reduce downtime.
+migration.incremental.memory.goal       | integer   | 70            | yes           | migration\_pre\_copy                 | Percentage of memory to have in sync before stopping the container.
+migration.incremental.memory.iterations | integer   | 10            | yes           | migration\_pre\_copy                 | Maximum number of transfer operations to go through before stopping the container.
+raw.apparmor                            | blob      | -             | yes           | -                                    | Apparmor profile entries to be appended to the generated profile
+raw.idmap                               | blob      | -             | no            | id\_map                              | Raw idmap configuration (e.g. "both 1000 1000")
+raw.lxc                                 | blob      | -             | no            | -                                    | Raw LXC configuration to be appended to the generated one
+raw.seccomp                             | blob      | -             | no            | container\_syscall\_filtering        | Raw Seccomp configuration
+security.devlxd                         | boolean   | true          | no            | restrict\_devlxd                     | Controls the presence of /dev/lxd in the container
+security.idmap.base                     | integer   | -             | no            | id\_map\_base                        | The base host ID to use for the allocation (overrides auto-detection)
+security.idmap.isolated                 | boolean   | false         | no            | id\_map                              | Use an idmap for this container that is unique among containers with isolated set.
+security.idmap.size                     | integer   | -             | no            | id\_map                              | The size of the idmap to use
+security.nesting                        | boolean   | false         | yes           | -                                    | Support running lxd (nested) inside the container
+security.privileged                     | boolean   | false         | no            | -                                    | Runs the container in privileged mode
+security.syscalls.blacklist             | string    | -             | no            | container\_syscall\_filtering        | A '\n' separated list of syscalls to blacklist
+security.syscalls.blacklist\_compat     | boolean   | false         | no            | container\_syscall\_filtering        | On x86\_64 this enables blocking of compat\_\* syscalls, it is a no-op on other arches
+security.syscalls.blacklist\_default    | boolean   | true          | no            | container\_syscall\_filtering        | Enables the default syscall blacklist
+security.syscalls.whitelist             | string    | -             | no            | container\_syscall\_filtering        | A '\n' separated list of syscalls to whitelist (mutually exclusive with security.syscalls.blacklist\*)
+user.\*                                 | string    | -             | n/a           | -                                    | Free form user key/value storage (can be used in search)
 
 The following volatile keys are currently internally used by LXD:
 
@@ -154,6 +159,7 @@ ID (database)   | Name                              | Description
 4               | [unix-block](#type-unix-block)    | Unix block device
 5               | [usb](#type-usb)                  | USB device
 6               | [gpu](#type-gpu)                  | GPU device
+7               | [infiniband](#type-infiniband)    | Infiniband device
 
 ### Type: none
 A none type device doesn't have any property and doesn't create anything inside the container.
@@ -189,6 +195,8 @@ vlan                    | integer   | -                 | no        | macvlan, p
 ipv4.address            | string    | -                 | no        | bridged                           | network                                | An IPv4 address to assign to the container through DHCP
 ipv6.address            | string    | -                 | no        | bridged                           | network                                | An IPv6 address to assign to the container through DHCP
 security.mac\_filtering | boolean   | false             | no        | bridged                           | network                                | Prevent the container from spoofing another's MAC address
+maas.subnet.ipv4        | string    | -                 | no        | bridged, macvlan, physical, sriov | maas\_network                          | MAAS IPv4 subnet to register the container in
+maas.subnet.ipv6        | string    | -                 | no        | bridged, macvlan, physical, sriov | maas\_network                          | MAAS IPv6 subnet to register the container in
 
 #### bridged or macvlan for connection to physical network
 The `bridged` and `macvlan` interface types can both be used to connect
@@ -231,6 +239,56 @@ lxc config device add <container> <device-name> nic nictype=sriov parent=<sriov-
 To tell LXD to use a specific unused VF add the `host_name` property and pass
 it the name of the enabled VF.
 
+
+#### MAAS integration
+If you're using MAAS to manage the physical network under your LXD host
+and want to attach your containers directly to a MAAS managed network,
+LXD can be configured to interact with MAAS so that it can track your
+containers.
+
+At the daemon level, you must configure `maas.api.url` and
+`maas.api.key`, then set the `maas.subnet.ipv4` and/or
+`maas.subnet.ipv6` keys on the container or profile's `nic` entry.
+
+This will have LXD register all your containers with MAAS, giving them
+proper DHCP leases and DNS records.
+
+If you set the `ipv4.address` or `ipv6.address` keys on the nic, then
+those will be registered as static assignments in MAAS too.
+
+### Type: infiniband
+LXD supports two different kind of network types for infiniband devices:
+
+ - `physical`: Straight physical device passthrough from the host. The targeted device will vanish from the host and appear in the container.
+ - `sriov`: Passes a virtual function of an SR-IOV enabled physical network device into the container.
+
+Different network interface types have different additional properties, the current list is:
+
+Key                     | Type      | Default           | Required  | Used by         | API extension | Description
+:--                     | :--       | :--               | :--       | :--             | :--           | :--
+nictype                 | string    | -                 | yes       | all             | infiniband    | The device type, one of "physical", or "sriov"
+name                    | string    | kernel assigned   | no        | all             | infiniband    | The name of the interface inside the container
+hwaddr                  | string    | randomly assigned | no        | all             | infiniband    | The MAC address of the new interface
+mtu                     | integer   | parent MTU        | no        | all             | infiniband    | The MTU of the new interface
+parent                  | string    | -                 | yes       | physical, sriov | infiniband    | The name of the host device or bridge
+
+To create a `physical` `infiniband` device use:
+
+```
+lxc config device add <container> <device-name> infiniband nictype=physical parent=<device>
+```
+
+#### SR-IOV with infiniband devices
+Infiniband devices do support SR-IOV but in contrast to other SR-IOV enabled
+devices infiniband does not support dynamic device creation in SR-IOV mode.
+This means users need to pre-configure the number of virtual functions by
+configuring the corresponding kernel module.
+
+To create a `sriov` `infiniband` device use:
+
+```
+lxc config device add <container> <device-name> infiniband nictype=sriov parent=<sriov-enabled-device>
+```
 
 ### Type: disk
 Disk entries are essentially mountpoints inside the container. They can
@@ -356,18 +414,18 @@ supported limit on their system. Some common limits are:
 
 Key                      | Resource          | Description
 :--                      | :---              | :----------
-limits.kernel.as         | RLIMIT_AS         | Maximum size of the process's virtual memory
-limits.kernel.core       | RLIMIT_CORE       | Maximum size of the process's coredump file
-limits.kernel.cpu        | RLIMIT_CPU        | Limit in seconds on the amount of cpu time the process can consume
-limits.kernel.data       | RLIMIT_DATA       | Maximum size of the process's data segment
-limits.kernel.fsize      | RLIMIT_FSIZE      | Maximum size of files the process may create
-limits.kernel.locks      | RLIMIT_LOCKS      | Limit on the number of file locks that this process may establish
-limits.kernel.memlock    | RLIMIT_MEMLOCK    | Limit on the number of bytes of memory that the process may lock in RAM
-limits.kernel.nice       | RLIMIT_NICE       | Maximum value to which the process's nice value can be raised
-limits.kernel.nofile     | RLIMIT_NOFILE     | Maximum number of open files for the process
-limits.kernel.nproc      | RLIMIT_NPROC      | Maximum number of processes that can be created for the user of the calling process
-limits.kernel.rtprio     | RLIMIT_RTPRIO     | Maximum value on the real-time-priority that maybe set for this process
-limits.kernel.sigpending | RLIMIT_SIGPENDING | Maximum number of signals that maybe queued for the user of the calling process
+limits.kernel.as         | RLIMIT\_AS         | Maximum size of the process's virtual memory
+limits.kernel.core       | RLIMIT\_CORE       | Maximum size of the process's coredump file
+limits.kernel.cpu        | RLIMIT\_CPU        | Limit in seconds on the amount of cpu time the process can consume
+limits.kernel.data       | RLIMIT\_DATA       | Maximum size of the process's data segment
+limits.kernel.fsize      | RLIMIT\_FSIZE      | Maximum size of files the process may create
+limits.kernel.locks      | RLIMIT\_LOCKS      | Limit on the number of file locks that this process may establish
+limits.kernel.memlock    | RLIMIT\_MEMLOCK    | Limit on the number of bytes of memory that the process may lock in RAM
+limits.kernel.nice       | RLIMIT\_NICE       | Maximum value to which the process's nice value can be raised
+limits.kernel.nofile     | RLIMIT\_NOFILE     | Maximum number of open files for the process
+limits.kernel.nproc      | RLIMIT\_NPROC      | Maximum number of processes that can be created for the user of the calling process
+limits.kernel.rtprio     | RLIMIT\_RTPRIO     | Maximum value on the real-time-priority that maybe set for this process
+limits.kernel.sigpending | RLIMIT\_SIGPENDING | Maximum number of signals that maybe queued for the user of the calling process
 
 A full list of all available limits can be found in the manpages for the
 `getrlimit(2)`/`setrlimit(2)` system calls. To specify a limit within the
@@ -379,3 +437,19 @@ used as a shortcut to set both soft and hard limit (e.g.
 `limits.kernel.nofile=3000`) to the same value. A resource with no explicitly
 configured limitation will be inherited from the process starting up the
 container. Note that this inheritance is not enforced by LXD but by the kernel.
+
+## Live migration
+LXD supports live migration of containers using [CRIU](http://criu.org). In
+order to optimize the memory transfer for a container LXD can be instructed to
+make use of CRIU's pre-copy features by setting the
+`migration.incremental.memory` property to `true`. This means LXD will request
+CRIU to perform a series of memory dumps for the container. After each dump LXD
+will send the memory dump to the specified remote. In an ideal scenario each
+memory dump will decrease the delta to the previous memory dump thereby
+increasing the percentage of memory that is already synced. When the percentage
+of synced memory is equal to or greater than the threshold specified via
+`migration.incremental.memory.goal` LXD will request CRIU to perform a final
+memory dump and transfer it. If the threshold is not reached after the maximum
+number of allowed iterations specified via
+`migration.incremental.memory.iterations` LXD will request a final memory dump
+from CRIU and migrate the container.

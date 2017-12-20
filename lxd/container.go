@@ -135,6 +135,10 @@ func containerValidDeviceConfigKey(t, k string) bool {
 			return true
 		case "security.mac_filtering":
 			return true
+		case "maas.subnet.ipv4":
+			return true
+		case "maas.subnet.ipv6":
+			return true
 		default:
 			return false
 		}
@@ -195,6 +199,21 @@ func containerValidDeviceConfigKey(t, k string) bool {
 		case "gid":
 			return true
 		case "uid":
+			return true
+		default:
+			return false
+		}
+	case "infiniband":
+		switch k {
+		case "hwaddr":
+			return true
+		case "mtu":
+			return true
+		case "name":
+			return true
+		case "nictype":
+			return true
+		case "parent":
 			return true
 		default:
 			return false
@@ -290,7 +309,7 @@ func containerValidDevices(db *db.Node, devices types.Devices, profile bool, exp
 			return fmt.Errorf("Missing device type for device '%s'", name)
 		}
 
-		if !shared.StringInSlice(m["type"], []string{"none", "nic", "disk", "unix-char", "unix-block", "usb", "gpu"}) {
+		if !shared.StringInSlice(m["type"], []string{"disk", "gpu", "infiniband", "nic", "none", "unix-block", "unix-char", "usb"}) {
 			return fmt.Errorf("Invalid device type for device '%s'", name)
 		}
 
@@ -310,6 +329,18 @@ func containerValidDevices(db *db.Node, devices types.Devices, profile bool, exp
 			}
 
 			if shared.StringInSlice(m["nictype"], []string{"bridged", "macvlan", "physical", "sriov"}) && m["parent"] == "" {
+				return fmt.Errorf("Missing parent for %s type nic", m["nictype"])
+			}
+		} else if m["type"] == "infiniband" {
+			if m["nictype"] == "" {
+				return fmt.Errorf("Missing nic type")
+			}
+
+			if !shared.StringInSlice(m["nictype"], []string{"physical", "sriov"}) {
+				return fmt.Errorf("Bad nic type: %s", m["nictype"])
+			}
+
+			if m["parent"] == "" {
 				return fmt.Errorf("Missing parent for %s type nic", m["nictype"])
 			}
 		} else if m["type"] == "disk" {
@@ -416,7 +447,7 @@ type container interface {
 	/* actionScript here is a script called action.sh in the stateDir, to
 	 * be passed to CRIU as --action-script
 	 */
-	Migrate(cmd uint, stateDir string, function string, stop bool, actionScript bool) error
+	Migrate(args *CriuMigrationArgs) error
 	Snapshots() ([]container, error)
 
 	// Config handling
@@ -495,6 +526,7 @@ type container interface {
 	TemplatesPath() string
 	StatePath() string
 	LogFilePath() string
+	ConsoleBufferLogPath() string
 	LogPath() string
 
 	StoragePool() (string, error)
@@ -696,7 +728,17 @@ func containerCreateAsSnapshot(s *state.State, args db.ContainerArgs, sourceCont
 		 * after snapshotting will fail.
 		 */
 
-		err = sourceContainer.Migrate(lxc.MIGRATE_DUMP, stateDir, "snapshot", false, false)
+		criuMigrationArgs := CriuMigrationArgs{
+			cmd:          lxc.MIGRATE_DUMP,
+			stateDir:     stateDir,
+			function:     "snapshot",
+			stop:         false,
+			actionScript: false,
+			dumpDir:      "",
+			preDumpDir:   "",
+		}
+
+		err = sourceContainer.Migrate(&criuMigrationArgs)
 		if err != nil {
 			os.RemoveAll(sourceContainer.StatePath())
 			return nil, err

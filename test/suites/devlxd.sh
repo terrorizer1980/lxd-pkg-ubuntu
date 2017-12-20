@@ -7,8 +7,11 @@ test_devlxd() {
   # shellcheck disable=SC2164
   cd -
 
-  lxc launch testimage devlxd
+  lxc launch testimage devlxd -c security.devlxd=false
 
+  ! lxc exec devlxd -- test -S /dev/lxd/sock
+  lxc config unset devlxd security.devlxd
+  lxc exec devlxd -- test -S /dev/lxd/sock
   lxc file push "${TEST_DIR}/devlxd-client" devlxd/bin/
 
   lxc exec devlxd chmod +x /bin/devlxd-client
