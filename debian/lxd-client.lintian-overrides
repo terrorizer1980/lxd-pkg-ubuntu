@@ -1,1 +1,3 @@
 lxd-client: manpage-has-bad-whatis-entry usr/share/man/man1/lxc.*
+# Coming from an external source
+lxd-client: spelling-error-in-binary usr/bin/lxc maching matching
