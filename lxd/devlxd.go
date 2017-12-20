@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"unsafe"
 
 	"github.com/gorilla/mux"
@@ -49,10 +50,10 @@ type devLxdHandler struct {
 	 * server side right now either, I went the simple route to avoid
 	 * needless noise.
 	 */
-	f func(c container, r *http.Request) *devLxdResponse
+	f func(c container, w http.ResponseWriter, r *http.Request) *devLxdResponse
 }
 
-var configGet = devLxdHandler{"/1.0/config", func(c container, r *http.Request) *devLxdResponse {
+var devlxdConfigGet = devLxdHandler{"/1.0/config", func(c container, w http.ResponseWriter, r *http.Request) *devLxdResponse {
 	filtered := []string{}
 	for k := range c.ExpandedConfig() {
 		if strings.HasPrefix(k, "user.") {
@@ -62,7 +63,7 @@ var configGet = devLxdHandler{"/1.0/config", func(c container, r *http.Request) 
 	return okResponse(filtered, "json")
 }}
 
-var configKeyGet = devLxdHandler{"/1.0/config/{key}", func(c container, r *http.Request) *devLxdResponse {
+var devlxdConfigKeyGet = devLxdHandler{"/1.0/config/{key}", func(c container, w http.ResponseWriter, r *http.Request) *devLxdResponse {
 	key := mux.Vars(r)["key"]
 	if !strings.HasPrefix(key, "user.") {
 		return &devLxdResponse{"not authorized", http.StatusForbidden, "raw"}
@@ -76,25 +77,24 @@ var configKeyGet = devLxdHandler{"/1.0/config/{key}", func(c container, r *http.
 	return okResponse(value, "raw")
 }}
 
-var metadataGet = devLxdHandler{"/1.0/meta-data", func(c container, r *http.Request) *devLxdResponse {
+var devlxdMetadataGet = devLxdHandler{"/1.0/meta-data", func(c container, w http.ResponseWriter, r *http.Request) *devLxdResponse {
 	value := c.ExpandedConfig()["user.meta-data"]
 	return okResponse(fmt.Sprintf("#cloud-config\ninstance-id: %s\nlocal-hostname: %s\n%s", c.Name(), c.Name(), value), "raw")
 }}
 
 var handlers = []devLxdHandler{
-	{"/", func(c container, r *http.Request) *devLxdResponse {
+	{"/", func(c container, w http.ResponseWriter, r *http.Request) *devLxdResponse {
 		return okResponse([]string{"/1.0"}, "json")
 	}},
-	{"/1.0", func(c container, r *http.Request) *devLxdResponse {
+	{"/1.0", func(c container, w http.ResponseWriter, r *http.Request) *devLxdResponse {
 		return okResponse(shared.Jmap{"api_version": version.APIVersion}, "json")
 	}},
-	configGet,
-	configKeyGet,
-	metadataGet,
-	/* TODO: events */
+	devlxdConfigGet,
+	devlxdConfigKeyGet,
+	devlxdMetadataGet,
 }
 
-func hoistReq(f func(container, *http.Request) *devLxdResponse, d *Daemon) func(http.ResponseWriter, *http.Request) {
+func hoistReq(f func(container, http.ResponseWriter, *http.Request) *devLxdResponse, d *Daemon) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		conn := extractUnderlyingConn(w)
 		cred, ok := pidMapper.m[conn]
@@ -123,13 +123,13 @@ func hoistReq(f func(container, *http.Request) *devLxdResponse, d *Daemon) func(
 			return
 		}
 
-		resp := f(c, r)
+		resp := f(c, w, r)
 		if resp.code != http.StatusOK {
 			http.Error(w, fmt.Sprintf("%s", resp.content), resp.code)
 		} else if resp.ctype == "json" {
 			w.Header().Set("Content-Type", "application/json")
 			util.WriteJSON(w, resp.content, debug)
-		} else {
+		} else if resp.ctype != "websocket" {
 			w.Header().Set("Content-Type", "application/octet-stream")
 			fmt.Fprintf(w, resp.content.(string))
 		}
@@ -180,7 +180,8 @@ type ucred struct {
 }
 
 type ConnPidMapper struct {
-	m map[*net.UnixConn]*ucred
+	m     map[*net.UnixConn]*ucred
+	mLock sync.Mutex
 }
 
 func (m *ConnPidMapper) ConnStateHandler(conn net.Conn, state http.ConnState) {
@@ -191,7 +192,9 @@ func (m *ConnPidMapper) ConnStateHandler(conn net.Conn, state http.ConnState) {
 		if err != nil {
 			logger.Debugf("Error getting ucred for conn %s", err)
 		} else {
+			m.mLock.Lock()
 			m.m[unixConn] = cred
+			m.mLock.Unlock()
 		}
 	case http.StateActive:
 		return
@@ -206,9 +209,13 @@ func (m *ConnPidMapper) ConnStateHandler(conn net.Conn, state http.ConnState) {
 		 * more. Whatever the case, we want to forget about it since we
 		 * won't see it either.
 		 */
+		m.mLock.Lock()
 		delete(m.m, unixConn)
+		m.mLock.Unlock()
 	case http.StateClosed:
+		m.mLock.Lock()
 		delete(m.m, unixConn)
+		m.mLock.Unlock()
 	default:
 		logger.Debugf("Unknown state for connection %s", state)
 	}

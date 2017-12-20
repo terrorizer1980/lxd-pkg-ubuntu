@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: lxd\n"
 "Report-Msgid-Bugs-To: lxc-devel@lists.linuxcontainers.org\n"
-"POT-Creation-Date: 2017-11-14 23:10-0500\n"
+"POT-Creation-Date: 2017-12-15 12:26+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -228,6 +228,10 @@ msgstr ""
 msgid "Bad property: %s"
 msgstr ""
 
+#: lxc/action.go:133
+msgid "Both --all and container name given"
+msgstr ""
+
 #: lxc/info.go:215
 msgid "Bytes received"
 msgstr ""
@@ -412,11 +416,11 @@ msgstr ""
 msgid "Directory import is not available on this platform"
 msgstr ""
 
-#: lxc/exec.go:65
+#: lxc/exec.go:71
 msgid "Disable pseudo-terminal allocation"
 msgstr ""
 
-#: lxc/exec.go:66
+#: lxc/exec.go:72
 msgid "Disable stdin (reads from /dev/null)"
 msgstr ""
 
@@ -440,7 +444,7 @@ msgstr ""
 msgid "Enable verbose mode"
 msgstr ""
 
-#: lxc/exec.go:62
+#: lxc/exec.go:68
 msgid "Environment variable to set (e.g. HOME=/home/foo)"
 msgstr ""
 
@@ -525,11 +529,11 @@ msgstr ""
 msgid "Fingerprint: %s"
 msgstr ""
 
-#: lxc/exec.go:64
+#: lxc/exec.go:70
 msgid "Force pseudo-terminal allocation"
 msgstr ""
 
-#: lxc/action.go:46 lxc/action.go:47
+#: lxc/action.go:47 lxc/action.go:48
 msgid "Force the container to shutdown"
 msgstr ""
 
@@ -573,7 +577,7 @@ msgstr ""
 msgid "Ignore aliases when determining what command to run"
 msgstr ""
 
-#: lxc/action.go:50
+#: lxc/action.go:51
 msgid "Ignore the container state (only for start)"
 msgstr ""
 
@@ -712,7 +716,7 @@ msgstr ""
 msgid "Must run as root to import from directory"
 msgstr ""
 
-#: lxc/action.go:72
+#: lxc/action.go:74
 msgid "Must supply container name for: "
 msgstr ""
 
@@ -798,7 +802,7 @@ msgstr ""
 msgid "Options:"
 msgstr ""
 
-#: lxc/exec.go:63
+#: lxc/exec.go:69
 msgid "Override the terminal mode (auto, interactive or non-interactive)"
 msgstr ""
 
@@ -986,6 +990,10 @@ msgstr ""
 msgid "Retrieving image: %s"
 msgstr ""
 
+#: lxc/action.go:52
+msgid "Run command against all containers"
+msgstr ""
+
 #: lxc/image.go:236
 msgid "SIZE"
 msgstr ""
@@ -1075,7 +1083,7 @@ msgstr ""
 msgid "Snapshots:"
 msgstr ""
 
-#: lxc/action.go:142
+#: lxc/action.go:163
 #, c-format
 msgid "Some containers failed to %s"
 msgstr ""
@@ -1139,7 +1147,7 @@ msgstr ""
 msgid "Storage volume %s deleted"
 msgstr ""
 
-#: lxc/action.go:49
+#: lxc/action.go:50
 msgid "Store the container state (only for stop)"
 msgstr ""
 
@@ -1183,7 +1191,7 @@ msgstr ""
 msgid "The local image '%s' couldn't be found, trying '%s:' instead."
 msgstr ""
 
-#: lxc/action.go:34
+#: lxc/action.go:35
 msgid "The opposite of \"lxc pause\" is \"lxc start\"."
 msgstr ""
 
@@ -1207,7 +1215,7 @@ msgid ""
 "For help with any of those, simply call them with --help."
 msgstr ""
 
-#: lxc/action.go:45
+#: lxc/action.go:46
 msgid "Time to wait for the container before killing it"
 msgstr ""
 
@@ -1245,7 +1253,7 @@ msgstr ""
 msgid "Transferring image: %s"
 msgstr ""
 
-#: lxc/action.go:106 lxc/launch.go:77
+#: lxc/action.go:108 lxc/launch.go:77
 #, c-format
 msgid "Try `lxc info --show-log %s` for more info"
 msgstr ""
@@ -1284,10 +1292,10 @@ msgstr ""
 msgid "Uploaded: %s"
 msgstr ""
 
-#: lxc/action.go:37
+#: lxc/action.go:38
 #, c-format
 msgid ""
-"Usage: lxc %s [<remote>:]<container> [[<remote>:]<container>...]\n"
+"Usage: lxc %s [--all] [<remote>:]<container> [[<remote>:]<container>...]\n"
 "\n"
 "%s%s"
 msgstr ""
@@ -1431,6 +1439,14 @@ msgid ""
 "interactive|non-interactive] [--env KEY=VALUE...] [--] <command line>\n"
 "\n"
 "Execute commands in containers.\n"
+"\n"
+"The command is executed directly using exec, so there is no shell and shell "
+"patterns (variables, file redirects, ...)\n"
+"won't be understood. If you need a shell environment you need to execute the "
+"shell executeable, passing the shell commands\n"
+"as arguments, for example:\n"
+"\n"
+"    lxc exec <container> -- sh -c \"cd /tmp && pwd\"\n"
 "\n"
 "Mode defaults to non-interactive, interactive mode is selected if both stdin "
 "AND stdout are terminals (stderr is ignored)."
@@ -2146,11 +2162,11 @@ msgstr ""
 msgid "YES"
 msgstr ""
 
-#: lxc/exec.go:126
+#: lxc/exec.go:132
 msgid "You can't pass -t and -T at the same time"
 msgstr ""
 
-#: lxc/exec.go:130
+#: lxc/exec.go:136
 msgid "You can't pass -t or -T at the same time as --mode"
 msgstr ""
 
@@ -2186,7 +2202,7 @@ msgstr ""
 msgid "enabled"
 msgstr ""
 
-#: lxc/action.go:134 lxc/main.go:33 lxc/main.go:191
+#: lxc/action.go:155 lxc/main.go:33 lxc/main.go:191
 #, c-format
 msgid "error: %v"
 msgstr ""

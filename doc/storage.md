@@ -257,6 +257,10 @@ lxc storage create pool1 btrfs source=/dev/sdX
    serious performance impacts for the LVM driver causing it to be close to the
    fallback DIR driver both in speed and storage usage. This option should only
    be chosen if the use-case renders it necessary.
+ - For environments with high container turn over (e.g continuous integration)
+   it may be important to tweak the archival `retain_min` and `retain_days`
+   settings in `/etc/lvm/lvm.conf` to avoid slowdowns when interacting with
+   LXD.
 
 #### The following commands can be used to create LVM storage pools
 
@@ -270,6 +274,12 @@ lxc storage create pool1 lvm
 
 ```bash
 lxc storage create pool1 lvm source=my-pool
+```
+
+ - Use the existing LVM Thinpool called "my-pool" in Volume Group "my-vg".
+
+```bash
+lxc storage create pool1 lvm source=my-vg lvm.thinpool_name=my-pool
 ```
 
  - Create a new pool named "pool1" on `/dev/sdX`. The LVM Volume Group will also be called "pool1".

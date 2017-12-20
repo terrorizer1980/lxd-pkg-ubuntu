@@ -1,3 +1,0 @@
-0001-test-skip-console-tests-on-lower-versions.patch
-0002-lxd-daemon-Fix-unsetting-https-address.patch
-0003-tests-Deal-with-missing-ttyS0-ttyS1-on-s390x.patch

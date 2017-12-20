@@ -490,6 +490,23 @@ func (c *Container) StartWithArgs(args []string) error {
 	return nil
 }
 
+// StartExecute starts a container. It runs a minimal init as PID 1 and the
+// requested program as the second process.
+func (c *Container) StartExecute(args []string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.makeSure(isNotRunning); err != nil {
+		return err
+	}
+
+	if !bool(C.go_lxc_start(c.container, 1, makeNullTerminatedArgs(args))) {
+		return ErrStartFailed
+	}
+
+	return nil
+}
+
 // Execute executes the given command in a temporary container.
 func (c *Container) Execute(args ...string) ([]byte, error) {
 	c.mu.Lock()
@@ -499,12 +516,9 @@ func (c *Container) Execute(args ...string) ([]byte, error) {
 		return nil, err
 	}
 
-	// Deal with LXC 2.1's need of a defined container
-	if VersionAtLeast(2, 1, 0) {
-		os.MkdirAll(filepath.Join(c.configPath(), c.name()), 0700)
-		c.saveConfigFile(filepath.Join(c.configPath(), c.name(), "config"))
-		defer os.RemoveAll(filepath.Join(c.configPath(), c.name()))
-	}
+	os.MkdirAll(filepath.Join(c.configPath(), c.name()), 0700)
+	c.saveConfigFile(filepath.Join(c.configPath(), c.name(), "config"))
+	defer os.RemoveAll(filepath.Join(c.configPath(), c.name()))
 
 	cargs := []string{"lxc-execute", "-n", c.name(), "-P", c.configPath(), "--"}
 	cargs = append(cargs, args...)
@@ -517,18 +531,6 @@ func (c *Container) Execute(args ...string) ([]byte, error) {
 	}
 
 	return output, nil
-	/*
-		cargs := makeNullTerminatedArgs(args)
-		if cargs == nil {
-			return ErrAllocationFailed
-		}
-		defer freeNullTerminatedArgs(cargs, len(args))
-
-		if !bool(C.go_lxc_start(c.container, 1, cargs)) {
-			return ErrExecuteFailed
-		}
-		return nil
-	*/
 }
 
 // Stop stops the container.
@@ -1777,9 +1779,10 @@ func (c *Container) Migrate(cmd uint, opts MigrateOptions) error {
 	}
 
 	extras := C.struct_extra_migrate_opts{
-		preserves_inodes: C.bool(opts.PreservesInodes),
-		action_script:    cActionScript,
-		ghost_limit:      C.uint64_t(opts.GhostLimit),
+		preserves_inodes:  C.bool(opts.PreservesInodes),
+		action_script:     cActionScript,
+		ghost_limit:       C.uint64_t(opts.GhostLimit),
+		features_to_check: C.uint64_t(opts.FeaturesToCheck),
 	}
 
 	ret := C.int(C.go_lxc_migrate(c.container, C.uint(cmd), &copts, &extras))
