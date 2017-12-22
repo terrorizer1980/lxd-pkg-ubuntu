@@ -1,1 +1,3 @@
 0001-containers-Fix-device-names-containing-slashes.patch
+0002-lxd-containers-Fix-tc-egress-rules.patch
+0003-lxc-exec-Fix-typo.patch
