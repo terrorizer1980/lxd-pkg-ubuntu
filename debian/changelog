@@ -1,3 +1,12 @@
+lxd (2.21-0ubuntu2) bionic; urgency=medium
+
+  * Cherry-pick upstream bugfixes:
+    - 0001-containers-Fix-device-names-containing-slashes.patch
+    - 0002-lxd-containers-Fix-tc-egress-rules.patch
+    - 0003-lxc-exec-Fix-typo.patch
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Fri, 22 Dec 2017 15:19:10 -0500
+
 lxd (2.21-0ubuntu1) bionic; urgency=medium
 
   * New upstream release (2.21)
