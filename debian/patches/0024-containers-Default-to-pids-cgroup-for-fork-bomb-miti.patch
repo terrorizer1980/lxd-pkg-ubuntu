@@ -1,0 +1,52 @@
+From 1f243bfd6d16bc690c59e43dcbd140c078a80cb2 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Fri, 2 Feb 2018 10:52:51 +0100
+Subject: containers: Default to pids cgroup for fork bomb mitigation
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ lxd/container_lxc.go | 28 +++++++++++++++++-----------
+ 1 file changed, 17 insertions(+), 11 deletions(-)
+
+diff --git a/lxd/container_lxc.go b/lxd/container_lxc.go
+index 74d48f76..4030763d 100644
+--- a/lxd/container_lxc.go
++++ b/lxd/container_lxc.go
+@@ -2516,17 +2516,23 @@ func (c *containerLXC) Stop(stateful bool) error {
+ 		return err
+ 	}
+ 
+-	// Attempt to freeze the container first, helps massively with fork bombs
+-	freezer := make(chan bool, 1)
+-	go func() {
+-		c.Freeze()
+-		freezer <- true
+-	}()
+-
+-	select {
+-	case <-freezer:
+-	case <-time.After(time.Second * 5):
+-		c.Unfreeze()
++	// Fork-bomb mitigation, prevent forking from this point on
++	if c.state.OS.CGroupPidsController {
++		// Attempt to disable forking new processes
++		c.CGroupSet("pids.max", "0")
++	} else {
++		// Attempt to freeze the container
++		freezer := make(chan bool, 1)
++		go func() {
++			c.Freeze()
++			freezer <- true
++		}()
++
++		select {
++		case <-freezer:
++		case <-time.After(time.Second * 5):
++			c.Unfreeze()
++		}
+ 	}
+ 
+ 	if err := c.c.Stop(); err != nil {

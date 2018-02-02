@@ -1,0 +1,29 @@
+From 9772d6744d7ba592dd1bad49ce499c697bcb1435 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Tue, 30 Jan 2018 10:42:56 -0500
+Subject: lxc/config: Fix metadata edit
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ lxc/config.go | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/lxc/config.go b/lxc/config.go
+index 0c6d194c..a955fdcb 100644
+--- a/lxc/config.go
++++ b/lxc/config.go
+@@ -1321,9 +1321,10 @@ func (c *configCmd) doContainerMetadataEdit(client lxd.ContainerServer, name str
+ 	}
+ 
+ 	for {
++		metadata := api.ImageMetadata{}
+ 		err = yaml.Unmarshal(content, &metadata)
+ 		if err == nil {
+-			err = client.SetContainerMetadata(name, *metadata, etag)
++			err = client.SetContainerMetadata(name, metadata, etag)
+ 		}
+ 
+ 		// Respawn the editor

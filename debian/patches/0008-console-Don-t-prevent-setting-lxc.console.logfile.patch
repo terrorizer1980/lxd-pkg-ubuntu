@@ -1,0 +1,38 @@
+From 19909db9da4d966705b2b2728fc1adcf301ee9cb Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Fri, 5 Jan 2018 14:58:22 -0500
+Subject: console: Don't prevent setting lxc.console.logfile
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The preferred option is certainly for users to use the console
+ringbuffer and console API, but if they wish to use the old school
+logfile, that's not going to break LXD.
+
+This also unbreaks existing users that set this key and anyone who's not
+running liblxc from git.
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ lxd/container_lxc.go | 6 +-----
+ 1 file changed, 1 insertion(+), 5 deletions(-)
+
+diff --git a/lxd/container_lxc.go b/lxd/container_lxc.go
+index c5163e4d..ef06a75e 100644
+--- a/lxd/container_lxc.go
++++ b/lxd/container_lxc.go
+@@ -210,12 +210,8 @@ func lxcValidConfig(rawLxc string) error {
+ 			return fmt.Errorf("Setting lxc.logfile is not allowed")
+ 		}
+ 
+-		if key == "lxc.console.logfile" {
+-			return fmt.Errorf("Setting lxc.console.logfile is not allowed")
+-		}
+-
+ 		if key == "lxc.syslog" || key == "lxc.log.syslog" {
+-			return fmt.Errorf("Setting lxc.syslog is not allowed")
++			return fmt.Errorf("Setting lxc.log.syslog is not allowed")
+ 		}
+ 
+ 		if key == "lxc.ephemeral" {

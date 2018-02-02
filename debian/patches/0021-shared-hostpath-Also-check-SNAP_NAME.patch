@@ -1,0 +1,29 @@
+From 9fc976c59c3c5e2a1a9933512f37762d8eb38b32 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Sat, 20 Jan 2018 22:56:47 +0200
+Subject: shared/hostpath: Also check SNAP_NAME
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Closes #4183
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ shared/util.go | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/shared/util.go b/shared/util.go
+index e039905f..08884bf6 100644
+--- a/shared/util.go
++++ b/shared/util.go
+@@ -116,7 +116,8 @@ func HostPath(path string) string {
+ 
+ 	// Check if we're running in a snap package
+ 	snap := os.Getenv("SNAP")
+-	if snap == "" {
++	snapName := os.Getenv("SNAP_NAME")
++	if snap == "" || snapName != "lxd" {
+ 		return path
+ 	}
+ 

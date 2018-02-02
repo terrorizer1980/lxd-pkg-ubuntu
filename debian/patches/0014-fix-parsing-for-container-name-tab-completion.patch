@@ -1,0 +1,29 @@
+From 895b57b267b95f4a51794c2bce488dd52eb9b9bf Mon Sep 17 00:00:00 2001
+From: Alberto Donato <alberto.donato@gmail.com>
+Date: Wed, 10 Jan 2018 23:47:48 +0100
+Subject: fix parsing for container name tab-completion
+
+Signed-off-by: Alberto Donato <alberto.donato@gmail.com>
+---
+ config/bash/lxd-client | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/config/bash/lxd-client b/config/bash/lxd-client
+index e74dd8d9..fbbefbcd 100644
+--- a/config/bash/lxd-client
++++ b/config/bash/lxd-client
+@@ -6,11 +6,11 @@ _have lxc && {
+       local state=$1
+       local keys=$2
+ 
+-      local cmd="lxc list --fast"
+-      [ -n "$state" ] && cmd="$cmd | grep -E '$state'"
++      local cmd="lxc list --format=csv --columns=ns"
++      [ -n "$state" ] && cmd="$cmd | grep -E '$state$'"
+ 
+       COMPREPLY=( $( compgen -W \
+-        "$( eval $cmd | grep -Ev '(\+--|NAME)' | awk '{print $2}' ) $keys" "$cur" )
++        "$( eval $cmd | cut -d, -f1 ) $keys" "$cur" )
+       )
+     }
+ 

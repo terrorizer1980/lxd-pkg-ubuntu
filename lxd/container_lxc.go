@@ -210,12 +210,8 @@ func lxcValidConfig(rawLxc string) error {
 			return fmt.Errorf("Setting lxc.logfile is not allowed")
 		}
 
-		if key == "lxc.console.logfile" {
-			return fmt.Errorf("Setting lxc.console.logfile is not allowed")
-		}
-
 		if key == "lxc.syslog" || key == "lxc.log.syslog" {
-			return fmt.Errorf("Setting lxc.syslog is not allowed")
+			return fmt.Errorf("Setting lxc.log.syslog is not allowed")
 		}
 
 		if key == "lxc.ephemeral" {
@@ -2520,17 +2516,23 @@ func (c *containerLXC) Stop(stateful bool) error {
 		return err
 	}
 
-	// Attempt to freeze the container first, helps massively with fork bombs
-	freezer := make(chan bool, 1)
-	go func() {
-		c.Freeze()
-		freezer <- true
-	}()
+	// Fork-bomb mitigation, prevent forking from this point on
+	if c.state.OS.CGroupPidsController {
+		// Attempt to disable forking new processes
+		c.CGroupSet("pids.max", "0")
+	} else {
+		// Attempt to freeze the container
+		freezer := make(chan bool, 1)
+		go func() {
+			c.Freeze()
+			freezer <- true
+		}()
 
-	select {
-	case <-freezer:
-	case <-time.After(time.Second * 5):
-		c.Unfreeze()
+		select {
+		case <-freezer:
+		case <-time.After(time.Second * 5):
+			c.Unfreeze()
+		}
 	}
 
 	if err := c.c.Stop(); err != nil {
@@ -2971,6 +2973,7 @@ func (c *containerLXC) Restore(sourceContainer container, stateful bool) error {
 		Devices:      sourceContainer.LocalDevices(),
 		Ephemeral:    sourceContainer.IsEphemeral(),
 		Profiles:     sourceContainer.Profiles(),
+		Description:  sourceContainer.Description(),
 	}
 
 	err = c.Update(args, false)
@@ -3316,6 +3319,7 @@ func (c *containerLXC) ConfigKeySet(key string, value string) error {
 		Devices:      c.localDevices,
 		Ephemeral:    c.ephemeral,
 		Profiles:     c.profiles,
+		Description:  c.description,
 	}
 
 	return c.Update(args, false)
@@ -4800,6 +4804,10 @@ func (c *containerLXC) Migrate(args *CriuMigrationArgs) error {
 			}
 		}
 	} else if args.cmd == lxc.MIGRATE_FEATURE_CHECK {
+		err := c.initLXC(true)
+		if err != nil {
+			return err
+		}
 
 		opts := lxc.MigrateOptions{
 			FeaturesToCheck: args.features,

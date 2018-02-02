@@ -1,0 +1,35 @@
+From ea52911784deb8b84d7f0e5b7749355d94a445bf Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Tue, 16 Jan 2018 15:15:37 +0200
+Subject: networks: Drop all firewall rules when disabled
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ lxd/networks.go | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/lxd/networks.go b/lxd/networks.go
+index fb765995..9bab7a1f 100644
+--- a/lxd/networks.go
++++ b/lxd/networks.go
+@@ -726,7 +726,7 @@ func (n *network) Start() error {
+ 
+ 	// Configure IPv4 firewall (includes fan)
+ 	if n.config["bridge.mode"] == "fan" || !shared.StringInSlice(n.config["ipv4.address"], []string{"", "none"}) {
+-		if n.config["ipv4.dhcp"] == "" || shared.IsTrue(n.config["ipv4.dhcp"]) {
++		if (n.config["ipv4.dhcp"] == "" || shared.IsTrue(n.config["ipv4.dhcp"])) && (n.config["ipv4.firewall"] == "" || shared.IsTrue(n.config["ipv4.firewall"])) {
+ 			// Setup basic iptables overrides for DHCP/DNS
+ 			rules := [][]string{
+ 				{"ipv4", n.name, "", "INPUT", "-i", n.name, "-p", "udp", "--dport", "67", "-j", "ACCEPT"},
+@@ -890,7 +890,7 @@ func (n *network) Start() error {
+ 
+ 		// Update the dnsmasq config
+ 		dnsmasqCmd = append(dnsmasqCmd, []string{fmt.Sprintf("--listen-address=%s", ip.String()), "--enable-ra"}...)
+-		if n.config["ipv6.dhcp"] == "" || shared.IsTrue(n.config["ipv6.dhcp"]) {
++		if (n.config["ipv6.dhcp"] == "" || shared.IsTrue(n.config["ipv6.dhcp"])) && (n.config["ipv6.firewall"] == "" || shared.IsTrue(n.config["ipv6.firewall"])) {
+ 			// Setup basic iptables overrides for DHCP/DNS
+ 			rules := [][]string{
+ 				{"ipv6", n.name, "", "INPUT", "-i", n.name, "-p", "udp", "--dport", "546", "-j", "ACCEPT"},

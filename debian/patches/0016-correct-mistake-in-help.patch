@@ -1,0 +1,26 @@
+From c8610217143c918ed0e3efb1a3e99e22a47e2431 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marcin=20Miko=C5=82ajczak?= <me@m4sk.in>
+Date: Thu, 11 Jan 2018 21:49:39 +0000
+Subject: correct mistake in help
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Marcin Mikołajczak <me@m4sk.in>
+---
+ lxc/storage.go | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/lxc/storage.go b/lxc/storage.go
+index 75e2b1b3..111122ac 100644
+--- a/lxc/storage.go
++++ b/lxc/storage.go
+@@ -117,7 +117,7 @@ lxc storage volume delete [<remote>:]<pool> <volume>
+     Delete a storage volume on a storage pool.
+ 
+ lxc storage volume edit [<remote>:]<pool> <volume>
+-    Edit storage pool, either by launching external editor or reading STDIN.
++    Edit storage volume, either by launching external editor or reading STDIN.
+ 
+ lxc storage volume attach [<remote>:]<pool> <volume> <container> [device name] <path>
+     Attach a storage volume to the specified container.

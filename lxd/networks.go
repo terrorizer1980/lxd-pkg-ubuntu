@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/gorilla/mux"
 	log "github.com/lxc/lxd/shared/log15"
@@ -23,6 +24,9 @@ import (
 	"github.com/lxc/lxd/shared/logger"
 	"github.com/lxc/lxd/shared/version"
 )
+
+// Lock to prevent concurent networks creation
+var networkCreateLock sync.Mutex
 
 // API endpoints
 func networksGet(d *Daemon, r *http.Request) Response {
@@ -59,6 +63,9 @@ func networksGet(d *Daemon, r *http.Request) Response {
 }
 
 func networksPost(d *Daemon, r *http.Request) Response {
+	networkCreateLock.Lock()
+	defer networkCreateLock.Unlock()
+
 	req := api.NetworksPost{}
 
 	// Parse the request
@@ -719,7 +726,7 @@ func (n *network) Start() error {
 
 	// Configure IPv4 firewall (includes fan)
 	if n.config["bridge.mode"] == "fan" || !shared.StringInSlice(n.config["ipv4.address"], []string{"", "none"}) {
-		if n.config["ipv4.dhcp"] == "" || shared.IsTrue(n.config["ipv4.dhcp"]) {
+		if (n.config["ipv4.dhcp"] == "" || shared.IsTrue(n.config["ipv4.dhcp"])) && (n.config["ipv4.firewall"] == "" || shared.IsTrue(n.config["ipv4.firewall"])) {
 			// Setup basic iptables overrides for DHCP/DNS
 			rules := [][]string{
 				{"ipv4", n.name, "", "INPUT", "-i", n.name, "-p", "udp", "--dport", "67", "-j", "ACCEPT"},
@@ -883,7 +890,7 @@ func (n *network) Start() error {
 
 		// Update the dnsmasq config
 		dnsmasqCmd = append(dnsmasqCmd, []string{fmt.Sprintf("--listen-address=%s", ip.String()), "--enable-ra"}...)
-		if n.config["ipv6.dhcp"] == "" || shared.IsTrue(n.config["ipv6.dhcp"]) {
+		if (n.config["ipv6.dhcp"] == "" || shared.IsTrue(n.config["ipv6.dhcp"])) && (n.config["ipv6.firewall"] == "" || shared.IsTrue(n.config["ipv6.firewall"])) {
 			// Setup basic iptables overrides for DHCP/DNS
 			rules := [][]string{
 				{"ipv6", n.name, "", "INPUT", "-i", n.name, "-p", "udp", "--dport", "546", "-j", "ACCEPT"},

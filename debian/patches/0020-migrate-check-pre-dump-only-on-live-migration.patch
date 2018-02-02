@@ -1,0 +1,27 @@
+From e134ef5237c29cb2af51907f67ae615be245b3d8 Mon Sep 17 00:00:00 2001
+From: Christian Brauner <christian.brauner@ubuntu.com>
+Date: Thu, 18 Jan 2018 12:16:43 +0100
+Subject: migrate: check pre-dump only on live migration
+
+Signed-off-by: Christian Brauner <christian.brauner@ubuntu.com>
+---
+ lxd/migrate.go | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/lxd/migrate.go b/lxd/migrate.go
+index a1bc655f..6bedadcb 100644
+--- a/lxd/migrate.go
++++ b/lxd/migrate.go
+@@ -611,7 +611,11 @@ func (s *migrationSourceWs) Do(migrateOp *operation) error {
+ 		}
+ 	}
+ 
+-	use_pre_dumps, max_iterations := s.checkForPreDumpSupport()
++	use_pre_dumps := false
++	max_iterations := 0
++	if s.live {
++		use_pre_dumps, max_iterations = s.checkForPreDumpSupport()
++	}
+ 
+ 	// The protocol says we have to send a header no matter what, so let's
+ 	// do that, but then immediately send an error.

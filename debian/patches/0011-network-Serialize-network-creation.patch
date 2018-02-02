@@ -1,0 +1,45 @@
+From fdd8660489946497de459c1e0e1b22a472237cb5 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Mon, 8 Jan 2018 21:31:58 -0500
+Subject: network: Serialize network creation
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ lxd/networks.go | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/lxd/networks.go b/lxd/networks.go
+index 7e78acea..fb765995 100644
+--- a/lxd/networks.go
++++ b/lxd/networks.go
+@@ -11,6 +11,7 @@ import (
+ 	"os/exec"
+ 	"strconv"
+ 	"strings"
++	"sync"
+ 
+ 	"github.com/gorilla/mux"
+ 	log "github.com/lxc/lxd/shared/log15"
+@@ -24,6 +25,9 @@ import (
+ 	"github.com/lxc/lxd/shared/version"
+ )
+ 
++// Lock to prevent concurent networks creation
++var networkCreateLock sync.Mutex
++
+ // API endpoints
+ func networksGet(d *Daemon, r *http.Request) Response {
+ 	recursionStr := r.FormValue("recursion")
+@@ -59,6 +63,9 @@ func networksGet(d *Daemon, r *http.Request) Response {
+ }
+ 
+ func networksPost(d *Daemon, r *http.Request) Response {
++	networkCreateLock.Lock()
++	defer networkCreateLock.Unlock()
++
+ 	req := api.NetworksPost{}
+ 
+ 	// Parse the request

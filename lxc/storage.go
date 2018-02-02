@@ -117,7 +117,7 @@ lxc storage volume delete [<remote>:]<pool> <volume>
     Delete a storage volume on a storage pool.
 
 lxc storage volume edit [<remote>:]<pool> <volume>
-    Edit storage pool, either by launching external editor or reading STDIN.
+    Edit storage volume, either by launching external editor or reading STDIN.
 
 lxc storage volume attach [<remote>:]<pool> <volume> <container> [device name] <path>
     Attach a storage volume to the specified container.
@@ -770,6 +770,10 @@ func (c *storageCmd) doStoragePoolVolumesList(conf *config.Config, remote string
 	client, err := conf.GetContainerServer(remote)
 	if err != nil {
 		return err
+	}
+
+	if pool == "" {
+		return errArgs
 	}
 
 	volumes, err := client.GetStoragePoolVolumes(pool)

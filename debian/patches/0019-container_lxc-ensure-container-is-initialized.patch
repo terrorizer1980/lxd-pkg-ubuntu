@@ -1,0 +1,26 @@
+From fc3ac3d87224b4f2984cffd3ab2b9d0b15b95130 Mon Sep 17 00:00:00 2001
+From: Christian Brauner <christian.brauner@ubuntu.com>
+Date: Thu, 18 Jan 2018 11:58:49 +0100
+Subject: container_lxc: ensure container is initialized
+
+Signed-off-by: Christian Brauner <christian.brauner@ubuntu.com>
+Reported-by: Thomas Hipp <thomas.hipp@canonical.com>
+---
+ lxd/container_lxc.go | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/lxd/container_lxc.go b/lxd/container_lxc.go
+index 236123b5..74d48f76 100644
+--- a/lxd/container_lxc.go
++++ b/lxd/container_lxc.go
+@@ -4798,6 +4798,10 @@ func (c *containerLXC) Migrate(args *CriuMigrationArgs) error {
+ 			}
+ 		}
+ 	} else if args.cmd == lxc.MIGRATE_FEATURE_CHECK {
++		err := c.initLXC(true)
++		if err != nil {
++			return err
++		}
+ 
+ 		opts := lxc.MigrateOptions{
+ 			FeaturesToCheck: args.features,
