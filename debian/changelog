@@ -1,3 +1,11 @@
+lxd (2.21-0ubuntu4) bionic; urgency=medium
+
+  * Preparation for LXD 3.0 and Ubuntu 18.04:
+    - Drop the lxc2 meta-package (unused and confusing)
+    - Drop golang-github-lxc-lxd-dev (unused and unsupported)
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Tue, 20 Feb 2018 16:46:08 -0500
+
 lxd (2.21-0ubuntu3) bionic; urgency=medium
 
   * Cherry-pick upstream bugfixes:
