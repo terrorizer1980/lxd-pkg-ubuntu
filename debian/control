@@ -58,16 +58,6 @@ Description: Container hypervisor based on LXC - daemon
  .
  This package contains the LXD daemon.
 
-Package: lxc2
-Architecture: all
-Depends: lxd, lxd-client, ${misc:Depends}
-Section: metapackages
-Description: Container hypervisor based on LXC - metapackage
- LXD offers a REST API to remotely manage containers over the network,
- using an image based workflow and with support for live migration.
- .
- This is a dummy metapackage to install LXD and its client.
-
 Package: lxd-tools
 Architecture: amd64 arm64 armhf i386 ppc64el s390x
 Depends: ${misc:Depends}, ${shlibs:Depends}, python3, python3-lxc
@@ -80,12 +70,3 @@ Description: Container hypervisor based on LXC - extra tools
   - fuidshift - A tool to map/unmap filesystem uids/gids
   - lxc-to-lxd - A tool to migrate LXC containers to LXD
   - lxd-benchmark - A benchmarking tool for LXD
-
-Package: golang-github-lxc-lxd-dev
-Architecture: all
-Depends: golang-go, lxc-dev, pkg-config, ${misc:Depends}, ${shlibs:Depends}
-Description: Container hypervisor based on LXC - go source
- LXD offers a REST API to remotely manage containers over the network,
- using an image based workflow and with support for live migration.
- .
- This package contains the source tree of the lxd project.
