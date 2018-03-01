@@ -1,8 +1,6 @@
 usr/bin/lxd
+usr/lib/lxd
 usr/share/man/man1/lxd.1
-
-debian/wrappers/shutdown usr/lib/lxd/
-debian/wrappers/upgrade-bridge usr/lib/lxd/
 
 etc/dnsmasq.d-available/lxd
 etc/sysctl.d/10-lxd-inotify.conf

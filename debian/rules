@@ -13,6 +13,8 @@ export DH_GOPKG := github.com/lxc/lxd
 export GOPATH := $(CURDIR)/obj-$(DEB_BUILD_GNU_TYPE)
 export USE_EMBEDDED := true
 export USE_SHLIBS := false
+export CGO_LDFLAGS=-L$(CURDIR)/dist/sqlite/.libs/
+export CGO_CFLAGS=-I$(CURDIR)/dist/sqlite/
 
 ifeq ($(USE_SHLIBS), true)
 export DH_GOLANG_LINK_SHARED := 1
@@ -21,8 +23,11 @@ endif
 %:
 	dh $@ --with systemd --buildsystem=golang --with=golang
 
-# Make sure we use the distro libsqlite3
 override_dh_auto_build:
+	# Build our own sqlite3
+	cd dist/sqlite && ./configure && make
+
+	# And then build using it
 	dh_auto_build -- -tags libsqlite3
 
 # Ugly workaround for bundled dependencies
@@ -116,6 +121,14 @@ override_dh_install:
 	# Setup sysctl
 	mkdir -p $(PKGDIR)/etc/sysctl.d
 	cp debian/lxd.sysctl $(PKGDIR)/etc/sysctl.d/10-lxd-inotify.conf
+
+	# Include wrappers and sqlite3 library
+	mkdir -p $(PKGDIR)/usr/lib/lxd/
+	mv $(PKGDIR)/usr/bin/lxd $(PKGDIR)/usr/lib/lxd/
+	cp debian/wrappers/lxd $(PKGDIR)/usr/bin/
+	cp debian/wrappers/shutdown $(PKGDIR)/usr/lib/lxd/
+	cp debian/wrappers/upgrade-bridge $(PKGDIR)/usr/lib/lxd/
+	cp dist/sqlite/.libs/libsqlite3.so.0* $(PKGDIR)/usr/lib/lxd/
 
 	# Trigger normal dh_install
 	dh_install

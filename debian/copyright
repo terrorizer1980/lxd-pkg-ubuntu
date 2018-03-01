@@ -7,6 +7,10 @@ Files: *
 Copyright: 2014-2015 LXD contributors
 License: Apache-2
 
+Files: dist/src/github.com/CanonicalLtd/go-sqlite3/*
+Copyright: 2014 Yasuhiro Matsumoto
+License: Expat
+
 Files: dist/src/github.com/dustinkirkland/golang-petname/*
 Copyright: 2014 Dustin Kirkland <dustin.kirkland@gmail.com>
 License: Apache-2
@@ -37,10 +41,6 @@ License: Expat
 
 Files: dist/src/github.com/mattn/go-runewidth/*
 Copyright: 2015 Yasuhiro Matsumoto
-License: Expat
-
-Files: dist/src/github.com/mattn/go-sqlite3/*
-Copyright: 2014 Yasuhiro Matsumoto
 License: Expat
 
 Files: dist/src/github.com/olekukonko/tablewriter/*
