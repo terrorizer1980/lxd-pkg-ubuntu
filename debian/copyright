@@ -19,10 +19,6 @@ Files: dist/src/github.com/golang/protobuf/*
 Copyright: 2010 The Go Authors
 License: BSD-3-clause
 
-Files: dist/src/github.com/gorilla/context/*
-Copyright: 2012 Rodrigo Moraes
-License: BSD-2-clause
-
 Files: dist/src/github.com/gorilla/mux/*
 Copyright: 2012 Rodrigo Moraes
 License: BSD-2-clause
@@ -71,7 +67,7 @@ Files: dist/src/golang.org/x/sys/*
 Copyright: 2009 The Go Authors.
 License: BSD-3-clause
 
-Files: dist/src/gopkg.in/flosch/pongo2.v3/*
+Files: dist/src/github.com/flosch/pongo2/*
 Copyright: 2013-2014 Florian Schlachter
 License: Expat
 
