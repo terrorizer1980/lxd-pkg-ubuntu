@@ -2,11 +2,21 @@
 set -eu
 
 # Setup the environment
-TEMP=$(mktemp -d)
-mv dist $TEMP/
+TEMPDIST="$(mktemp -d)"
+mv dist "${TEMPDIST}/"
+
+GOPATH="$(mktemp -d)"
+export GOPATH
+cp -R "${TEMPDIST}/dist/src" "${GOPATH}/"
+rm "${GOPATH}/src/github.com/lxc/lxd"
+ln -s "$(pwd)" "${GOPATH}/src/github.com/lxc/lxd"
+cd "${GOPATH}/src/github.com/lxc/lxd"
+chmod +x "${GOPATH}"
 
 cleanup() {
-    mv $TEMP/dist dist
+    mv "${TEMPDIST}/dist" dist
+    rm -Rf "${TEMPDIST}"
+    rm -Rf "${GOPATH}"
 }
 
 trap cleanup EXIT HUP INT TERM
