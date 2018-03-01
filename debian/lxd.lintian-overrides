@@ -1,3 +1,6 @@
 # Coming from an external source
-lxd: spelling-error-in-binary usr/bin/lxd Nam Name
-lxd: spelling-error-in-binary usr/bin/lxd maching matching
+lxd: spelling-error-in-binary usr/lib/lxd/lxd Nam Name
+lxd: spelling-error-in-binary usr/lib/lxd/lxd maching matching
+
+# Unknown origin but not our code
+lxd: package-has-unnecessary-activation-of-ldconfig-trigger
