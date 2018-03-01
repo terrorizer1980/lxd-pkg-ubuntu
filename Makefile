@@ -9,7 +9,7 @@ POTFILE=po/$(DOMAIN).pot
 # TODO: use git describe for versioning
 VERSION=$(shell grep "var Version" shared/version/flex.go | cut -d'"' -f2)
 ARCHIVE=lxd-$(VERSION).tar
-TAGS=$(shell printf "\#include <sqlite3.h>\nvoid main(){}" | $(CC) -o /dev/null -xc - >/dev/null 2>&1 && echo "-tags libsqlite3")
+TAGS=$(shell printf "\#include <sqlite3.h>\nvoid main(){int n = SQLITE_REPLICATION;}" | $(CC) -o /dev/null -xc - >/dev/null 2>&1 && echo "-tags libsqlite3")
 
 .PHONY: default
 default:
@@ -44,7 +44,7 @@ debug:
 # it's not a default build step.
 .PHONY: protobuf
 protobuf:
-	protoc --go_out=. ./lxd/migrate.proto
+	protoc --go_out=. ./lxd/migration/migrate.proto
 
 .PHONY: check
 check: default
@@ -72,8 +72,10 @@ dist:
 	# Download dependencies
 	cd $(TMP)/lxd-$(VERSION) && GOPATH=$(TMP)/dist go get -t -v -d ./...
 
-	# Workaround for gorilla/mux on Go < 1.7
-	cd $(TMP)/lxd-$(VERSION) && GOPATH=$(TMP)/dist go get -v -d github.com/gorilla/context
+	# Download the cluster-enabled sqlite
+	git clone https://github.com/CanonicalLtd/sqlite $(TMP)/dist/sqlite
+	cd $(TMP)/dist/sqlite && git log -1 --format="format:%ci%n" | sed -e 's/ [-+].*$$//;s/ /T/;s/^/D /' > manifest
+	cd $(TMP)/dist/sqlite && git log -1 --format="format:%H" > manifest.uuid
 
 	# Assemble tarball
 	rm $(TMP)/dist/src/github.com/lxc/lxd
@@ -101,7 +103,7 @@ update-po:
 
 update-pot:
 	go get -v -x github.com/snapcore/snapd/i18n/xgettext-go/
-	xgettext-go -o po/$(DOMAIN).pot --add-comments-tag=TRANSLATORS: --sort-output --package-name=$(DOMAIN) --msgid-bugs-address=lxc-devel@lists.linuxcontainers.org --keyword=i18n.G --keyword-plural=i18n.NG shared/*.go lxc/*.go lxd/*.go
+	xgettext-go -o po/$(DOMAIN).pot --add-comments-tag=TRANSLATORS: --sort-output --package-name=$(DOMAIN) --msgid-bugs-address=lxc-devel@lists.linuxcontainers.org --keyword=i18n.G --keyword-plural=i18n.NG lxc/*.go lxc/*/*.go
 
 build-mo: $(MOFILES)
 

@@ -9,12 +9,14 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/gorilla/mux"
 	log "github.com/lxc/lxd/shared/log15"
 
+	lxd "github.com/lxc/lxd/client"
+	"github.com/lxc/lxd/lxd/cluster"
 	"github.com/lxc/lxd/lxd/db"
 	"github.com/lxc/lxd/lxd/state"
 	"github.com/lxc/lxd/lxd/util"
@@ -24,15 +26,14 @@ import (
 	"github.com/lxc/lxd/shared/version"
 )
 
+// Lock to prevent concurent networks creation
+var networkCreateLock sync.Mutex
+
 // API endpoints
 func networksGet(d *Daemon, r *http.Request) Response {
-	recursionStr := r.FormValue("recursion")
-	recursion, err := strconv.Atoi(recursionStr)
-	if err != nil {
-		recursion = 0
-	}
+	recursion := util.IsRecursionRequest(r)
 
-	ifs, err := networkGetInterfaces(d.db)
+	ifs, err := networkGetInterfaces(d.cluster)
 	if err != nil {
 		return InternalError(err)
 	}
@@ -40,7 +41,7 @@ func networksGet(d *Daemon, r *http.Request) Response {
 	resultString := []string{}
 	resultMap := []api.Network{}
 	for _, iface := range ifs {
-		if recursion == 0 {
+		if !recursion {
 			resultString = append(resultString, fmt.Sprintf("/%s/networks/%s", version.APIVersion, iface))
 		} else {
 			net, err := doNetworkGet(d, iface)
@@ -51,7 +52,7 @@ func networksGet(d *Daemon, r *http.Request) Response {
 		}
 	}
 
-	if recursion == 0 {
+	if !recursion {
 		return SyncResponse(true, resultString)
 	}
 
@@ -59,6 +60,9 @@ func networksGet(d *Daemon, r *http.Request) Response {
 }
 
 func networksPost(d *Daemon, r *http.Request) Response {
+	networkCreateLock.Lock()
+	defer networkCreateLock.Unlock()
+
 	req := api.NetworksPost{}
 
 	// Parse the request
@@ -81,15 +85,6 @@ func networksPost(d *Daemon, r *http.Request) Response {
 		return BadRequest(fmt.Errorf("Only 'bridge' type networks can be created"))
 	}
 
-	networks, err := networkGetInterfaces(d.db)
-	if err != nil {
-		return InternalError(err)
-	}
-
-	if shared.StringInSlice(req.Name, networks) {
-		return BadRequest(fmt.Errorf("The network already exists"))
-	}
-
 	if req.Config == nil {
 		req.Config = map[string]string{}
 	}
@@ -99,6 +94,175 @@ func networksPost(d *Daemon, r *http.Request) Response {
 		return BadRequest(err)
 	}
 
+	url := fmt.Sprintf("/%s/networks/%s", version.APIVersion, req.Name)
+	response := SyncResponseLocation(true, nil, url)
+
+	if isClusterNotification(r) {
+		// This is an internal request which triggers the actual
+		// creation of the network across all nodes, after they have
+		// been previously defined.
+		err = doNetworksCreate(d, req, true)
+		if err != nil {
+			return SmartError(err)
+		}
+		return response
+	}
+
+	targetNode := r.FormValue("target")
+	if targetNode != "" {
+		// A targetNode was specified, let's just define the node's
+		// network without actually creating it. The only legal key
+		// value for the storage config is 'bridge.external_interfaces'.
+		for key := range req.Config {
+			if !shared.StringInSlice(key, db.NetworkNodeConfigKeys) {
+				return SmartError(fmt.Errorf("Invalid config key '%s'", key))
+			}
+		}
+		err = d.cluster.Transaction(func(tx *db.ClusterTx) error {
+			return tx.NetworkCreatePending(targetNode, req.Name, req.Config)
+		})
+		if err != nil {
+			if err == db.DbErrAlreadyDefined {
+				return BadRequest(
+					fmt.Errorf("The network already defined on node %s", targetNode))
+			}
+			return SmartError(err)
+		}
+		return response
+	}
+
+	err = networkFillConfig(&req)
+	if err != nil {
+		return SmartError(err)
+	}
+
+	// Check if we're clustered
+	count, err := cluster.Count(d.State())
+	if err != nil {
+		return SmartError(err)
+	}
+
+	if count > 1 {
+		err = networksPostCluster(d, req)
+		if err != nil {
+			return SmartError(err)
+		}
+		return response
+	}
+
+	// No targetNode was specified and we're either a single-node
+	// cluster or not clustered at all, so create the storage
+	// pool immediately.
+	networks, err := networkGetInterfaces(d.cluster)
+	if err != nil {
+		return InternalError(err)
+	}
+
+	if shared.StringInSlice(req.Name, networks) {
+		return BadRequest(fmt.Errorf("The network already exists"))
+	}
+
+	// Create the database entry
+	_, err = d.cluster.NetworkCreate(req.Name, req.Description, req.Config)
+	if err != nil {
+		return SmartError(fmt.Errorf("Error inserting %s into database: %s", req.Name, err))
+	}
+
+	err = doNetworksCreate(d, req, true)
+	if err != nil {
+		return SmartError(err)
+	}
+
+	return response
+}
+
+func networksPostCluster(d *Daemon, req api.NetworksPost) error {
+	// Check that no node-specific config key has been defined.
+	for key := range req.Config {
+		if shared.StringInSlice(key, db.NetworkNodeConfigKeys) {
+			return fmt.Errorf("Config key '%s' is node-specific", key)
+		}
+	}
+
+	// Check that the network is properly defined, fetch the node-specific
+	// configs and insert the global config.
+	var configs map[string]map[string]string
+	var nodeName string
+	err := d.cluster.Transaction(func(tx *db.ClusterTx) error {
+		// Check that the network was defined at all.
+		networkID, err := tx.NetworkID(req.Name)
+		if err != nil {
+			return err
+		}
+
+		// Fetch the node-specific configs.
+		configs, err = tx.NetworkNodeConfigs(networkID)
+		if err != nil {
+			return err
+		}
+
+		// Take note of the name of this node
+		nodeName, err = tx.NodeName()
+		if err != nil {
+			return err
+		}
+
+		// Insert the global config keys.
+		return tx.NetworkConfigAdd(networkID, 0, req.Config)
+	})
+	if err != nil {
+		if err == db.NoSuchObjectError {
+			return fmt.Errorf("Network not pending on any node (use --target <node> first)")
+		}
+		return err
+	}
+
+	// Create the network on this node.
+	nodeReq := req
+	for key, value := range configs[nodeName] {
+		nodeReq.Config[key] = value
+	}
+	err = doNetworksCreate(d, nodeReq, false)
+	if err != nil {
+		return err
+	}
+
+	// Notify all other nodes to create the network.
+	notifier, err := cluster.NewNotifier(d.State(), d.endpoints.NetworkCert(), cluster.NotifyAll)
+	if err != nil {
+		return err
+	}
+	notifyErr := notifier(func(client lxd.ContainerServer) error {
+		server, _, err := client.GetServer()
+		if err != nil {
+			return err
+		}
+
+		nodeReq := req
+		for key, value := range configs[server.Environment.ServerName] {
+			nodeReq.Config[key] = value
+		}
+
+		return client.CreateNetwork(nodeReq)
+	})
+
+	errored := notifyErr != nil
+
+	// Finally update the storage network state.
+	err = d.cluster.Transaction(func(tx *db.ClusterTx) error {
+		if errored {
+			return tx.NetworkErrored(req.Name)
+		}
+		return tx.NetworkCreated(req.Name)
+	})
+	if err != nil {
+		return err
+	}
+
+	return notifyErr
+}
+
+func networkFillConfig(req *api.NetworksPost) error {
 	// Set some default values where needed
 	if req.Config["bridge.mode"] == "fan" {
 		if req.Config["fan.underlay_subnet"] == "" {
@@ -124,41 +288,59 @@ func networksPost(d *Daemon, r *http.Request) Response {
 	}
 
 	// Replace "auto" by actual values
-	err = networkFillAuto(req.Config)
+	err := networkFillAuto(req.Config)
 	if err != nil {
-		return InternalError(err)
+		return err
 	}
+	return nil
+}
 
-	// Create the database entry
-	_, err = d.db.NetworkCreate(req.Name, req.Description, req.Config)
-	if err != nil {
-		return InternalError(
-			fmt.Errorf("Error inserting %s into database: %s", req.Name, err))
-	}
-
+// Create the network on the system. The withDatabase flag is used to decide
+// whether to cleanup the database if an error occurs.
+func doNetworksCreate(d *Daemon, req api.NetworksPost, withDatabase bool) error {
 	// Start the network
 	n, err := networkLoadByName(d.State(), req.Name)
 	if err != nil {
-		return InternalError(err)
+		return err
 	}
 
 	err = n.Start()
 	if err != nil {
-		n.Delete()
-		return InternalError(err)
+		n.Delete(withDatabase)
+		return err
 	}
 
-	return SyncResponseLocation(true, nil, fmt.Sprintf("/%s/networks/%s", version.APIVersion, req.Name))
+	return nil
 }
 
 var networksCmd = Command{name: "networks", get: networksGet, post: networksPost}
 
 func networkGet(d *Daemon, r *http.Request) Response {
+	// If a target was specified, forward the request to the relevant node.
+	response := ForwardedResponseIfTargetIsRemote(d, r)
+	if response != nil {
+		return response
+	}
+
 	name := mux.Vars(r)["name"]
 
 	n, err := doNetworkGet(d, name)
 	if err != nil {
 		return SmartError(err)
+	}
+
+	targetNode := r.FormValue("target")
+	clustered, err := cluster.Enabled(d.db)
+	if err != nil {
+		return SmartError(err)
+	}
+
+	// If no target node is specified and the daemon is clustered, we omit
+	// the node-specific fields.
+	if targetNode == "" && clustered {
+		for _, key := range db.NetworkNodeConfigKeys {
+			delete(n.Config, key)
+		}
 	}
 
 	etag := []interface{}{n.Name, n.Managed, n.Type, n.Description, n.Config}
@@ -169,7 +351,7 @@ func networkGet(d *Daemon, r *http.Request) Response {
 func doNetworkGet(d *Daemon, name string) (api.Network, error) {
 	// Get some information
 	osInfo, _ := net.InterfaceByName(name)
-	_, dbInfo, _ := d.db.NetworkGet(name)
+	_, dbInfo, _ := d.cluster.NetworkGet(name)
 
 	// Sanity check
 	if osInfo == nil && dbInfo == nil {
@@ -183,7 +365,7 @@ func doNetworkGet(d *Daemon, name string) (api.Network, error) {
 	n.Config = map[string]string{}
 
 	// Look for containers using the interface
-	cts, err := d.db.ContainersList(db.CTypeRegular)
+	cts, err := d.cluster.ContainersList(db.CTypeRegular)
 	if err != nil {
 		return api.Network{}, err
 	}
@@ -225,6 +407,11 @@ func doNetworkGet(d *Daemon, name string) (api.Network, error) {
 		}
 	}
 
+	if dbInfo != nil {
+		n.Status = dbInfo.Status
+		n.Locations = dbInfo.Locations
+	}
+
 	return n, nil
 }
 
@@ -232,14 +419,50 @@ func networkDelete(d *Daemon, r *http.Request) Response {
 	name := mux.Vars(r)["name"]
 	state := d.State()
 
+	// Check if the network is pending, if so we just need to delete it from
+	// the database.
+	_, network, err := d.cluster.NetworkGet(name)
+	if err != nil {
+		return SmartError(err)
+	}
+	if network.Status == "Pending" {
+		err := d.cluster.NetworkDelete(name)
+		if err != nil {
+			return SmartError(err)
+		}
+		return EmptySyncResponse
+	}
+
 	// Get the existing network
 	n, err := networkLoadByName(state, name)
 	if err != nil {
 		return NotFound
 	}
 
-	// Attempt to delete the network
-	err = n.Delete()
+	withDatabase := true
+	if isClusterNotification(r) {
+		withDatabase = false // We just want to delete the network from the system
+	} else {
+		// Sanity checks
+		if n.IsUsed() {
+			return BadRequest(fmt.Errorf("The network is currently in use"))
+		}
+
+		// Notify all other nodes. If any node is down, an error will be returned.
+		notifier, err := cluster.NewNotifier(d.State(), d.endpoints.NetworkCert(), cluster.NotifyAll)
+		if err != nil {
+			return SmartError(err)
+		}
+		err = notifier(func(client lxd.ContainerServer) error {
+			return client.DeleteNetwork(name)
+		})
+		if err != nil {
+			return SmartError(err)
+		}
+	}
+
+	// Delete the network
+	err = n.Delete(withDatabase)
 	if err != nil {
 		return SmartError(err)
 	}
@@ -253,12 +476,27 @@ func networkDelete(d *Daemon, r *http.Request) Response {
 }
 
 func networkPost(d *Daemon, r *http.Request) Response {
+	// FIXME: renaming a network is currently not supported in clustering
+	//        mode. The difficulty is that network.Start() depends on the
+	//        network having already been renamed in the database, which is
+	//        a chicken-and-egg problem for cluster notifications (the
+	//        serving node should typically do the database job, so the
+	//        network is not yet renamed inthe db when the notified node
+	//        runs network.Start).
+	clustered, err := cluster.Enabled(d.db)
+	if err != nil {
+		return SmartError(err)
+	}
+	if clustered {
+		return BadRequest(fmt.Errorf("Renaming a network not supported in LXD clusters"))
+	}
+
 	name := mux.Vars(r)["name"]
 	req := api.NetworkPost{}
 	state := d.State()
 
 	// Parse the request
-	err := json.NewDecoder(r.Body).Decode(&req)
+	err = json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
 		return BadRequest(err)
 	}
@@ -280,7 +518,7 @@ func networkPost(d *Daemon, r *http.Request) Response {
 	}
 
 	// Check that the name isn't already in use
-	networks, err := networkGetInterfaces(d.db)
+	networks, err := networkGetInterfaces(d.cluster)
 	if err != nil {
 		return InternalError(err)
 	}
@@ -302,7 +540,7 @@ func networkPut(d *Daemon, r *http.Request) Response {
 	name := mux.Vars(r)["name"]
 
 	// Get the existing network
-	_, dbInfo, err := d.db.NetworkGet(name)
+	_, dbInfo, err := d.cluster.NetworkGet(name)
 	if err != nil {
 		return SmartError(err)
 	}
@@ -327,7 +565,7 @@ func networkPatch(d *Daemon, r *http.Request) Response {
 	name := mux.Vars(r)["name"]
 
 	// Get the existing network
-	_, dbInfo, err := d.db.NetworkGet(name)
+	_, dbInfo, err := d.cluster.NetworkGet(name)
 	if dbInfo != nil {
 		return SmartError(err)
 	}
@@ -390,21 +628,136 @@ func doNetworkUpdate(d *Daemon, name string, oldConfig map[string]string, req ap
 
 var networkCmd = Command{name: "networks/{name}", get: networkGet, delete: networkDelete, post: networkPost, put: networkPut, patch: networkPatch}
 
+func networkLeasesGet(d *Daemon, r *http.Request) Response {
+	name := mux.Vars(r)["name"]
+	leaseFile := shared.VarPath("networks", name, "dnsmasq.leases")
+
+	// Try to get the network
+	n, err := doNetworkGet(d, name)
+	if err != nil {
+		return SmartError(err)
+	}
+
+	// Validate that we do have leases for it
+	if !n.Managed || n.Type != "bridge" {
+		return NotFound
+	}
+
+	if !shared.PathExists(leaseFile) {
+		return BadRequest(fmt.Errorf("No lease file for network"))
+	}
+
+	// Read all the leases
+	content, err := ioutil.ReadFile(leaseFile)
+	if err != nil {
+		return SmartError(err)
+	}
+
+	leases := []api.NetworkLease{}
+
+	// Get all the containers
+	containers, err := d.cluster.ContainersList(db.CTypeRegular)
+	if err != nil {
+		return SmartError(err)
+	}
+
+	// Get static leases
+	for _, cName := range containers {
+		// Load the container
+		c, err := containerLoadByName(d.State(), cName)
+		if err != nil {
+			continue
+		}
+
+		// Go through all its devices (including profiles
+		for k, d := range c.ExpandedDevices() {
+			// Skip uninteresting entries
+			if d["type"] != "nic" || d["nictype"] != "bridged" || d["parent"] != name {
+				continue
+			}
+
+			// Fill in the hwaddr from volatile
+			d, err = c.(*containerLXC).fillNetworkDevice(k, d)
+			if err != nil {
+				continue
+			}
+
+			// Add the lease
+			if d["ipv4.address"] != "" {
+				leases = append(leases, api.NetworkLease{
+					Hostname: cName,
+					Address:  d["ipv4.address"],
+					Hwaddr:   d["hwaddr"],
+					Type:     "static",
+				})
+			}
+
+			if d["ipv6.address"] != "" {
+				leases = append(leases, api.NetworkLease{
+					Hostname: cName,
+					Address:  d["ipv6.address"],
+					Hwaddr:   d["hwaddr"],
+					Type:     "static",
+				})
+			}
+		}
+	}
+
+	// Get dynamic leases
+	for _, lease := range strings.Split(string(content), "\n") {
+		fields := strings.Fields(lease)
+		if len(fields) >= 5 {
+			// Parse the MAC
+			mac := networkGetMacSlice(fields[1])
+			macStr := strings.Join(mac, ":")
+
+			if len(macStr) < 17 && fields[4] != "" {
+				macStr = fields[4][len(fields[4])-17:]
+			}
+
+			// Look for an existing static entry
+			found := false
+			for _, entry := range leases {
+				if entry.Hwaddr == macStr && entry.Address == fields[2] {
+					found = true
+					break
+				}
+			}
+
+			if found {
+				continue
+			}
+
+			// Add the lease to the list
+			leases = append(leases, api.NetworkLease{
+				Hostname: fields[3],
+				Address:  fields[2],
+				Hwaddr:   macStr,
+				Type:     "dynamic",
+			})
+		}
+	}
+
+	return SyncResponse(true, leases)
+}
+
+var networkLeasesCmd = Command{name: "networks/{name}/leases", get: networkLeasesGet}
+
 // The network structs and functions
 func networkLoadByName(s *state.State, name string) (*network, error) {
-	id, dbInfo, err := s.DB.NetworkGet(name)
+	id, dbInfo, err := s.Cluster.NetworkGet(name)
 	if err != nil {
 		return nil, err
 	}
 
-	n := network{db: s.DB, state: s, id: id, name: name, description: dbInfo.Description, config: dbInfo.Config}
+	n := network{state: s, id: id, name: name, description: dbInfo.Description, config: dbInfo.Config}
 
 	return &n, nil
 }
 
 func networkStartup(s *state.State) error {
 	// Get a list of managed networks
-	networks, err := s.DB.Networks()
+	networks, err := s.Cluster.NetworksNotPending()
 	if err != nil {
 		return err
 	}
@@ -428,7 +781,7 @@ func networkStartup(s *state.State) error {
 
 func networkShutdown(s *state.State) error {
 	// Get a list of managed networks
-	networks, err := s.DB.Networks()
+	networks, err := s.Cluster.Networks()
 	if err != nil {
 		return err
 	}
@@ -475,7 +828,7 @@ func (n *network) IsRunning() bool {
 
 func (n *network) IsUsed() bool {
 	// Look for containers using the interface
-	cts, err := n.db.ContainersList(db.CTypeRegular)
+	cts, err := n.state.Cluster.ContainersList(db.CTypeRegular)
 	if err != nil {
 		return true
 	}
@@ -494,12 +847,7 @@ func (n *network) IsUsed() bool {
 	return false
 }
 
-func (n *network) Delete() error {
-	// Sanity checks
-	if n.IsUsed() {
-		return fmt.Errorf("The network is currently in use")
-	}
-
+func (n *network) Delete(withDatabase bool) error {
 	// Bring the network down
 	if n.IsRunning() {
 		err := n.Stop()
@@ -508,8 +856,14 @@ func (n *network) Delete() error {
 		}
 	}
 
+	// If withDatabase is false, this is a cluster notification, and we
+	// don't want to perform any database work.
+	if !withDatabase {
+		return nil
+	}
+
 	// Remove the network from the database
-	err := n.db.NetworkDelete(n.name)
+	err := n.state.Cluster.NetworkDelete(n.name)
 	if err != nil {
 		return err
 	}
@@ -544,7 +898,7 @@ func (n *network) Rename(name string) error {
 	}
 
 	// Rename the database entry
-	err := n.db.NetworkRename(n.name, name)
+	err := n.state.Cluster.NetworkRename(n.name, name)
 	if err != nil {
 		return err
 	}
@@ -719,7 +1073,7 @@ func (n *network) Start() error {
 
 	// Configure IPv4 firewall (includes fan)
 	if n.config["bridge.mode"] == "fan" || !shared.StringInSlice(n.config["ipv4.address"], []string{"", "none"}) {
-		if n.config["ipv4.dhcp"] == "" || shared.IsTrue(n.config["ipv4.dhcp"]) {
+		if (n.config["ipv4.dhcp"] == "" || shared.IsTrue(n.config["ipv4.dhcp"])) && (n.config["ipv4.firewall"] == "" || shared.IsTrue(n.config["ipv4.firewall"])) {
 			// Setup basic iptables overrides for DHCP/DNS
 			rules := [][]string{
 				{"ipv4", n.name, "", "INPUT", "-i", n.name, "-p", "udp", "--dport", "67", "-j", "ACCEPT"},
@@ -804,6 +1158,10 @@ func (n *network) Start() error {
 				dnsmasqCmd = append(dnsmasqCmd, []string{"--dhcp-no-override", "--dhcp-authoritative", fmt.Sprintf("--dhcp-leasefile=%s", shared.VarPath("networks", n.name, "dnsmasq.leases")), fmt.Sprintf("--dhcp-hostsfile=%s", shared.VarPath("networks", n.name, "dnsmasq.hosts"))}...)
 			}
 
+			if n.config["ipv4.dhcp.gateway"] != "" {
+				dnsmasqCmd = append(dnsmasqCmd, fmt.Sprintf("--dhcp-option=3,%s", n.config["ipv4.dhcp.gateway"]))
+			}
+
 			expiry := "1h"
 			if n.config["ipv4.dhcp.expiry"] != "" {
 				expiry = n.config["ipv4.dhcp.expiry"]
@@ -883,7 +1241,7 @@ func (n *network) Start() error {
 
 		// Update the dnsmasq config
 		dnsmasqCmd = append(dnsmasqCmd, []string{fmt.Sprintf("--listen-address=%s", ip.String()), "--enable-ra"}...)
-		if n.config["ipv6.dhcp"] == "" || shared.IsTrue(n.config["ipv6.dhcp"]) {
+		if (n.config["ipv6.dhcp"] == "" || shared.IsTrue(n.config["ipv6.dhcp"])) && (n.config["ipv6.firewall"] == "" || shared.IsTrue(n.config["ipv6.firewall"])) {
 			// Setup basic iptables overrides for DHCP/DNS
 			rules := [][]string{
 				{"ipv6", n.name, "", "INPUT", "-i", n.name, "-p", "udp", "--dport", "546", "-j", "ACCEPT"},
@@ -1425,7 +1783,7 @@ func (n *network) Update(newNetwork api.NetworkPut) error {
 	n.description = newNetwork.Description
 
 	// Update the database
-	err = n.db.NetworkUpdate(n.name, n.description, n.config)
+	err = n.state.Cluster.NetworkUpdate(n.name, n.description, n.config)
 	if err != nil {
 		return err
 	}

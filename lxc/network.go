@@ -15,11 +15,13 @@ import (
 	"github.com/lxc/lxd/lxc/config"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
+	"github.com/lxc/lxd/shared/gnuflag"
 	"github.com/lxc/lxd/shared/i18n"
 	"github.com/lxc/lxd/shared/termios"
 )
 
 type networkCmd struct {
+	target string
 }
 
 func (c *networkCmd) showByDefault() bool {
@@ -55,13 +57,16 @@ Manage and attach containers to networks.
 lxc network list [<remote>:]
     List available networks.
 
-lxc network show [<remote>:]<network>
+lxc network list-leases [<remote>:]<network>
+    List the DHCP leases for the network
+
+lxc network show [<remote>:]<network> [--target <node>]
     Show details of a network.
 
-lxc network create [<remote>:]<network> [key=value...]
+lxc network create [<remote>:]<network> [key=value...] [--target <node>]
     Create a network.
 
-lxc network get [<remote>:]<network> <key>
+lxc network get [<remote>:]<network> <key> [--target <node>]
     Get network configuration.
 
 lxc network set [<remote>:]<network> <key> <value>
@@ -96,7 +101,9 @@ cat network.yaml | lxc network edit <network>
     Update a network using the content of network.yaml`)
 }
 
-func (c *networkCmd) flags() {}
+func (c *networkCmd) flags() {
+	gnuflag.StringVar(&c.target, "target", "", i18n.G("Node name"))
+}
 
 func (c *networkCmd) run(conf *config.Config, args []string) error {
 	if len(args) < 1 {
@@ -143,6 +150,8 @@ func (c *networkCmd) run(conf *config.Config, args []string) error {
 		return c.doNetworkRename(client, network, args[2])
 	case "get":
 		return c.doNetworkGet(client, network, args[2:])
+	case "list-leases":
+		return c.doNetworkListLeases(client, network)
 	case "set":
 		return c.doNetworkSet(client, network, args[2:])
 	case "unset":
@@ -250,12 +259,22 @@ func (c *networkCmd) doNetworkCreate(client lxd.ContainerServer, name string, ar
 		network.Config[entry[0]] = entry[1]
 	}
 
+	// If a target node was specified the API won't actually create the
+	// network, but only define it as pending in the database.
+	if c.target != "" {
+		client = client.UseTarget(c.target)
+	}
+
 	err := client.CreateNetwork(network)
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf(i18n.G("Network %s created")+"\n", name)
+	if c.target != "" {
+		fmt.Printf(i18n.G("Network %s pending on node %s")+"\n", name, c.target)
+	} else {
+		fmt.Printf(i18n.G("Network %s created")+"\n", name)
+	}
 	return nil
 }
 
@@ -458,6 +477,10 @@ func (c *networkCmd) doNetworkGet(client lxd.ContainerServer, name string, args 
 		return errArgs
 	}
 
+	if c.target != "" {
+		client = client.UseTarget(c.target)
+	}
+
 	resp, _, err := client.GetNetwork(name)
 	if err != nil {
 		return err
@@ -468,6 +491,33 @@ func (c *networkCmd) doNetworkGet(client lxd.ContainerServer, name string, args 
 			fmt.Printf("%s\n", v)
 		}
 	}
+	return nil
+}
+
+func (c *networkCmd) doNetworkListLeases(client lxd.ContainerServer, name string) error {
+	leases, err := client.GetNetworkLeases(name)
+	if err != nil {
+		return err
+	}
+
+	data := [][]string{}
+	for _, lease := range leases {
+		data = append(data, []string{lease.Hostname, lease.Hwaddr, lease.Address, strings.ToUpper(lease.Type)})
+	}
+
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetAutoWrapText(false)
+	table.SetAlignment(tablewriter.ALIGN_LEFT)
+	table.SetRowLine(true)
+	table.SetHeader([]string{
+		i18n.G("HOSTNAME"),
+		i18n.G("MAC ADDRESS"),
+		i18n.G("IP ADDRESS"),
+		i18n.G("TYPE")})
+	sort.Sort(byName(data))
+	table.AppendBulk(data)
+	table.Render()
+
 	return nil
 }
 
@@ -511,19 +561,28 @@ func (c *networkCmd) doNetworkList(conf *config.Config, args []string) error {
 		}
 
 		strUsedBy := fmt.Sprintf("%d", len(network.UsedBy))
-		data = append(data, []string{network.Name, network.Type, strManaged, network.Description, strUsedBy})
+		details := []string{network.Name, network.Type, strManaged, network.Description, strUsedBy}
+		if client.IsClustered() {
+			details = append(details, strings.ToUpper(network.Status))
+		}
+		data = append(data, details)
 	}
 
 	table := tablewriter.NewWriter(os.Stdout)
 	table.SetAutoWrapText(false)
 	table.SetAlignment(tablewriter.ALIGN_LEFT)
 	table.SetRowLine(true)
-	table.SetHeader([]string{
+	header := []string{
 		i18n.G("NAME"),
 		i18n.G("TYPE"),
 		i18n.G("MANAGED"),
 		i18n.G("DESCRIPTION"),
-		i18n.G("USED BY")})
+		i18n.G("USED BY"),
+	}
+	if client.IsClustered() {
+		header = append(header, i18n.G("STATE"))
+	}
+	table.SetHeader(header)
 	sort.Sort(byName(data))
 	table.AppendBulk(data)
 	table.Render()
@@ -570,6 +629,10 @@ func (c *networkCmd) doNetworkSet(client lxd.ContainerServer, name string, args 
 func (c *networkCmd) doNetworkShow(client lxd.ContainerServer, name string) error {
 	if name == "" {
 		return errArgs
+	}
+
+	if c.target != "" {
+		client = client.UseTarget(c.target)
 	}
 
 	network, _, err := client.GetNetwork(name)

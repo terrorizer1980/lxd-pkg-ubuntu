@@ -40,7 +40,7 @@ func GetArchitectures() ([]int, error) {
 
 // GetIdmapSet reads the uid/gid allocation.
 func GetIdmapSet() *idmap.IdmapSet {
-	idmapSet, err := idmap.DefaultIdmapSet()
+	idmapSet, err := idmap.DefaultIdmapSet("")
 	if err != nil {
 		logger.Warn("Error reading default uid/gid map", log.Ctx{"err": err.Error()})
 		logger.Warnf("Only privileged containers will be able to run")
@@ -50,7 +50,7 @@ func GetIdmapSet() *idmap.IdmapSet {
 		if err == nil {
 			logger.Infof("Kernel uid/gid map:")
 			for _, lxcmap := range kernelIdmapSet.ToLxcString() {
-				logger.Infof(strings.TrimRight(" - "+lxcmap, "\n"))
+				logger.Infof(" - " + lxcmap)
 			}
 		}
 
@@ -68,7 +68,7 @@ func GetIdmapSet() *idmap.IdmapSet {
 				}
 
 				for _, lxcEntry := range lxcmap.ToLxcString() {
-					logger.Infof(" - %s%s", strings.TrimRight(lxcEntry, "\n"), suffix)
+					logger.Infof(" - %s%s", lxcEntry, suffix)
 				}
 			}
 
@@ -83,6 +83,8 @@ func GetIdmapSet() *idmap.IdmapSet {
 	return idmapSet
 }
 
+// RuntimeLiblxcVersionAtLeast checks if the system's liblxc matches the
+// provided version requirement
 func RuntimeLiblxcVersionAtLeast(major int, minor int, micro int) bool {
 	version := golxc.Version()
 	version = strings.Replace(version, " (devel)", "-devel", 1)
@@ -151,6 +153,7 @@ func RuntimeLiblxcVersionAtLeast(major int, minor int, micro int) bool {
 	return true
 }
 
+// GetExecPath returns the path to the current binary
 func GetExecPath() string {
 	execPath := os.Getenv("LXD_EXEC_PATH")
 	if execPath != "" {

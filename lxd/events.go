@@ -13,6 +13,7 @@ import (
 	"github.com/pborman/uuid"
 
 	"github.com/lxc/lxd/shared"
+	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/logger"
 )
 
@@ -36,10 +37,10 @@ func logContextMap(ctx []interface{}) map[string]string {
 }
 
 func (h eventsHandler) Log(r *log.Record) error {
-	eventSend("logging", shared.Jmap{
-		"message": r.Msg,
-		"level":   r.Lvl.String(),
-		"context": logContextMap(r.Ctx)})
+	eventSend("logging", api.EventLogging{
+		Message: r.Msg,
+		Level:   r.Lvl.String(),
+		Context: logContextMap(r.Ctx)})
 	return nil
 }
 
@@ -53,6 +54,11 @@ type eventListener struct {
 	id           string
 	lock         sync.Mutex
 	done         bool
+
+	// If true, this listener won't get events forwarded from other
+	// nodes. It only used by listeners created internally by LXD nodes
+	// connecting to other LXD nodes to get their local events only.
+	noForward bool
 }
 
 type eventsServe struct {
@@ -68,8 +74,6 @@ func (r *eventsServe) String() string {
 }
 
 func eventsSocket(r *http.Request, w http.ResponseWriter) error {
-	listener := eventListener{}
-
 	typeStr := r.FormValue("type")
 	if typeStr == "" {
 		typeStr = "logging,operation"
@@ -80,16 +84,23 @@ func eventsSocket(r *http.Request, w http.ResponseWriter) error {
 		return err
 	}
 
-	listener.active = make(chan bool, 1)
-	listener.connection = c
-	listener.id = uuid.NewRandom().String()
-	listener.messageTypes = strings.Split(typeStr, ",")
+	listener := eventListener{
+		active:       make(chan bool, 1),
+		connection:   c,
+		id:           uuid.NewRandom().String(),
+		messageTypes: strings.Split(typeStr, ","),
+	}
+
+	// If this request is an internal one initiated by another node wanting
+	// to watch the events on this node, set the listener to broadcast only
+	// local events.
+	listener.noForward = isClusterNotification(r)
 
 	eventsLock.Lock()
 	eventListeners[listener.id] = &listener
 	eventsLock.Unlock()
 
-	logger.Debugf("New events listener: %s", listener.id)
+	logger.Debugf("New event listener: %s", listener.id)
 
 	<-listener.active
 
@@ -97,7 +108,7 @@ func eventsSocket(r *http.Request, w http.ResponseWriter) error {
 }
 
 func eventsGet(d *Daemon, r *http.Request) Response {
-	return &eventsServe{r}
+	return &eventsServe{req: r}
 }
 
 var eventsCmd = Command{name: "events", get: eventsGet}
@@ -108,15 +119,24 @@ func eventSend(eventType string, eventMessage interface{}) error {
 	event["timestamp"] = time.Now()
 	event["metadata"] = eventMessage
 
+	return eventBroadcast(event)
+}
+
+func eventBroadcast(event shared.Jmap) error {
 	body, err := json.Marshal(event)
 	if err != nil {
 		return err
 	}
 
+	_, isForward := event["node"]
 	eventsLock.Lock()
 	listeners := eventListeners
 	for _, listener := range listeners {
-		if !shared.StringInSlice(eventType, listener.messageTypes) {
+		if isForward && listener.noForward {
+			continue
+		}
+
+		if !shared.StringInSlice(event["type"].(string), listener.messageTypes) {
 			continue
 		}
 
@@ -146,11 +166,22 @@ func eventSend(eventType string, eventMessage interface{}) error {
 				listener.connection.Close()
 				listener.active <- false
 				listener.done = true
-				logger.Debugf("Disconnected events listener: %s", listener.id)
+				logger.Debugf("Disconnected event listener: %s", listener.id)
 			}
 		}(listener, body)
 	}
 	eventsLock.Unlock()
 
 	return nil
+}
+
+// Forward to the local events dispatcher an event received from another node .
+func eventForward(id int64, data interface{}) {
+	event := data.(map[string]interface{})
+	event["node"] = id
+
+	err := eventBroadcast(event)
+	if err != nil {
+		logger.Warnf("Failed to forward event from node %d: %v", id, err)
+	}
 }

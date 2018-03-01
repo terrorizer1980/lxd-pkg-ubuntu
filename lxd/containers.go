@@ -106,7 +106,7 @@ func (slice containerAutostartList) Swap(i, j int) {
 
 func containersRestart(s *state.State) error {
 	// Get all the containers
-	result, err := s.DB.ContainersList(db.CTypeRegular)
+	result, err := s.Cluster.ContainersList(db.CTypeRegular)
 	if err != nil {
 		return err
 	}
@@ -179,7 +179,7 @@ func containersShutdown(s *state.State) error {
 	var wg sync.WaitGroup
 
 	// Get all the containers
-	results, err := s.DB.ContainersList(db.CTypeRegular)
+	results, err := s.Cluster.ContainersList(db.CTypeRegular)
 	if err != nil {
 		return err
 	}
@@ -198,7 +198,7 @@ func containersShutdown(s *state.State) error {
 	sort.Sort(containerStopList(containers))
 
 	// Reset all container states
-	err = s.DB.ContainersResetState()
+	err = s.Cluster.ContainersResetState()
 	if err != nil {
 		return err
 	}
@@ -236,13 +236,13 @@ func containersShutdown(s *state.State) error {
 
 			// Stop the container
 			wg.Add(1)
-			go func() {
+			go func(c container, lastState string) {
 				c.Shutdown(time.Second * time.Duration(timeoutSeconds))
 				c.Stop(false)
 				c.ConfigKeySet("volatile.last_state.power", lastState)
 
 				wg.Done()
-			}()
+			}(c, lastState)
 		} else {
 			c.ConfigKeySet("volatile.last_state.power", lastState)
 		}
@@ -256,7 +256,7 @@ func containerDeleteSnapshots(s *state.State, cname string) error {
 	logger.Debug("containerDeleteSnapshots",
 		log.Ctx{"container": cname})
 
-	results, err := s.DB.ContainerGetSnapshots(cname)
+	results, err := s.Cluster.ContainerGetSnapshots(cname)
 	if err != nil {
 		return err
 	}

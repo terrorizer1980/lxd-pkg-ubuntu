@@ -9,6 +9,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/lxc/lxd/lxd/migration"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/idmap"
@@ -359,7 +360,7 @@ func (s *storageDir) StoragePoolVolumeDelete() error {
 		return err
 	}
 
-	err = s.db.StoragePoolVolumeDelete(
+	err = s.s.Cluster.StoragePoolVolumeDelete(
 		s.volume.Name,
 		storagePoolVolumeTypeCustom,
 		s.poolID)
@@ -433,7 +434,7 @@ func (s *storageDir) StoragePoolVolumeRename(newName string) error {
 	logger.Infof(`Renamed DIR storage volume on storage pool "%s" from "%s" to "%s`,
 		s.pool.Name, s.volume.Name, newName)
 
-	return s.db.StoragePoolVolumeRename(s.volume.Name, newName,
+	return s.s.Cluster.StoragePoolVolumeRename(s.volume.Name, newName,
 		storagePoolVolumeTypeCustom, s.poolID)
 }
 
@@ -1030,8 +1031,8 @@ func (s *storageDir) ImageUmount(fingerprint string) (bool, error) {
 	return true, nil
 }
 
-func (s *storageDir) MigrationType() MigrationFSType {
-	return MigrationFSType_RSYNC
+func (s *storageDir) MigrationType() migration.MigrationFSType {
+	return migration.MigrationFSType_RSYNC
 }
 
 func (s *storageDir) PreservesInodes() bool {
@@ -1042,7 +1043,7 @@ func (s *storageDir) MigrationSource(container container, containerOnly bool) (M
 	return rsyncMigrationSource(container, containerOnly)
 }
 
-func (s *storageDir) MigrationSink(live bool, container container, snapshots []*Snapshot, conn *websocket.Conn, srcIdmap *idmap.IdmapSet, op *operation, containerOnly bool) error {
+func (s *storageDir) MigrationSink(live bool, container container, snapshots []*migration.Snapshot, conn *websocket.Conn, srcIdmap *idmap.IdmapSet, op *operation, containerOnly bool) error {
 	return rsyncMigrationSink(live, container, snapshots, conn, srcIdmap, op, containerOnly)
 }
 
@@ -1059,4 +1060,46 @@ func (s *storageDir) StoragePoolResources() (*api.ResourcesStoragePool, error) {
 	poolMntPoint := getStoragePoolMountPoint(s.pool.Name)
 
 	return storageResource(poolMntPoint)
+}
+
+func (s *storageDir) StoragePoolVolumeCopy(source *api.StorageVolumeSource) error {
+	logger.Infof("Copying DIR storage volume \"%s\" on storage pool \"%s\" as \"%s\" to storage pool \"%s\"", source.Name, source.Pool, s.volume.Name, s.pool.Name)
+	successMsg := fmt.Sprintf("Copied DIR storage volume \"%s\" on storage pool \"%s\" as \"%s\" to storage pool \"%s\"", source.Name, source.Pool, s.volume.Name, s.pool.Name)
+
+	if s.pool.Name != source.Pool {
+		// setup storage for the source volume
+		srcStorage, err := storagePoolVolumeInit(s.s, source.Pool, source.Name, storagePoolVolumeTypeCustom)
+		if err != nil {
+			logger.Errorf("Failed to initialize DIR storage volume \"%s\" on storage pool \"%s\": %s", s.volume.Name, s.pool.Name, err)
+			return err
+		}
+
+		ourMount, err := srcStorage.StoragePoolVolumeMount()
+		if err != nil {
+			logger.Errorf("Failed to mount DIR storage volume \"%s\" on storage pool \"%s\": %s", s.volume.Name, s.pool.Name, err)
+			return err
+		}
+		if ourMount {
+			defer srcStorage.StoragePoolVolumeUmount()
+		}
+	}
+
+	err := s.StoragePoolVolumeCreate()
+	if err != nil {
+		logger.Errorf("Failed to create DIR storage volume \"%s\" on storage pool \"%s\": %s", s.volume.Name, s.pool.Name, err)
+		return err
+	}
+
+	srcMountPoint := getStoragePoolVolumeMountPoint(source.Pool, source.Name)
+	dstMountPoint := getStoragePoolVolumeMountPoint(s.pool.Name, s.volume.Name)
+	bwlimit := s.pool.Config["rsync.bwlimit"]
+	_, err = rsyncLocalCopy(srcMountPoint, dstMountPoint, bwlimit)
+	if err != nil {
+		os.RemoveAll(dstMountPoint)
+		logger.Errorf("Failed to rsync into DIR storage volume \"%s\" on storage pool \"%s\": %s", s.volume.Name, s.pool.Name, err)
+		return err
+	}
+
+	logger.Infof(successMsg)
+	return nil
 }

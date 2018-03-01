@@ -18,6 +18,7 @@ import (
 
 	"github.com/lxc/lxd/client"
 	"github.com/lxc/lxd/lxc/config"
+	"github.com/lxc/lxd/lxc/utils"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/gnuflag"
@@ -445,7 +446,7 @@ func (c *imageCmd) run(conf *config.Config, args []string) error {
 		}
 
 		// Register progress handler
-		progress := ProgressRenderer{Format: i18n.G("Copying the image: %s")}
+		progress := utils.ProgressRenderer{Format: i18n.G("Copying the image: %s")}
 		_, err = op.AddHandler(progress.UpdateOp)
 		if err != nil {
 			progress.Done("")
@@ -453,7 +454,7 @@ func (c *imageCmd) run(conf *config.Config, args []string) error {
 		}
 
 		// Wait for operation to finish
-		err = cancelableWait(op, &progress)
+		err = utils.CancelableWait(op, &progress)
 		if err != nil {
 			progress.Done("")
 			return err
@@ -525,7 +526,7 @@ func (c *imageCmd) run(conf *config.Config, args []string) error {
 			}
 
 			image := c.dereferenceAlias(d, inName)
-			progress := ProgressRenderer{Format: i18n.G("Refreshing the image: %s")}
+			progress := utils.ProgressRenderer{Format: i18n.G("Refreshing the image: %s")}
 			op, err := d.RefreshImage(image)
 			if err != nil {
 				return err
@@ -713,7 +714,7 @@ func (c *imageCmd) run(conf *config.Config, args []string) error {
 			image.Properties[strings.TrimSpace(fields[0])] = strings.TrimSpace(fields[1])
 		}
 
-		progress := ProgressRenderer{Format: i18n.G("Transferring image: %s")}
+		progress := utils.ProgressRenderer{Format: i18n.G("Transferring image: %s")}
 		if strings.HasPrefix(imageFile, "https://") {
 			image.Source = &api.ImagesPostSource{}
 			image.Source.Type = "url"
@@ -918,7 +919,7 @@ func (c *imageCmd) run(conf *config.Config, args []string) error {
 		defer destRootfs.Close()
 
 		// Prepare the download request
-		progress := ProgressRenderer{Format: i18n.G("Exporting the image: %s")}
+		progress := utils.ProgressRenderer{Format: i18n.G("Exporting the image: %s")}
 		req := lxd.ImageFileRequest{
 			MetaFile:        io.WriteSeeker(dest),
 			RootfsFile:      io.WriteSeeker(destRootfs),
@@ -1065,7 +1066,7 @@ func (c *imageCmd) showImages(images []api.Image, filters []string, columns []im
 			data = append(data, row)
 		}
 
-		sort.Sort(StringList(data))
+		sort.Sort(stringList(data))
 		return data
 	}
 
@@ -1135,7 +1136,7 @@ func (c *imageCmd) showAliases(aliases []api.ImageAliasesEntry, filters []string
 		i18n.G("ALIAS"),
 		i18n.G("FINGERPRINT"),
 		i18n.G("DESCRIPTION")})
-	sort.Sort(StringList(data))
+	sort.Sort(stringList(data))
 	table.AppendBulk(data)
 	table.Render()
 

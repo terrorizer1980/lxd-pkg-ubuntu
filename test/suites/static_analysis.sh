@@ -21,11 +21,24 @@ test_static_analysis() {
       echo "shellcheck not found, shell static analysis disabled"
     fi
 
-    # Go static analysis
     ## Functions starting by empty line
-    OUT=$(grep -r "^$" -B1 . | grep "func " | grep -v "}$" || true)
+    OUT=$(grep -r "^$" -B1 . | grep "func " | grep -v "}$" | grep -v "./lxd/sqlite/" || true)
     if [ -n "${OUT}" ]; then
       echo "ERROR: Functions must not start with an empty line: ${OUT}"
+      false
+    fi
+
+    ## Mixed tabs/spaces in scripts
+    OUT=$(grep -Pr "\t" . | grep "\.sh:" || true)
+    if [ -n "${OUT}" ]; then
+      echo "ERROR: mixed tabs and spaces in script: ${OUT}"
+      false
+    fi
+
+    ## Trailing whitespace in scripts
+    OUT=$(grep -r " $" . | grep "\.sh:" || true)
+    if [ -n "${OUT}" ]; then
+      echo "ERROR: trailing whitespace in script: ${OUT}"
       false
     fi
 
@@ -42,17 +55,50 @@ test_static_analysis() {
     ## golint
     if which golint >/dev/null 2>&1; then
       golint -set_exit_status client/
+
+      golint -set_exit_status fuidshift/
+
+      golint -set_exit_status lxc/
       golint -set_exit_status lxc/config/
+      golint -set_exit_status lxc/utils/
+
+      golint -set_exit_status lxd-benchmark
+      golint -set_exit_status lxd-benchmark/benchmark
+
+      golint -set_exit_status lxd-p2c
+
+      golint -set_exit_status lxd/config
+      golint -set_exit_status lxd/db/node
+      golint -set_exit_status lxd/db/query
+      golint -set_exit_status lxd/db/schema
+      golint -set_exit_status lxd/debug
+      golint -set_exit_status lxd/endpoints
+      golint -set_exit_status lxd/maas
+      #golint -set_exit_status lxd/migration
+      golint -set_exit_status lxd/node
+      golint -set_exit_status lxd/state
+      golint -set_exit_status lxd/sys
+      golint -set_exit_status lxd/task
+      golint -set_exit_status lxd/template
+      golint -set_exit_status lxd/types
+      golint -set_exit_status lxd/util
+
       golint -set_exit_status shared/api/
+      golint -set_exit_status shared/cancel/
       golint -set_exit_status shared/cmd/
+      golint -set_exit_status shared/eagain/
       golint -set_exit_status shared/gnuflag/
       golint -set_exit_status shared/i18n/
       golint -set_exit_status shared/ioprogress/
+      golint -set_exit_status shared/log15/stack
       golint -set_exit_status shared/logger/
       golint -set_exit_status shared/logging/
+      golint -set_exit_status shared/subtest/
       golint -set_exit_status shared/termios/
       golint -set_exit_status shared/version/
+
       golint -set_exit_status test/deps/
+      golint -set_exit_status test/macaroon-identity
     fi
 
     ## deadcode

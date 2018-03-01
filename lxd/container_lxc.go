@@ -20,13 +20,14 @@ import (
 	"syscall"
 	"time"
 
-	"gopkg.in/flosch/pongo2.v3"
+	"github.com/flosch/pongo2"
 	"gopkg.in/lxc/go-lxc.v2"
 	"gopkg.in/yaml.v2"
 
 	"github.com/lxc/lxd/lxd/db"
 	"github.com/lxc/lxd/lxd/maas"
 	"github.com/lxc/lxd/lxd/state"
+	"github.com/lxc/lxd/lxd/template"
 	"github.com/lxc/lxd/lxd/types"
 	"github.com/lxc/lxd/lxd/util"
 	"github.com/lxc/lxd/shared"
@@ -210,12 +211,8 @@ func lxcValidConfig(rawLxc string) error {
 			return fmt.Errorf("Setting lxc.logfile is not allowed")
 		}
 
-		if key == "lxc.console.logfile" {
-			return fmt.Errorf("Setting lxc.console.logfile is not allowed")
-		}
-
 		if key == "lxc.syslog" || key == "lxc.log.syslog" {
-			return fmt.Errorf("Setting lxc.syslog is not allowed")
+			return fmt.Errorf("Setting lxc.log.syslog is not allowed")
 		}
 
 		if key == "lxc.ephemeral" {
@@ -275,7 +272,6 @@ func containerLXCCreate(s *state.State, args db.ContainerArgs) (container, error
 	// Create the container struct
 	c := &containerLXC{
 		state:        s,
-		db:           s.DB,
 		id:           args.Id,
 		name:         args.Name,
 		description:  args.Description,
@@ -311,7 +307,7 @@ func containerLXCCreate(s *state.State, args db.ContainerArgs) (container, error
 		return nil, err
 	}
 
-	err = containerValidDevices(s.DB, c.expandedDevices, false, true)
+	err = containerValidDevices(s.Cluster, c.expandedDevices, false, true)
 	if err != nil {
 		c.Delete()
 		logger.Error("Failed creating container", ctxMap)
@@ -333,7 +329,7 @@ func containerLXCCreate(s *state.State, args db.ContainerArgs) (container, error
 	storagePool := rootDiskDevice["pool"]
 
 	// Get the storage pool ID for the container
-	poolID, pool, err := s.DB.StoragePoolGet(storagePool)
+	poolID, pool, err := s.Cluster.StoragePoolGet(storagePool)
 	if err != nil {
 		c.Delete()
 		return nil, err
@@ -347,7 +343,7 @@ func containerLXCCreate(s *state.State, args db.ContainerArgs) (container, error
 	}
 
 	// Create a new database entry for the container's storage volume
-	_, err = s.DB.StoragePoolVolumeCreate(args.Name, "", storagePoolVolumeTypeContainer, poolID, volumeConfig)
+	_, err = s.Cluster.StoragePoolVolumeCreate(args.Name, "", storagePoolVolumeTypeContainer, poolID, volumeConfig)
 	if err != nil {
 		c.Delete()
 		return nil, err
@@ -357,7 +353,7 @@ func containerLXCCreate(s *state.State, args db.ContainerArgs) (container, error
 	cStorage, err := storagePoolVolumeContainerCreateInit(s, storagePool, args.Name)
 	if err != nil {
 		c.Delete()
-		s.DB.StoragePoolVolumeDelete(args.Name, storagePoolVolumeTypeContainer, poolID)
+		s.Cluster.StoragePoolVolumeDelete(args.Name, storagePoolVolumeTypeContainer, poolID)
 		logger.Error("Failed to initialize container storage", ctxMap)
 		return nil, err
 	}
@@ -451,7 +447,6 @@ func containerLXCLoad(s *state.State, args db.ContainerArgs) (container, error) 
 	// Create the container struct
 	c := &containerLXC{
 		state:        s,
-		db:           s.DB,
 		id:           args.Id,
 		name:         args.Name,
 		description:  args.Description,
@@ -464,6 +459,7 @@ func containerLXCLoad(s *state.State, args db.ContainerArgs) (container, error) 
 		localConfig:  args.Config,
 		localDevices: args.Devices,
 		stateful:     args.Stateful,
+		node:         args.Node,
 	}
 
 	// Load the config.
@@ -497,14 +493,17 @@ type containerLXC struct {
 	profiles        []string
 
 	// Cache
-	c        *lxc.Container
-	cConfig  bool
-	db       *db.Node
+	c       *lxc.Container
+	cConfig bool
+
 	state    *state.State
 	idmapset *idmap.IdmapSet
 
 	// Storage
 	storage storage
+
+	// Clustering
+	node string
 }
 
 func (c *containerLXC) createOperation(action string, reusable bool, reuse bool) (*lxcContainerOperation, error) {
@@ -737,7 +736,7 @@ func findIdmap(state *state.State, cName string, isolatedStr string, configBase 
 	idmapLock.Lock()
 	defer idmapLock.Unlock()
 
-	cs, err := state.DB.ContainersList(db.CTypeRegular)
+	cs, err := state.Cluster.ContainersList(db.CTypeRegular)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -886,8 +885,13 @@ func (c *containerLXC) initLXC(config bool) error {
 	}
 
 	if util.RuntimeLiblxcVersionAtLeast(3, 0, 0) {
-		// 128 kB console ringbuffer.
+		// Default size log buffer
 		err = lxcSetConfigItem(cc, "lxc.console.buffer.size", "auto")
+		if err != nil {
+			return err
+		}
+
+		err = lxcSetConfigItem(cc, "lxc.console.size", "auto")
 		if err != nil {
 			return err
 		}
@@ -895,7 +899,7 @@ func (c *containerLXC) initLXC(config bool) error {
 		// File to dump ringbuffer contents to when requested or
 		// container shutdown.
 		consoleBufferLogFile := c.ConsoleBufferLogPath()
-		err = lxcSetConfigItem(cc, "lxc.console.buffer.logfile", consoleBufferLogFile)
+		err = lxcSetConfigItem(cc, "lxc.console.logfile", consoleBufferLogFile)
 		if err != nil {
 			return err
 		}
@@ -908,15 +912,17 @@ func (c *containerLXC) initLXC(config bool) error {
 		return nil
 	}
 
-	// Base config
-	toDrop := "sys_time sys_module sys_rawio"
-	if !c.state.OS.AppArmorStacking || c.state.OS.AppArmorStacked {
-		toDrop = toDrop + " mac_admin mac_override"
-	}
+	if c.IsPrivileged() {
+		// Base config
+		toDrop := "sys_time sys_module sys_rawio"
+		if !c.state.OS.AppArmorStacking || c.state.OS.AppArmorStacked {
+			toDrop = toDrop + " mac_admin mac_override"
+		}
 
-	err = lxcSetConfigItem(cc, "lxc.cap.drop", toDrop)
-	if err != nil {
-		return err
+		err = lxcSetConfigItem(cc, "lxc.cap.drop", toDrop)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Set an appropriate /proc, /sys/ and /sys/fs/cgroup
@@ -1139,7 +1145,7 @@ func (c *containerLXC) initLXC(config bool) error {
 	if idmapset != nil {
 		lines := idmapset.ToLxcString()
 		for _, line := range lines {
-			err := lxcSetConfigItem(cc, "lxc.idmap", strings.TrimSuffix(line, "\n"))
+			err := lxcSetConfigItem(cc, "lxc.idmap", line)
 			if err != nil {
 				return err
 			}
@@ -1172,7 +1178,7 @@ func (c *containerLXC) initLXC(config bool) error {
 					return err
 				}
 
-				memoryTotal, err := deviceTotalMemory()
+				memoryTotal, err := shared.DeviceTotalMemory()
 				if err != nil {
 					return err
 				}
@@ -1376,13 +1382,21 @@ func (c *containerLXC) initLXC(config bool) error {
 				destPath = m["source"]
 			}
 			relativeDestPath := strings.TrimPrefix(destPath, "/")
-			sourceDevPath := filepath.Join(c.DevicesPath(), fmt.Sprintf("unix.%s.%s", k, strings.Replace(relativeDestPath, "/", "-", -1)))
+			sourceDevPath := filepath.Join(c.DevicesPath(), fmt.Sprintf("unix.%s.%s", strings.Replace(k, "/", "-", -1), strings.Replace(relativeDestPath, "/", "-", -1)))
+
+			// Do not fail to start when the device doesn't need to
+			// exist.
+			opts := "none bind,create=file"
+			if m["required"] != "" && !shared.IsTrue(m["required"]) {
+				opts = "none bind,create=file,optional"
+			}
 
 			// inform liblxc about the mount
 			err = lxcSetConfigItem(cc, "lxc.mount.entry",
-				fmt.Sprintf("%s %s none bind,create=file",
+				fmt.Sprintf("%s %s %s",
 					shared.EscapePathFstab(sourceDevPath),
-					shared.EscapePathFstab(relativeDestPath)))
+					shared.EscapePathFstab(relativeDestPath),
+					opts))
 			if err != nil {
 				return err
 			}
@@ -1495,7 +1509,7 @@ func (c *containerLXC) initLXC(config bool) error {
 			destPath := m["path"]
 			relativeDestPath := strings.TrimPrefix(destPath, "/")
 
-			sourceDevPath := filepath.Join(c.DevicesPath(), fmt.Sprintf("disk.%s.%s", k, strings.Replace(relativeDestPath, "/", "-", -1)))
+			sourceDevPath := filepath.Join(c.DevicesPath(), fmt.Sprintf("disk.%s.%s", strings.Replace(k, "/", "-", -1), strings.Replace(relativeDestPath, "/", "-", -1)))
 
 			// Various option checks
 			isOptional := shared.IsTrue(m["optional"])
@@ -1627,7 +1641,7 @@ func (c *containerLXC) expandConfig() error {
 
 	// Apply all the profiles
 	for _, name := range c.profiles {
-		profileConfig, err := c.db.ProfileConfig(name)
+		profileConfig, err := c.state.Cluster.ProfileConfig(name)
 		if err != nil {
 			return err
 		}
@@ -1651,7 +1665,7 @@ func (c *containerLXC) expandDevices() error {
 
 	// Apply all the profiles
 	for _, p := range c.profiles {
-		profileDevices, err := c.db.Devices(p, true)
+		profileDevices, err := c.state.Cluster.Devices(p, true)
 		if err != nil {
 			return err
 		}
@@ -1746,6 +1760,14 @@ func (c *containerLXC) startCommon() (string, error) {
 			if m["path"] != "" && m["major"] == "" && m["minor"] == "" && !shared.PathExists(srcPath) {
 				return "", fmt.Errorf("Missing source '%s' for device '%s'", srcPath, name)
 			}
+
+			if m["required"] != "" && !shared.IsTrue(m["required"]) {
+				err = deviceInotifyAddClosestLivingAncestor(c.state, srcPath)
+				if err != nil {
+					logger.Errorf("Failed to add \"%s\" to inotify targets", srcPath)
+					return "", err
+				}
+			}
 		}
 	}
 
@@ -1779,7 +1801,7 @@ func (c *containerLXC) startCommon() (string, error) {
 		}
 
 		// Remove the volatile key from the DB
-		err = c.db.ContainerConfigRemove(c.id, "volatile.apply_quota")
+		err = c.state.Cluster.ContainerConfigRemove(c.id, "volatile.apply_quota")
 		if err != nil {
 			return "", err
 		}
@@ -1884,6 +1906,7 @@ func (c *containerLXC) startCommon() (string, error) {
 	c.removeUnixDevices()
 	c.removeDiskDevices()
 	c.removeNetworkFilters()
+	c.removeProxyDevices()
 
 	var usbs []usbDevice
 	var gpus []gpuDevice
@@ -1898,19 +1921,37 @@ func (c *containerLXC) startCommon() (string, error) {
 			// Unix device
 			paths, err := c.createUnixDevice(fmt.Sprintf("unix.%s", k), m)
 			if err != nil {
-				return "", err
+				// Deal with device hotplug
+				if m["required"] == "" || shared.IsTrue(m["required"]) {
+					return "", err
+				}
+
+				srcPath := m["source"]
+				if srcPath == "" {
+					srcPath = m["path"]
+				}
+				srcPath = shared.HostPath(srcPath)
+
+				err = deviceInotifyAddClosestLivingAncestor(c.state, srcPath)
+				if err != nil {
+					logger.Errorf("Failed to add \"%s\" to inotify targets", srcPath)
+					return "", err
+				}
+				continue
 			}
 			devPath := paths[0]
 			if c.IsPrivileged() && !c.state.OS.RunningInUserNS && c.state.OS.CGroupDevicesController {
 				// Add the new device cgroup rule
 				dType, dMajor, dMinor, err := deviceGetAttributes(devPath)
 				if err != nil {
-					return "", err
-				}
-
-				err = lxcSetConfigItem(c.c, "lxc.cgroup.devices.allow", fmt.Sprintf("%s %d:%d rwm", dType, dMajor, dMinor))
-				if err != nil {
-					return "", fmt.Errorf("Failed to add cgroup rule for device")
+					if m["required"] == "" || shared.IsTrue(m["required"]) {
+						return "", err
+					}
+				} else {
+					err = lxcSetConfigItem(c.c, "lxc.cgroup.devices.allow", fmt.Sprintf("%s %d:%d rwm", dType, dMajor, dMinor))
+					if err != nil {
+						return "", fmt.Errorf("Failed to add cgroup rule for device")
+					}
 				}
 			}
 		} else if m["type"] == "usb" {
@@ -2202,7 +2243,7 @@ func (c *containerLXC) startCommon() (string, error) {
 	}
 
 	// Update time container was last started
-	err = c.db.ContainerLastUsedUpdate(c.id, time.Now().UTC())
+	err = c.state.Cluster.ContainerLastUsedUpdate(c.id, time.Now().UTC())
 	if err != nil {
 		return "", fmt.Errorf("Error updating last used: %v", err)
 	}
@@ -2270,7 +2311,7 @@ func (c *containerLXC) Start(stateful bool) error {
 		os.RemoveAll(c.StatePath())
 		c.stateful = false
 
-		err = c.db.ContainerSetStateful(c.id, false)
+		err = c.state.Cluster.ContainerSetStateful(c.id, false)
 		if err != nil {
 			logger.Error("Failed starting container", ctxMap)
 			return err
@@ -2287,7 +2328,7 @@ func (c *containerLXC) Start(stateful bool) error {
 		}
 
 		c.stateful = false
-		err = c.db.ContainerSetStateful(c.id, false)
+		err = c.state.Cluster.ContainerSetStateful(c.id, false)
 		if err != nil {
 			return err
 		}
@@ -2342,6 +2383,8 @@ func (c *containerLXC) Start(stateful bool) error {
 		return err
 	}
 
+	c.restartProxyDevices()
+
 	logger.Info("Started container", ctxMap)
 
 	return nil
@@ -2380,7 +2423,7 @@ func (c *containerLXC) OnStart() error {
 		}
 
 		// Remove the volatile key from the DB
-		err := c.db.ContainerConfigRemove(c.id, key)
+		err := c.state.Cluster.ContainerConfigRemove(c.id, key)
 		if err != nil {
 			AADestroy(c)
 			if ourStart {
@@ -2434,7 +2477,7 @@ func (c *containerLXC) OnStart() error {
 	}
 
 	// Record current state
-	err = c.db.ContainerSetState(c.id, "RUNNING")
+	err = c.state.Cluster.ContainerSetState(c.id, "RUNNING")
 	if err != nil {
 		return err
 	}
@@ -2498,7 +2541,7 @@ func (c *containerLXC) Stop(stateful bool) error {
 		}
 
 		c.stateful = true
-		err = c.db.ContainerSetStateful(c.id, true)
+		err = c.state.Cluster.ContainerSetStateful(c.id, true)
 		if err != nil {
 			op.Done(err)
 			logger.Error("Failed stopping container", ctxMap)
@@ -2520,17 +2563,23 @@ func (c *containerLXC) Stop(stateful bool) error {
 		return err
 	}
 
-	// Attempt to freeze the container first, helps massively with fork bombs
-	freezer := make(chan bool, 1)
-	go func() {
-		c.Freeze()
-		freezer <- true
-	}()
+	// Fork-bomb mitigation, prevent forking from this point on
+	if c.state.OS.CGroupPidsController {
+		// Attempt to disable forking new processes
+		c.CGroupSet("pids.max", "0")
+	} else {
+		// Attempt to freeze the container
+		freezer := make(chan bool, 1)
+		go func() {
+			c.Freeze()
+			freezer <- true
+		}()
 
-	select {
-	case <-freezer:
-	case <-time.After(time.Second * 5):
-		c.Unfreeze()
+		select {
+		case <-freezer:
+		case <-time.After(time.Second * 5):
+			c.Unfreeze()
+		}
 	}
 
 	if err := c.c.Stop(); err != nil {
@@ -2671,6 +2720,12 @@ func (c *containerLXC) OnStop(target string) error {
 			logger.Error("Unable to remove network filters", log.Ctx{"container": c.Name(), "err": err})
 		}
 
+		// Clean all proxy devices
+		err = c.removeProxyDevices()
+		if err != nil {
+			logger.Error("Unable to remove proxy devices", log.Ctx{"container": c.Name(), "err": err})
+		}
+
 		// Reboot the container
 		if target == "reboot" {
 			// Start the container again
@@ -2682,7 +2737,7 @@ func (c *containerLXC) OnStop(target string) error {
 		deviceTaskSchedulerTrigger("container", c.name, "stopped")
 
 		// Record current state
-		err = c.db.ContainerSetState(c.id, "STOPPED")
+		err = c.state.Cluster.ContainerSetState(c.id, "STOPPED")
 		if err != nil {
 			logger.Error("Failed to set container state", log.Ctx{"container": c.Name(), "err": err})
 		}
@@ -2834,6 +2889,7 @@ func (c *containerLXC) Render() (interface{}, interface{}, error) {
 			Name:            c.name,
 			Status:          statusCode.String(),
 			StatusCode:      statusCode,
+			Location:        c.node,
 		}
 
 		ct.Description = c.Description()
@@ -2876,7 +2932,7 @@ func (c *containerLXC) RenderState() (*api.ContainerState, error) {
 
 func (c *containerLXC) Snapshots() ([]container, error) {
 	// Get all the snapshots
-	snaps, err := c.db.ContainerGetSnapshots(c.name)
+	snaps, err := c.state.Cluster.ContainerGetSnapshots(c.name)
 	if err != nil {
 		return nil, err
 	}
@@ -2971,6 +3027,7 @@ func (c *containerLXC) Restore(sourceContainer container, stateful bool) error {
 		Devices:      sourceContainer.LocalDevices(),
 		Ephemeral:    sourceContainer.IsEphemeral(),
 		Profiles:     sourceContainer.Profiles(),
+		Description:  sourceContainer.Description(),
 	}
 
 	err = c.Update(args, false)
@@ -3046,6 +3103,7 @@ func (c *containerLXC) cleanup() {
 	c.removeUnixDevices()
 	c.removeDiskDevices()
 	c.removeNetworkFilters()
+	c.removeProxyDevices()
 
 	// Remove the security profiles
 	AADeleteProfile(c)
@@ -3112,7 +3170,7 @@ func (c *containerLXC) Delete() error {
 	}
 
 	// Remove the database record
-	if err := c.db.ContainerRemove(c.Name()); err != nil {
+	if err := c.state.Cluster.ContainerRemove(c.Name()); err != nil {
 		logger.Error("Failed deleting container entry", log.Ctx{"name": c.Name(), "err": err})
 		return err
 	}
@@ -3125,7 +3183,7 @@ func (c *containerLXC) Delete() error {
 		poolID, _, _ := c.storage.GetContainerPoolInfo()
 
 		// Remove volume from storage pool.
-		err := c.db.StoragePoolVolumeDelete(c.Name(), storagePoolVolumeTypeContainer, poolID)
+		err := c.state.Cluster.StoragePoolVolumeDelete(c.Name(), storagePoolVolumeTypeContainer, poolID)
 		if err != nil {
 			return err
 		}
@@ -3211,7 +3269,7 @@ func (c *containerLXC) Rename(newName string) error {
 	}
 
 	// Rename the database entry
-	err = c.db.ContainerRename(oldName, newName)
+	err = c.state.Cluster.ContainerRename(oldName, newName)
 	if err != nil {
 		logger.Error("Failed renaming container", ctxMap)
 		return err
@@ -3219,7 +3277,7 @@ func (c *containerLXC) Rename(newName string) error {
 
 	// Rename storage volume for the container.
 	poolID, _, _ := c.storage.GetContainerPoolInfo()
-	err = c.db.StoragePoolVolumeRename(oldName, newName, storagePoolVolumeTypeContainer, poolID)
+	err = c.state.Cluster.StoragePoolVolumeRename(oldName, newName, storagePoolVolumeTypeContainer, poolID)
 	if err != nil {
 		logger.Error("Failed renaming storage volume", ctxMap)
 		return err
@@ -3227,7 +3285,7 @@ func (c *containerLXC) Rename(newName string) error {
 
 	if !c.IsSnapshot() {
 		// Rename all the snapshots
-		results, err := c.db.ContainerGetSnapshots(oldName)
+		results, err := c.state.Cluster.ContainerGetSnapshots(oldName)
 		if err != nil {
 			logger.Error("Failed renaming container", ctxMap)
 			return err
@@ -3237,14 +3295,14 @@ func (c *containerLXC) Rename(newName string) error {
 			// Rename the snapshot
 			baseSnapName := filepath.Base(sname)
 			newSnapshotName := newName + shared.SnapshotDelimiter + baseSnapName
-			err := c.db.ContainerRename(sname, newSnapshotName)
+			err := c.state.Cluster.ContainerRename(sname, newSnapshotName)
 			if err != nil {
 				logger.Error("Failed renaming container", ctxMap)
 				return err
 			}
 
 			// Rename storage volume for the snapshot.
-			err = c.db.StoragePoolVolumeRename(sname, newSnapshotName, storagePoolVolumeTypeContainer, poolID)
+			err = c.state.Cluster.StoragePoolVolumeRename(sname, newSnapshotName, storagePoolVolumeTypeContainer, poolID)
 			if err != nil {
 				logger.Error("Failed renaming storage volume", ctxMap)
 				return err
@@ -3316,6 +3374,7 @@ func (c *containerLXC) ConfigKeySet(key string, value string) error {
 		Devices:      c.localDevices,
 		Ephemeral:    c.ephemeral,
 		Profiles:     c.profiles,
+		Description:  c.description,
 	}
 
 	return c.Update(args, false)
@@ -3372,12 +3431,12 @@ func writeBackupFile(c container) error {
 	}
 
 	s := c.DaemonState()
-	poolID, pool, err := s.DB.StoragePoolGet(poolName)
+	poolID, pool, err := s.Cluster.StoragePoolGet(poolName)
 	if err != nil {
 		return err
 	}
 
-	_, volume, err := s.DB.StoragePoolVolumeGetType(c.Name(), storagePoolVolumeTypeContainer, poolID)
+	_, volume, err := s.Cluster.StoragePoolNodeVolumeGetType(c.Name(), storagePoolVolumeTypeContainer, poolID)
 	if err != nil {
 		return err
 	}
@@ -3436,13 +3495,13 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 	}
 
 	// Validate the new devices
-	err = containerValidDevices(c.db, args.Devices, false, false)
+	err = containerValidDevices(c.state.Cluster, args.Devices, false, false)
 	if err != nil {
 		return err
 	}
 
 	// Validate the new profiles
-	profiles, err := c.db.Profiles()
+	profiles, err := c.state.Cluster.Profiles()
 	if err != nil {
 		return err
 	}
@@ -3597,7 +3656,7 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 	}
 
 	// Do some validation of the devices diff
-	err = containerValidDevices(c.db, c.expandedDevices, false, true)
+	err = containerValidDevices(c.state.Cluster, c.expandedDevices, false, true)
 	if err != nil {
 		return err
 	}
@@ -3838,7 +3897,7 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 						return err
 					}
 
-					memoryTotal, err := deviceTotalMemory()
+					memoryTotal, err := shared.DeviceTotalMemory()
 					if err != nil {
 						return err
 					}
@@ -4038,6 +4097,16 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 		// Live update the devices
 		for k, m := range removeDevices {
 			if shared.StringInSlice(m["type"], []string{"unix-char", "unix-block"}) {
+				prefix := fmt.Sprintf("unix.%s", k)
+				destPath := m["path"]
+				if destPath == "" {
+					destPath = m["source"]
+				}
+
+				if !c.deviceExistsInDevicesFolder(prefix, destPath) && (m["required"] != "" && !shared.IsTrue(m["required"])) {
+					continue
+				}
+
 				err = c.removeUnixDevice(fmt.Sprintf("unix.%s", k), m, true)
 				if err != nil {
 					return err
@@ -4112,7 +4181,7 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 				nvidiaExists := false
 				for _, gpu := range gpus {
 					if gpu.nvidia.path != "" {
-						if c.deviceExists(k, gpu.path) {
+						if c.deviceExistsInDevicesFolder(fmt.Sprintf("unix.%s", k), gpu.path) {
 							nvidiaExists = true
 							break
 						}
@@ -4121,7 +4190,7 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 
 				if !nvidiaExists {
 					for _, gpu := range nvidiaDevices {
-						if !c.deviceExists(k, gpu.path) {
+						if !c.deviceExistsInDevicesFolder(fmt.Sprintf("unix.%s", k), gpu.path) {
 							continue
 						}
 						err = c.removeUnixDeviceNum(fmt.Sprintf("unix.%s", k), m, gpu.major, gpu.minor, gpu.path)
@@ -4131,6 +4200,11 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 						}
 					}
 				}
+			} else if m["type"] == "proxy" {
+				err = c.removeProxyDevice(k)
+				if err != nil {
+					return err
+				}
 			}
 		}
 
@@ -4139,7 +4213,9 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 			if shared.StringInSlice(m["type"], []string{"unix-char", "unix-block"}) {
 				err = c.insertUnixDevice(fmt.Sprintf("unix.%s", k), m)
 				if err != nil {
-					return err
+					if m["required"] == "" || shared.IsTrue(m["required"]) {
+						return err
+					}
 				}
 			} else if m["type"] == "disk" && m["path"] != "/" {
 				diskDevices[k] = m
@@ -4234,7 +4310,7 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 
 				if sawNvidia {
 					for _, gpu := range nvidiaDevices {
-						if c.deviceExists(k, gpu.path) {
+						if c.deviceExistsInDevicesFolder(k, gpu.path) {
 							continue
 						}
 						err = c.insertUnixDeviceNum(fmt.Sprintf("unix.%s", k), m, gpu.major, gpu.minor, gpu.path)
@@ -4249,6 +4325,11 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 					msg := "Failed to detect requested GPU device"
 					logger.Error(msg)
 					return fmt.Errorf(msg)
+				}
+			} else if m["type"] == "proxy" {
+				err = c.insertProxyDevice(k, m)
+				if err != nil {
+					return err
 				}
 			}
 		}
@@ -4277,6 +4358,11 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 					if err != nil {
 						return err
 					}
+				}
+			} else if m["type"] == "proxy" {
+				err = c.updateProxyDevice(k, m)
+				if err != nil {
+					return err
 				}
 			}
 		}
@@ -4352,7 +4438,7 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 	}
 
 	// Finally, apply the changes to the database
-	tx, err := c.db.Begin()
+	tx, err := c.state.Cluster.Begin()
 	if err != nil {
 		return err
 	}
@@ -4413,6 +4499,67 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 
 	if needsUpdate {
 		networkUpdateStatic(c.state, "")
+	}
+
+	// Send devlxd notifications
+	if isRunning {
+		// Config changes (only for user.* keys
+		for _, key := range changedConfig {
+			if !strings.HasPrefix(key, "user.") {
+				continue
+			}
+
+			msg := map[string]string{
+				"key":       key,
+				"old_value": oldExpandedConfig[key],
+				"value":     c.expandedConfig[key],
+			}
+
+			err = devlxdEventSend(c, "config", msg)
+			if err != nil {
+				return err
+			}
+		}
+
+		// Device changes
+		for k, m := range removeDevices {
+			msg := map[string]interface{}{
+				"action": "removed",
+				"name":   k,
+				"config": m,
+			}
+
+			err = devlxdEventSend(c, "device", msg)
+			if err != nil {
+				return err
+			}
+		}
+
+		for k, m := range updateDevices {
+			msg := map[string]interface{}{
+				"action": "updated",
+				"name":   k,
+				"config": m,
+			}
+
+			err = devlxdEventSend(c, "device", msg)
+			if err != nil {
+				return err
+			}
+		}
+
+		for k, m := range addDevices {
+			msg := map[string]interface{}{
+				"action": "added",
+				"name":   k,
+				"config": m,
+			}
+
+			err = devlxdEventSend(c, "device", msg)
+			if err != nil {
+				return err
+			}
+		}
 	}
 
 	// Success, update the closure to mark that the changes should be kept.
@@ -4800,6 +4947,10 @@ func (c *containerLXC) Migrate(args *CriuMigrationArgs) error {
 			}
 		}
 	} else if args.cmd == lxc.MIGRATE_FEATURE_CHECK {
+		err := c.initLXC(true)
+		if err != nil {
+			return err
+		}
 
 		opts := lxc.MigrateOptions{
 			FeaturesToCheck: args.features,
@@ -4904,12 +5055,12 @@ func (c *containerLXC) templateApplyNow(trigger string) error {
 	}
 
 	// Go through the templates
-	for templatePath, template := range metadata.Templates {
+	for tplPath, tpl := range metadata.Templates {
 		var w *os.File
 
 		// Check if the template should be applied now
 		found := false
-		for _, tplTrigger := range template.When {
+		for _, tplTrigger := range tpl.When {
 			if tplTrigger == trigger {
 				found = true
 				break
@@ -4921,9 +5072,9 @@ func (c *containerLXC) templateApplyNow(trigger string) error {
 		}
 
 		// Open the file to template, create if needed
-		fullpath := filepath.Join(c.RootfsPath(), strings.TrimLeft(templatePath, "/"))
+		fullpath := filepath.Join(c.RootfsPath(), strings.TrimLeft(tplPath, "/"))
 		if shared.PathExists(fullpath) {
-			if template.CreateOnly {
+			if tpl.CreateOnly {
 				continue
 			}
 
@@ -4965,12 +5116,15 @@ func (c *containerLXC) templateApplyNow(trigger string) error {
 		defer w.Close()
 
 		// Read the template
-		tplString, err := ioutil.ReadFile(filepath.Join(c.TemplatesPath(), template.Template))
+		tplString, err := ioutil.ReadFile(filepath.Join(c.TemplatesPath(), tpl.Template))
 		if err != nil {
 			return err
 		}
 
-		tpl, err := pongo2.FromString("{% autoescape off %}" + string(tplString) + "{% endautoescape %}")
+		// Restrict filesystem access to within the container's rootfs
+		tplSet := pongo2.NewSet(fmt.Sprintf("%s-%s", c.name, tpl.Template), template.ChrootLoader{Path: c.RootfsPath()})
+
+		tplRender, err := tplSet.FromString("{% autoescape off %}" + string(tplString) + "{% endautoescape %}")
 		if err != nil {
 			return err
 		}
@@ -5011,12 +5165,12 @@ func (c *containerLXC) templateApplyNow(trigger string) error {
 		}
 
 		// Render the template
-		tpl.ExecuteWriter(pongo2.Context{"trigger": trigger,
-			"path":       templatePath,
+		tplRender.ExecuteWriter(pongo2.Context{"trigger": trigger,
+			"path":       tplPath,
 			"container":  containerMeta,
 			"config":     c.expandedConfig,
 			"devices":    c.expandedDevices,
-			"properties": template.Properties,
+			"properties": tpl.Properties,
 			"config_get": configGet}, w)
 	}
 
@@ -5846,9 +6000,9 @@ func (c *containerLXC) removeMount(mount string) error {
 }
 
 // Check if the unix device already exists.
-func (c *containerLXC) deviceExists(prefix string, path string) bool {
+func (c *containerLXC) deviceExistsInDevicesFolder(prefix string, path string) bool {
 	relativeDestPath := strings.TrimPrefix(path, "/")
-	devName := fmt.Sprintf("%s.%s", prefix, strings.Replace(relativeDestPath, "/", "-", -1))
+	devName := fmt.Sprintf("%s.%s", strings.Replace(prefix, "/", "-", -1), strings.Replace(relativeDestPath, "/", "-", -1))
 	devPath := filepath.Join(c.DevicesPath(), devName)
 
 	return shared.PathExists(devPath)
@@ -5942,7 +6096,7 @@ func (c *containerLXC) createUnixDevice(prefix string, m types.Device) ([]string
 		destPath = m["source"]
 	}
 	relativeDestPath := strings.TrimPrefix(destPath, "/")
-	devName := fmt.Sprintf("%s.%s", prefix, strings.Replace(relativeDestPath, "/", "-", -1))
+	devName := fmt.Sprintf("%s.%s", strings.Replace(prefix, "/", "-", -1), strings.Replace(relativeDestPath, "/", "-", -1))
 	devPath := filepath.Join(c.DevicesPath(), devName)
 
 	// Create the new entry
@@ -6102,7 +6256,7 @@ func (c *containerLXC) removeUnixDevice(prefix string, m types.Device, eject boo
 		destPath = m["source"]
 	}
 	relativeDestPath := strings.TrimPrefix(destPath, "/")
-	devName := fmt.Sprintf("%s.%s", prefix, strings.Replace(relativeDestPath, "/", "-", -1))
+	devName := fmt.Sprintf("%s.%s", strings.Replace(prefix, "/", "-", -1), strings.Replace(relativeDestPath, "/", "-", -1))
 	devPath := filepath.Join(c.DevicesPath(), devName)
 
 	if dType == "" || dMajor < 0 || dMinor < 0 {
@@ -6427,6 +6581,133 @@ func (c *containerLXC) removeUnixDevices() error {
 	return nil
 }
 
+func (c *containerLXC) insertProxyDevice(devName string, m types.Device) error {
+	if !c.IsRunning() {
+		return fmt.Errorf("Can't add proxy device to stopped container")
+	}
+
+	proxyValues, err := setupProxyProcInfo(c, m)
+	if err != nil {
+		return err
+	}
+
+	devFileName := fmt.Sprintf("proxy.%s", devName)
+	pidPath := filepath.Join(c.DevicesPath(), devFileName)
+	logFileName := fmt.Sprintf("proxy.%s.log", devName)
+	logPath := filepath.Join(c.LogPath(), logFileName)
+
+	_, err = shared.RunCommand(
+		c.state.OS.ExecPath,
+		"forkproxy",
+		proxyValues.listenPid,
+		proxyValues.listenAddr,
+		proxyValues.connectPid,
+		proxyValues.connectAddr,
+		"0",
+		"0",
+		logPath,
+		pidPath)
+	if err != nil {
+		return fmt.Errorf("Error occurred when starting proxy device: %s", err)
+	}
+
+	return nil
+}
+
+func (c *containerLXC) removeProxyDevice(devName string) error {
+	if !c.IsRunning() {
+		return fmt.Errorf("Can't remove proxy device from stopped container")
+	}
+
+	devFileName := fmt.Sprintf("proxy.%s", devName)
+	devPath := filepath.Join(c.DevicesPath(), devFileName)
+	err := killProxyProc(devPath)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *containerLXC) removeProxyDevices() error {
+	// Check that we actually have devices to remove
+	if !shared.PathExists(c.DevicesPath()) {
+		return nil
+	}
+
+	// Load the directory listing
+	devFiles, err := ioutil.ReadDir(c.DevicesPath())
+	if err != nil {
+		return err
+	}
+
+	for _, f := range devFiles {
+		// Skip non-proxy devices
+		if !strings.HasPrefix(f.Name(), "proxy.") {
+			continue
+		}
+
+		// Kill the process
+		devicePath := filepath.Join(c.DevicesPath(), f.Name())
+		err = killProxyProc(devicePath)
+		if err != nil {
+			logger.Error("failed removing proxy device", log.Ctx{"err": err, "path": devicePath})
+		}
+	}
+
+	return nil
+}
+
+func (c *containerLXC) updateProxyDevice(devName string, m types.Device) error {
+	if !c.IsRunning() {
+		return fmt.Errorf("Can't update proxy device in stopped container")
+	}
+
+	proxyValues, err := setupProxyProcInfo(c, m)
+	if err != nil {
+		return err
+	}
+
+	devFileName := fmt.Sprintf("proxy.%s", devName)
+	pidPath := filepath.Join(c.DevicesPath(), devFileName)
+	logFileName := fmt.Sprintf("proxy.%s.log", devName)
+	logPath := filepath.Join(c.LogPath(), logFileName)
+
+	err = killProxyProc(pidPath)
+	if err != nil {
+		return fmt.Errorf("Error occurred when removing old proxy device")
+	}
+
+	_, err = shared.RunCommand(
+		c.state.OS.ExecPath,
+		"forkproxy",
+		proxyValues.listenPid,
+		proxyValues.listenAddr,
+		proxyValues.connectPid,
+		proxyValues.connectAddr,
+		"0",
+		"0",
+		logPath,
+		pidPath)
+	if err != nil {
+		return fmt.Errorf("Error occurred when starting new proxy device")
+	}
+
+	return nil
+}
+
+func (c *containerLXC) restartProxyDevices() {
+	for _, name := range c.expandedDevices.DeviceNames() {
+		m := c.expandedDevices[name]
+		if m["type"] == "proxy" {
+			err := c.insertProxyDevice(name, m)
+			if err != nil {
+				fmt.Printf("Error when starting proxy device '%s' for container %s: %s\n", name, c.name, err)
+			}
+		}
+	}
+}
+
 // Network device handling
 func (c *containerLXC) createNetworkDevice(name string, m types.Device) (string, error) {
 	var dev, n1 string
@@ -6734,7 +7015,7 @@ func (c *containerLXC) fillNetworkDevice(name string, m types.Device) (types.Dev
 	}
 
 	updateKey := func(key string, value string) error {
-		tx, err := c.db.Begin()
+		tx, err := c.state.Cluster.Begin()
 		if err != nil {
 			return err
 		}
@@ -6768,7 +7049,7 @@ func (c *containerLXC) fillNetworkDevice(name string, m types.Device) (types.Dev
 			err = updateKey(configKey, volatileHwaddr)
 			if err != nil {
 				// Check if something else filled it in behind our back
-				value, err1 := c.db.ContainerConfigGet(c.id, configKey)
+				value, err1 := c.state.Cluster.ContainerConfigGet(c.id, configKey)
 				if err1 != nil || value == "" {
 					return nil, err
 				}
@@ -6798,7 +7079,7 @@ func (c *containerLXC) fillNetworkDevice(name string, m types.Device) (types.Dev
 			err = updateKey(configKey, volatileName)
 			if err != nil {
 				// Check if something else filled it in behind our back
-				value, err1 := c.db.ContainerConfigGet(c.id, configKey)
+				value, err1 := c.state.Cluster.ContainerConfigGet(c.id, configKey)
 				if err1 != nil || value == "" {
 					return nil, err
 				}
@@ -6987,7 +7268,7 @@ func (c *containerLXC) removeNetworkDevice(name string, m types.Device) error {
 func (c *containerLXC) createDiskDevice(name string, m types.Device) (string, error) {
 	// source paths
 	relativeDestPath := strings.TrimPrefix(m["path"], "/")
-	devName := fmt.Sprintf("disk.%s.%s", name, strings.Replace(relativeDestPath, "/", "-", -1))
+	devName := fmt.Sprintf("disk.%s.%s", strings.Replace(name, "/", "-", -1), strings.Replace(relativeDestPath, "/", "-", -1))
 	devPath := filepath.Join(c.DevicesPath(), devName)
 	srcPath := shared.HostPath(m["source"])
 
@@ -7190,7 +7471,7 @@ func (c *containerLXC) removeDiskDevice(name string, m types.Device) error {
 
 	// Figure out the paths
 	destPath := strings.TrimPrefix(m["path"], "/")
-	devName := fmt.Sprintf("disk.%s.%s", name, strings.Replace(destPath, "/", "-", -1))
+	devName := fmt.Sprintf("disk.%s.%s", strings.Replace(name, "/", "-", -1), strings.Replace(destPath, "/", "-", -1))
 	devPath := filepath.Join(c.DevicesPath(), devName)
 
 	// The disk device doesn't exist.
@@ -7564,7 +7845,7 @@ func (c *containerLXC) setNetworkLimits(name string, m types.Device) error {
 			return fmt.Errorf("Failed to create ingress tc qdisc: %s", out)
 		}
 
-		out, err = shared.RunCommand("tc", "filter", "add", "dev", veth, "parent", "ffff:0", "protocol", "all", "u32", "match", "u32", "0", "0", "police", "rate", fmt.Sprintf("%dbit", egressInt), "burst", "1024k", "mtu", "64kb", "drop", "flowid", ":1")
+		out, err = shared.RunCommand("tc", "filter", "add", "dev", veth, "parent", "ffff:0", "protocol", "all", "u32", "match", "u32", "0", "0", "police", "rate", fmt.Sprintf("%dbit", egressInt), "burst", "1024k", "mtu", "64kb", "drop")
 		if err != nil {
 			return fmt.Errorf("Failed to create ingress tc qdisc: %s", out)
 		}
@@ -7761,7 +8042,7 @@ func (c *containerLXC) StatePath() string {
 }
 
 func (c *containerLXC) StoragePool() (string, error) {
-	poolName, err := c.db.ContainerPool(c.Name())
+	poolName, err := c.state.Cluster.ContainerPool(c.Name())
 	if err != nil {
 		return "", err
 	}

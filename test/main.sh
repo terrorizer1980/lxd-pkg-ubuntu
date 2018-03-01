@@ -24,6 +24,12 @@ if [ -z "${LXD_BACKEND:-}" ]; then
     LXD_BACKEND="dir"
 fi
 
+# shellcheck disable=SC2034
+LXD_NETNS=""
+
+# shellcheck disable=SC2034
+LXD_ALT_CERT=""
+
 import_subdir_files() {
     test "$1"
     # shellcheck disable=SC2039
@@ -75,7 +81,7 @@ cleanup() {
     echo "==> Test result: ${TEST_RESULT}"
 
     # shellcheck disable=SC2086
-    printf "To poke around, use:\n LXD_DIR=%s LXD_CONF=%s sudo -E %s/bin/lxc COMMAND\n" "${LXD_DIR}" "${LXD_CONF}" ${GOPATH:-}
+    printf "To poke around, use:\\n LXD_DIR=%s LXD_CONF=%s sudo -E %s/bin/lxc COMMAND\\n" "${LXD_DIR}" "${LXD_CONF}" ${GOPATH:-}
     echo "Tests Completed (${TEST_RESULT}): hit enter to continue"
 
     # shellcheck disable=SC2034
@@ -190,6 +196,13 @@ run_test test_resources "resources"
 run_test test_kernel_limits "kernel limits"
 run_test test_macaroon_auth "macaroon authentication"
 run_test test_console "console"
+run_test test_proxy_device "proxy device"
+run_test test_storage_local_volume_handling "storage local volume handling"
+run_test test_clustering_membership "clustering membership"
+run_test test_clustering_containers "clustering containers"
+run_test test_clustering_storage "clustering storage"
+run_test test_clustering_network "clustering network"
+#run_test test_clustering_upgrade "clustering upgrade"
 
 # shellcheck disable=SC2034
 TEST_RESULT=success

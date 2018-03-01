@@ -2,7 +2,6 @@ package endpoints
 
 import (
 	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"net"
 	"sync"
@@ -21,6 +20,23 @@ func (e *Endpoints) NetworkPublicKey() []byte {
 	defer e.mu.RUnlock()
 
 	return e.cert.PublicKey()
+}
+
+// NetworkPrivateKey returns the private key of the TLS certificate used by the
+// network endpoint.
+func (e *Endpoints) NetworkPrivateKey() []byte {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	return e.cert.PrivateKey()
+}
+
+// NetworkCert returns the full TLS certificate information for this endpoint.
+func (e *Endpoints) NetworkCert() *shared.CertInfo {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	return e.cert
 }
 
 // NetworkAddress returns the network addresss of the network endpoint, or an
@@ -43,36 +59,60 @@ func (e *Endpoints) NetworkUpdateAddress(address string) error {
 		address = util.CanonicalNetworkAddress(address)
 	}
 
-	if address == e.NetworkAddress() {
+	oldAddress := e.NetworkAddress()
+	if address == oldAddress {
 		return nil
 	}
 
 	logger.Infof("Update network address")
 
-	// First try to see if we can listen to this new port at all, so we
-	// don't close the old one (if any) in case of errors.
-	var listener net.Listener
-	if address != "" {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	// Close the previous socket
+	e.closeListener(network)
+
+	// If turning off listening, we're done
+	if address == "" {
+		return nil
+	}
+
+	// Attempt to setup the new listening socket
+	getListener := func(address string) (*net.Listener, error) {
 		var err error
+		var listener net.Listener
+
 		for i := 0; i < 10; i++ { // Ten retries over a second seems reasonable.
 			listener, err = net.Listen("tcp", address)
 			if err == nil {
 				break
 			}
+
 			time.Sleep(100 * time.Millisecond)
 		}
+
 		if err != nil {
-			return fmt.Errorf("cannot listen on https socket: %v", err)
+			return nil, fmt.Errorf("cannot listen on https socket: %v", err)
 		}
+
+		return &listener, nil
 	}
 
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	e.closeListener(network)
-
+	// If setting a new address, setup the listener
 	if address != "" {
-		e.listeners[network] = networkTLSListener(listener, e.cert)
+		listener, err := getListener(address)
+		if err != nil {
+			// Attempt to revert to the previous address
+			listener, err1 := getListener(oldAddress)
+			if err1 == nil {
+				e.listeners[network] = networkTLSListener(*listener, e.cert)
+				e.serveHTTP(network)
+			}
+
+			return err
+		}
+
+		e.listeners[network] = networkTLSListener(*listener, e.cert)
 		e.serveHTTP(network)
 	}
 
@@ -137,22 +177,10 @@ func (l *networkListener) Accept() (net.Conn, error) {
 
 // Config safely swaps the underlying TLS configuration.
 func (l *networkListener) Config(cert *shared.CertInfo) {
-	config := shared.InitTLSConfig()
-	config.ClientAuth = tls.RequestClientCert
-	config.Certificates = []tls.Certificate{cert.KeyPair()}
-
-	if cert.CA() != nil {
-		pool := x509.NewCertPool()
-		pool.AddCert(cert.CA())
-		config.RootCAs = pool
-		config.ClientCAs = pool
-
-		logger.Infof("LXD is in CA mode, only CA-signed certificates will be allowed")
-	}
-
-	config.BuildNameToCertificate()
+	config := util.ServerTLSConfig(cert)
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
+
 	l.config = config
 }

@@ -4,8 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 
-	_ "github.com/mattn/go-sqlite3"
-
 	"github.com/lxc/lxd/lxd/types"
 )
 
@@ -27,6 +25,8 @@ func dbDeviceTypeToString(t int) (string, error) {
 		return "gpu", nil
 	case 7:
 		return "infiniband", nil
+	case 8:
+		return "proxy", nil
 	default:
 		return "", fmt.Errorf("Invalid device type %d", t)
 	}
@@ -50,6 +50,8 @@ func dbDeviceTypeToInt(t string) (int, error) {
 		return 6, nil
 	case "infiniband":
 		return 7, nil
+	case "proxy":
+		return 8, nil
 	default:
 		return -1, fmt.Errorf("Invalid device type %s", t)
 	}
@@ -134,7 +136,7 @@ func dbDeviceConfig(db *sql.DB, id int, isprofile bool) (types.Device, error) {
 	return newdev, nil
 }
 
-func (n *Node) Devices(qName string, isprofile bool) (types.Devices, error) {
+func (c *Cluster) Devices(qName string, isprofile bool) (types.Devices, error) {
 	var q string
 	if isprofile {
 		q = `SELECT profiles_devices.id, profiles_devices.name, profiles_devices.type
@@ -151,7 +153,7 @@ func (n *Node) Devices(qName string, isprofile bool) (types.Devices, error) {
 	var name, stype string
 	inargs := []interface{}{qName}
 	outfmt := []interface{}{id, name, dtype}
-	results, err := queryScan(n.db, q, inargs, outfmt)
+	results, err := queryScan(c.db, q, inargs, outfmt)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +166,7 @@ func (n *Node) Devices(qName string, isprofile bool) (types.Devices, error) {
 		if err != nil {
 			return nil, err
 		}
-		newdev, err := dbDeviceConfig(n.db, id, isprofile)
+		newdev, err := dbDeviceConfig(c.db, id, isprofile)
 		if err != nil {
 			return nil, err
 		}

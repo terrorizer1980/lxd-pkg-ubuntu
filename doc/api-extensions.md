@@ -385,3 +385,61 @@ This adds support for MAAS network integration.
 
 When configured at the daemon level, it's then possible to attach a "nic"
 device to a particular MAAS subnet.
+
+## devlxd\_events
+This adds a websocket API to the devlxd socket.
+
+When connecting to /1.0/events over the devlxd socket, you will now be
+getting a stream of events over websocket.
+
+## proxy
+This adds a new `proxy` device type to containers, allowing forwarding
+of connections between the host and container.
+
+## network\_dhcp\_gateway
+Introduces a new ipv4.dhcp.gateway network config key to set an alternate gateway.
+
+## file\_get\_symlink
+This makes it possible to retrieve symlinks using the file API.
+
+## network\_leases
+Adds a new /1.0/networks/NAME/leases API endpoint to query the lease database on
+bridges which run a LXD-managed DHCP server.
+
+## unix\_device\_hotplug
+This adds support for the "required" property for unix devices.
+
+## storage\_api\_local\_volume\_handling
+This add the ability to copy and move custom storage volumes locally in the
+same and between storage pools.
+
+## operation\_description
+Adds a "description" field to all operations.
+
+## clustering
+Clustering API for LXD.
+
+This includes the following new endpoints (see [RESTful API](rest-api.md) for details):
+
+* `GET /1.0/cluster`
+* `UPDATE /1.0/cluster`
+
+* `GET /1.0/cluster/members`
+
+* `GET /1.0/cluster/members/<name>`
+* `POST /1.0/cluster/members/<name>`
+* `DELETE /1.0/cluster/members/<name>`
+
+The following existing endpoints have been modified:
+
+ * `POST /1.0/containers` accepts a new target query parameter
+ * `POST /1.0/storage-pools` accepts a new target query parameter
+ * `GET /1.0/storage-pool/<name>` accepts a new target query parameter
+ * `POST /1.0/storage-pool/<pool>/volumes/<type>` accepts a new target query parameter
+ * `GET /1.0/storage-pool/<pool>/volumes/<type>/<name>` accepts a new target query parameter
+ * `POST /1.0/storage-pool/<pool>/volumes/<type>/<name>` accepts a new target query parameter
+ * `PUT /1.0/storage-pool/<pool>/volumes/<type>/<name>` accepts a new target query parameter
+ * `PATCH /1.0/storage-pool/<pool>/volumes/<type>/<name>` accepts a new target query parameter
+ * `DELETE /1.0/storage-pool/<pool>/volumes/<type>/<name>` accepts a new target query parameter
+ * `POST /1.0/networks` accepts a new target query parameter
+ * `GET /1.0/networks/<name>` accepts a new target query parameter

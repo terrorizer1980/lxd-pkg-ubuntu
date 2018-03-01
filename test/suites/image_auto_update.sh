@@ -1,5 +1,5 @@
 test_image_auto_update() {
-  if lxc image alias list | grep -q "^| testimage\s*|.*$"; then
+  if lxc image alias list | grep -q "^| testimage\\s*|.*$"; then
       lxc image delete testimage
   fi
 
@@ -32,7 +32,7 @@ test_image_auto_update() {
   # Restart the server to force an image refresh immediately
   # shellcheck disable=2153
   shutdown_lxd "${LXD_DIR}"
-  respawn_lxd "${LXD_DIR}"
+  respawn_lxd "${LXD_DIR}" true
 
   # Check that the first image got deleted from the local storage
   #

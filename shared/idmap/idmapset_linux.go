@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path"
 	"path/filepath"
 	"reflect"
@@ -401,8 +402,8 @@ func (m IdmapSet) ToLxcString() []string {
 	var lines []string
 	for _, e := range m.Idmap {
 		for _, l := range e.ToLxcString() {
-			if !shared.StringInSlice(l+"\n", lines) {
-				lines = append(lines, l+"\n")
+			if !shared.StringInSlice(l, lines) {
+				lines = append(lines, l)
 			}
 		}
 	}
@@ -660,15 +661,24 @@ func getFromProc(fname string) ([][]int64, error) {
 /*
  * Create a new default idmap
  */
-func DefaultIdmapSet() (*IdmapSet, error) {
+func DefaultIdmapSet(username string) (*IdmapSet, error) {
 	idmapset := new(IdmapSet)
+
+	if username == "" {
+		currentUser, err := user.Current()
+		if err != nil {
+			return nil, err
+		}
+
+		username = currentUser.Username
+	}
 
 	// Check if shadow's uidmap tools are installed
 	newuidmap, _ := exec.LookPath("newuidmap")
 	newgidmap, _ := exec.LookPath("newgidmap")
 	if newuidmap != "" && newgidmap != "" && shared.PathExists("/etc/subuid") && shared.PathExists("/etc/subgid") {
 		// Parse the shadow uidmap
-		entries, err := getFromShadow("/etc/subuid", "root")
+		entries, err := getFromShadow("/etc/subuid", username)
 		if err != nil {
 			return nil, err
 		}
@@ -687,7 +697,7 @@ func DefaultIdmapSet() (*IdmapSet, error) {
 		}
 
 		// Parse the shadow gidmap
-		entries, err = getFromShadow("/etc/subgid", "root")
+		entries, err = getFromShadow("/etc/subgid", username)
 		if err != nil {
 			return nil, err
 		}

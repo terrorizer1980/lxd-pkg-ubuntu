@@ -7,6 +7,7 @@ import (
 
 	"github.com/lxc/lxd/client"
 	"github.com/lxc/lxd/lxc/config"
+	"github.com/lxc/lxd/lxc/utils"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/gnuflag"
 	"github.com/lxc/lxd/shared/i18n"
@@ -67,6 +68,7 @@ type initCmd struct {
 	network      string
 	storagePool  string
 	instanceType string
+	target       string
 }
 
 func (c *initCmd) showByDefault() bool {
@@ -75,7 +77,7 @@ func (c *initCmd) showByDefault() bool {
 
 func (c *initCmd) usage() string {
 	return i18n.G(
-		`Usage: lxc init [<remote>:]<image> [<remote>:][<name>] [--ephemeral|-e] [--profile|-p <profile>...] [--config|-c <key=value>...] [--network|-n <network>] [--storage|-s <pool>] [--type|-t <instance type>]
+		`Usage: lxc init [<remote>:]<image> [<remote>:][<name>] [--ephemeral|-e] [--profile|-p <profile>...] [--config|-c <key=value>...] [--network|-n <network>] [--storage|-s <pool>] [--type|-t <instance type>] [--target <node>]
 
 Create containers from images.
 
@@ -86,7 +88,7 @@ Examples:
     lxc init ubuntu:16.04 u1`)
 }
 
-func (c *initCmd) is_ephem(s string) bool {
+func (c *initCmd) isEphemeral(s string) bool {
 	switch s {
 	case "-e":
 		return true
@@ -96,7 +98,7 @@ func (c *initCmd) is_ephem(s string) bool {
 	return false
 }
 
-func (c *initCmd) is_profile(s string) bool {
+func (c *initCmd) isProfile(s string) bool {
 	switch s {
 	case "-p":
 		return true
@@ -106,13 +108,13 @@ func (c *initCmd) is_profile(s string) bool {
 	return false
 }
 
-func (c *initCmd) massage_args() {
+func (c *initCmd) massageArgs() {
 	l := len(os.Args)
 	if l < 2 {
 		return
 	}
 
-	if c.is_profile(os.Args[l-1]) {
+	if c.isProfile(os.Args[l-1]) {
 		initRequestedEmptyProfiles = true
 		os.Args = os.Args[0 : l-1]
 		return
@@ -123,7 +125,7 @@ func (c *initCmd) massage_args() {
 	}
 
 	/* catch "lxc init ubuntu -p -e */
-	if c.is_ephem(os.Args[l-1]) && c.is_profile(os.Args[l-2]) {
+	if c.isEphemeral(os.Args[l-1]) && c.isProfile(os.Args[l-2]) {
 		initRequestedEmptyProfiles = true
 		newargs := os.Args[0 : l-2]
 		newargs = append(newargs, os.Args[l-1])
@@ -133,7 +135,7 @@ func (c *initCmd) massage_args() {
 }
 
 func (c *initCmd) flags() {
-	c.massage_args()
+	c.massageArgs()
 	gnuflag.Var(&c.confArgs, "config", i18n.G("Config key/value to apply to the new container"))
 	gnuflag.Var(&c.confArgs, "c", i18n.G("Config key/value to apply to the new container"))
 	gnuflag.Var(&c.profArgs, "profile", i18n.G("Profile to apply to the new container"))
@@ -145,6 +147,7 @@ func (c *initCmd) flags() {
 	gnuflag.StringVar(&c.storagePool, "storage", "", i18n.G("Storage pool name"))
 	gnuflag.StringVar(&c.storagePool, "s", "", i18n.G("Storage pool name"))
 	gnuflag.StringVar(&c.instanceType, "t", "", i18n.G("Instance type"))
+	gnuflag.StringVar(&c.target, "target", "", i18n.G("Node name"))
 }
 
 func (c *initCmd) run(conf *config.Config, args []string) error {
@@ -180,6 +183,7 @@ func (c *initCmd) create(conf *config.Config, args []string) (lxd.ContainerServe
 	if err != nil {
 		return nil, "", err
 	}
+	d = d.UseTarget(c.target)
 
 	/*
 	 * initRequestedEmptyProfiles means user requested empty
@@ -286,14 +290,14 @@ func (c *initCmd) create(conf *config.Config, args []string) (lxd.ContainerServe
 	}
 
 	// Watch the background operation
-	progress := ProgressRenderer{Format: i18n.G("Retrieving image: %s")}
+	progress := utils.ProgressRenderer{Format: i18n.G("Retrieving image: %s")}
 	_, err = op.AddHandler(progress.UpdateOp)
 	if err != nil {
 		progress.Done("")
 		return nil, "", err
 	}
 
-	err = cancelableWait(op, &progress)
+	err = utils.CancelableWait(op, &progress)
 	if err != nil {
 		progress.Done("")
 		return nil, "", err
@@ -328,7 +332,8 @@ func (c *initCmd) guessImage(conf *config.Config, d lxd.ContainerServer, remote 
 		return iremote, image
 	}
 
-	_, ok := conf.Remotes[image]
+	fields := strings.SplitN(image, "/", 2)
+	_, ok := conf.Remotes[fields[0]]
 	if !ok {
 		return iremote, image
 	}
@@ -343,8 +348,13 @@ func (c *initCmd) guessImage(conf *config.Config, d lxd.ContainerServer, remote 
 		return iremote, image
 	}
 
-	fmt.Fprintf(os.Stderr, i18n.G("The local image '%s' couldn't be found, trying '%s:' instead.")+"\n", image, image)
-	return image, "default"
+	if len(fields) == 1 {
+		fmt.Fprintf(os.Stderr, i18n.G("The local image '%s' couldn't be found, trying '%s:' instead.")+"\n", image, fields[0])
+		return fields[0], "default"
+	}
+
+	fmt.Fprintf(os.Stderr, i18n.G("The local image '%s' couldn't be found, trying '%s:%s' instead.")+"\n", image, fields[0], fields[1])
+	return fields[0], fields[1]
 }
 
 func (c *initCmd) checkNetwork(d lxd.ContainerServer, name string) {

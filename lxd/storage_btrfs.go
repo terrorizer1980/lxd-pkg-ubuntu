@@ -16,6 +16,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/lxc/lxd/lxd/db"
+	"github.com/lxc/lxd/lxd/migration"
 	"github.com/lxc/lxd/lxd/util"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
@@ -108,7 +109,12 @@ func (s *storageBtrfs) StoragePoolCreate() error {
 	s.pool.Config["volatile.initial_source"] = s.pool.Config["source"]
 
 	isBlockDev := false
-	source := shared.HostPath(s.pool.Config["source"])
+
+	source := s.pool.Config["source"]
+	if strings.HasPrefix(source, "/") {
+		source = shared.HostPath(s.pool.Config["source"])
+	}
+
 	if source == "" {
 		source = filepath.Join(shared.VarPath("disks"), fmt.Sprintf("%s.img", s.pool.Name))
 		s.pool.Config["source"] = source
@@ -259,7 +265,11 @@ func (s *storageBtrfs) StoragePoolCreate() error {
 func (s *storageBtrfs) StoragePoolDelete() error {
 	logger.Infof("Deleting BTRFS storage pool \"%s\".", s.pool.Name)
 
-	source := shared.HostPath(s.pool.Config["source"])
+	source := s.pool.Config["source"]
+	if strings.HasPrefix(source, "/") {
+		source = shared.HostPath(s.pool.Config["source"])
+	}
+
 	if source == "" {
 		return fmt.Errorf("no \"source\" property found for the storage pool")
 	}
@@ -324,7 +334,11 @@ func (s *storageBtrfs) StoragePoolDelete() error {
 func (s *storageBtrfs) StoragePoolMount() (bool, error) {
 	logger.Debugf("Mounting BTRFS storage pool \"%s\".", s.pool.Name)
 
-	source := shared.HostPath(s.pool.Config["source"])
+	source := s.pool.Config["source"]
+	if strings.HasPrefix(source, "/") {
+		source = shared.HostPath(s.pool.Config["source"])
+	}
+
 	if source == "" {
 		return false, fmt.Errorf("no \"source\" property found for the storage pool")
 	}
@@ -576,7 +590,7 @@ func (s *storageBtrfs) StoragePoolVolumeDelete() error {
 		}
 	}
 
-	err = s.db.StoragePoolVolumeDelete(
+	err = s.s.Cluster.StoragePoolVolumeDelete(
 		s.volume.Name,
 		storagePoolVolumeTypeCustom,
 		s.poolID)
@@ -672,7 +686,7 @@ func (s *storageBtrfs) StoragePoolVolumeRename(newName string) error {
 	logger.Infof(`Renamed BTRFS storage volume on storage pool "%s" from "%s" to "%s`,
 		s.pool.Name, s.volume.Name, newName)
 
-	return s.db.StoragePoolVolumeRename(s.volume.Name, newName,
+	return s.s.Cluster.StoragePoolVolumeRename(s.volume.Name, newName,
 		storagePoolVolumeTypeCustom, s.poolID)
 }
 
@@ -1959,12 +1973,12 @@ func (s *btrfsMigrationSourceDriver) Cleanup() {
 	}
 }
 
-func (s *storageBtrfs) MigrationType() MigrationFSType {
+func (s *storageBtrfs) MigrationType() migration.MigrationFSType {
 	if s.s.OS.RunningInUserNS {
-		return MigrationFSType_RSYNC
+		return migration.MigrationFSType_RSYNC
 	}
 
-	return MigrationFSType_BTRFS
+	return migration.MigrationFSType_BTRFS
 }
 
 func (s *storageBtrfs) PreservesInodes() bool {
@@ -2010,7 +2024,7 @@ func (s *storageBtrfs) MigrationSource(c container, containerOnly bool) (Migrati
 	return driver, nil
 }
 
-func (s *storageBtrfs) MigrationSink(live bool, container container, snapshots []*Snapshot, conn *websocket.Conn, srcIdmap *idmap.IdmapSet, op *operation, containerOnly bool) error {
+func (s *storageBtrfs) MigrationSink(live bool, container container, snapshots []*migration.Snapshot, conn *websocket.Conn, srcIdmap *idmap.IdmapSet, op *operation, containerOnly bool) error {
 	if s.s.OS.RunningInUserNS {
 		return rsyncMigrationSink(live, container, snapshots, conn, srcIdmap, op, containerOnly)
 	}
@@ -2275,4 +2289,66 @@ func (s *storageBtrfs) StoragePoolResources() (*api.ResourcesStoragePool, error)
 	// Inode allocation is dynamic so no use in reporting them.
 
 	return storageResource(poolMntPoint)
+}
+
+func (s *storageBtrfs) StoragePoolVolumeCopy(source *api.StorageVolumeSource) error {
+	logger.Infof("Copying BTRFS storage volume \"%s\" on storage pool \"%s\" as \"%s\" to storage pool \"%s\"", source.Name, source.Pool, s.volume.Name, s.pool.Name)
+	successMsg := fmt.Sprintf("Copied BTRFS storage volume \"%s\" on storage pool \"%s\" as \"%s\" to storage pool \"%s\"", source.Name, source.Pool, s.volume.Name, s.pool.Name)
+
+	srcMountPoint := getStoragePoolVolumeMountPoint(source.Pool, source.Name)
+	dstMountPoint := getStoragePoolVolumeMountPoint(s.pool.Name, s.volume.Name)
+
+	if s.pool.Name == source.Pool {
+		// Ensure that the directories immediately preceding the subvolume directory exist.
+		customDir := getStoragePoolVolumeMountPoint(s.pool.Name, "")
+		if !shared.PathExists(customDir) {
+			err := os.MkdirAll(customDir, 0700)
+			if err != nil {
+				logger.Errorf("Failed to create directory \"%s\" for storage volume \"%s\" on storage pool \"%s\": %s", customDir, s.volume.Name, s.pool.Name, err)
+				return err
+			}
+		}
+
+		err := s.btrfsPoolVolumesSnapshot(srcMountPoint, dstMountPoint, false)
+		if err != nil {
+			logger.Errorf("Failed to create BTRFS snapshot for storage volume \"%s\" on storage pool \"%s\": %s", s.volume.Name, s.pool.Name, err)
+			return err
+		}
+
+		logger.Infof(successMsg)
+		return nil
+	}
+
+	// setup storage for the source volume
+	srcStorage, err := storagePoolVolumeInit(s.s, source.Pool, source.Name, storagePoolVolumeTypeCustom)
+	if err != nil {
+		logger.Errorf("Failed to initialize storage for BTRFS storage volume \"%s\" on storage pool \"%s\": %s", s.volume.Name, s.pool.Name, err)
+		return err
+	}
+
+	ourMount, err := srcStorage.StoragePoolVolumeMount()
+	if err != nil {
+		logger.Errorf("Failed to mount BTRFS storage volume \"%s\" on storage pool \"%s\": %s", s.volume.Name, s.pool.Name, err)
+		return err
+	}
+	if ourMount {
+		defer srcStorage.StoragePoolVolumeUmount()
+	}
+
+	err = s.StoragePoolVolumeCreate()
+	if err != nil {
+		logger.Errorf("Failed to create BTRFS storage volume \"%s\" on storage pool \"%s\": %s", s.volume.Name, s.pool.Name, err)
+		return err
+	}
+
+	bwlimit := s.pool.Config["rsync.bwlimit"]
+	_, err = rsyncLocalCopy(srcMountPoint, dstMountPoint, bwlimit)
+	if err != nil {
+		s.StoragePoolVolumeDelete()
+		logger.Errorf("Failed to rsync into BTRFS storage volume \"%s\" on storage pool \"%s\": %s", s.volume.Name, s.pool.Name, err)
+		return err
+	}
+
+	logger.Infof(successMsg)
+	return nil
 }

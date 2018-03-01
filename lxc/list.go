@@ -93,6 +93,8 @@ Pre-defined column shorthand chars:
 
 	n - Name
 
+	N - Number of Processes
+
 	p - PID of the container's init process
 
 	P - Profiles
@@ -102,6 +104,8 @@ Pre-defined column shorthand chars:
 	S - Number of snapshots
 
 	t - Type (persistent or ephemeral)
+
+	L - Location of the container (e.g. its node)
 
 Custom columns are defined with "key[:name][:maxWidth]":
 
@@ -124,9 +128,11 @@ lxc list -c ns,user.comment:comment
 	List images with their running state and user comment. `)
 }
 
+const defaultColumns = "ns46tSL"
+
 func (c *listCmd) flags() {
-	gnuflag.StringVar(&c.columnsRaw, "c", "ns46tS", i18n.G("Columns"))
-	gnuflag.StringVar(&c.columnsRaw, "columns", "ns46tS", i18n.G("Columns"))
+	gnuflag.StringVar(&c.columnsRaw, "c", defaultColumns, i18n.G("Columns"))
+	gnuflag.StringVar(&c.columnsRaw, "columns", defaultColumns, i18n.G("Columns"))
 	gnuflag.StringVar(&c.format, "format", "table", i18n.G("Format (csv|json|table|yaml)"))
 	gnuflag.BoolVar(&c.fast, "fast", false, i18n.G("Fast mode (same as --columns=nsacPt)"))
 }
@@ -446,7 +452,7 @@ func (c *listCmd) run(conf *config.Config, args []string) error {
 		cts = append(cts, cinfo)
 	}
 
-	columns, err := c.parseColumns()
+	columns, err := c.parseColumns(d.IsClustered())
 	if err != nil {
 		return err
 	}
@@ -454,7 +460,7 @@ func (c *listCmd) run(conf *config.Config, args []string) error {
 	return c.listContainers(conf, remote, cts, filters, columns)
 }
 
-func (c *listCmd) parseColumns() ([]column, error) {
+func (c *listCmd) parseColumns(clustered bool) ([]column, error) {
 	columnsShorthandMap := map[rune]column{
 		'4': {i18n.G("IPV4"), c.IP4ColumnData, true, false},
 		'6': {i18n.G("IPV6"), c.IP6ColumnData, true, false},
@@ -463,6 +469,7 @@ func (c *listCmd) parseColumns() ([]column, error) {
 		'd': {i18n.G("DESCRIPTION"), c.descriptionColumnData, false, false},
 		'l': {i18n.G("LAST USED AT"), c.LastUsedColumnData, false, false},
 		'n': {i18n.G("NAME"), c.nameColumnData, false, false},
+		'N': {i18n.G("PROCESSES"), c.NumberOfProcessesColumnData, true, false},
 		'p': {i18n.G("PID"), c.PIDColumnData, true, false},
 		'P': {i18n.G("PROFILES"), c.ProfilesColumnData, false, false},
 		'S': {i18n.G("SNAPSHOTS"), c.numberSnapshotsColumnData, false, true},
@@ -472,12 +479,24 @@ func (c *listCmd) parseColumns() ([]column, error) {
 	}
 
 	if c.fast {
-		if c.columnsRaw != "ns46tS" {
+		if c.columnsRaw != defaultColumns {
 			// --columns was specified too
 			return nil, fmt.Errorf("Can't specify --fast with --columns")
-		} else {
-			c.columnsRaw = "nsacPt"
 		}
+
+		c.columnsRaw = "nsacPt"
+	}
+
+	if clustered {
+		columnsShorthandMap['L'] = column{
+			i18n.G("LOCATION"), c.locationColumnData, false, false}
+	} else {
+		if c.columnsRaw != defaultColumns {
+			if strings.ContainsAny(c.columnsRaw, "L") {
+				return nil, fmt.Errorf("Can't specify column L when not clustered")
+			}
+		}
+		c.columnsRaw = strings.Replace(c.columnsRaw, "L", "", -1)
 	}
 
 	columnList := strings.Split(c.columnsRaw, ",")
@@ -584,9 +603,9 @@ func (c *listCmd) IP4ColumnData(cInfo api.Container, cState *api.ContainerState,
 		}
 		sort.Sort(sort.Reverse(sort.StringSlice(ipv4s)))
 		return strings.Join(ipv4s, "\n")
-	} else {
-		return ""
 	}
+
+	return ""
 }
 
 func (c *listCmd) IP6ColumnData(cInfo api.Container, cState *api.ContainerState, cSnaps []api.ContainerSnapshot) string {
@@ -609,17 +628,17 @@ func (c *listCmd) IP6ColumnData(cInfo api.Container, cState *api.ContainerState,
 		}
 		sort.Sort(sort.Reverse(sort.StringSlice(ipv6s)))
 		return strings.Join(ipv6s, "\n")
-	} else {
-		return ""
 	}
+
+	return ""
 }
 
 func (c *listCmd) typeColumnData(cInfo api.Container, cState *api.ContainerState, cSnaps []api.ContainerSnapshot) string {
 	if cInfo.Ephemeral {
 		return i18n.G("EPHEMERAL")
-	} else {
-		return i18n.G("PERSISTENT")
 	}
+
+	return i18n.G("PERSISTENT")
 }
 
 func (c *listCmd) numberSnapshotsColumnData(cInfo api.Container, cState *api.ContainerState, cSnaps []api.ContainerSnapshot) string {
@@ -674,4 +693,16 @@ func (c *listCmd) LastUsedColumnData(cInfo api.Container, cState *api.ContainerS
 	}
 
 	return ""
+}
+
+func (c *listCmd) NumberOfProcessesColumnData(cInfo api.Container, cState *api.ContainerState, cSnaps []api.ContainerSnapshot) string {
+	if cInfo.IsActive() && cState != nil {
+		return fmt.Sprintf("%d", cState.Processes)
+	}
+
+	return ""
+}
+
+func (c *listCmd) locationColumnData(cInfo api.Container, cState *api.ContainerState, cSnaps []api.ContainerSnapshot) string {
+	return cInfo.Location
 }

@@ -15,11 +15,20 @@ import (
 
 func containerState(d *Daemon, r *http.Request) Response {
 	name := mux.Vars(r)["name"]
+
+	// Handle requests targeted to a container on a different node
+	response, err := ForwardedResponseIfContainerIsRemote(d, r, name)
+	if err != nil {
+		return SmartError(err)
+	}
+	if response != nil {
+		return response
+	}
+
 	c, err := containerLoadByName(d.State(), name)
 	if err != nil {
 		return SmartError(err)
 	}
-
 	state, err := c.RenderState()
 	if err != nil {
 		return InternalError(err)
@@ -30,6 +39,15 @@ func containerState(d *Daemon, r *http.Request) Response {
 
 func containerStatePut(d *Daemon, r *http.Request) Response {
 	name := mux.Vars(r)["name"]
+
+	// Handle requests targeted to a container on a different node
+	response, err := ForwardedResponseIfContainerIsRemote(d, r, name)
+	if err != nil {
+		return SmartError(err)
+	}
+	if response != nil {
+		return response
+	}
 
 	raw := api.ContainerStatePut{}
 
@@ -49,9 +67,11 @@ func containerStatePut(d *Daemon, r *http.Request) Response {
 		return SmartError(err)
 	}
 
+	var opDescription string
 	var do func(*operation) error
 	switch shared.ContainerAction(raw.Action) {
 	case shared.Start:
+		opDescription = "Starting container"
 		do = func(op *operation) error {
 			if err = c.Start(raw.Stateful); err != nil {
 				return err
@@ -59,6 +79,7 @@ func containerStatePut(d *Daemon, r *http.Request) Response {
 			return nil
 		}
 	case shared.Stop:
+		opDescription = "Stopping container"
 		if raw.Stateful {
 			do = func(op *operation) error {
 				err := c.Stop(raw.Stateful)
@@ -95,6 +116,7 @@ func containerStatePut(d *Daemon, r *http.Request) Response {
 			}
 		}
 	case shared.Restart:
+		opDescription = "Restarting container"
 		do = func(op *operation) error {
 			ephemeral := c.IsEphemeral()
 
@@ -145,10 +167,12 @@ func containerStatePut(d *Daemon, r *http.Request) Response {
 			return nil
 		}
 	case shared.Freeze:
+		opDescription = "Freezing container"
 		do = func(op *operation) error {
 			return c.Freeze()
 		}
 	case shared.Unfreeze:
+		opDescription = "Unfreezing container"
 		do = func(op *operation) error {
 			return c.Unfreeze()
 		}
@@ -159,7 +183,7 @@ func containerStatePut(d *Daemon, r *http.Request) Response {
 	resources := map[string][]string{}
 	resources["containers"] = []string{name}
 
-	op, err := operationCreate(operationClassTask, resources, nil, do, nil, nil)
+	op, err := operationCreate(d.cluster, operationClassTask, opDescription, resources, nil, do, nil, nil)
 	if err != nil {
 		return InternalError(err)
 	}
