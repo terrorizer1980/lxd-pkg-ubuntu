@@ -8,6 +8,7 @@ import (
 
 	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/cancel"
+	"github.com/lxc/lxd/shared/ioprogress"
 )
 
 // The Server type represents a generic read-only server.
@@ -47,6 +48,8 @@ type ContainerServer interface {
 	UpdateServer(server api.ServerPut, ETag string) (err error)
 	HasExtension(extension string) (exists bool)
 	RequireAuthenticated(authenticated bool)
+	IsClustered() (clustered bool)
+	UseTarget(name string) (client ContainerServer)
 
 	// Certificate functions
 	GetCertificateFingerprints() (fingerprints []string, err error)
@@ -121,6 +124,7 @@ type ContainerServer interface {
 	GetNetworkNames() (names []string, err error)
 	GetNetworks() (networks []api.Network, err error)
 	GetNetwork(name string) (network *api.Network, ETag string, err error)
+	GetNetworkLeases(name string) (leases []api.NetworkLease, err error)
 	CreateNetwork(network api.NetworksPost) (err error)
 	UpdateNetwork(name string, network api.NetworkPut, ETag string) (err error)
 	RenameNetwork(name string, network api.NetworkPost) (err error)
@@ -159,10 +163,22 @@ type ContainerServer interface {
 	UpdateStoragePoolVolume(pool string, volType string, name string, volume api.StorageVolumePut, ETag string) (err error)
 	DeleteStoragePoolVolume(pool string, volType string, name string) (err error)
 	RenameStoragePoolVolume(pool string, volType string, name string, volume api.StorageVolumePost) (err error)
+	CopyStoragePoolVolume(pool string, source ContainerServer, sourcePool string, volume api.StorageVolume, args *StoragePoolVolumeCopyArgs) (op *RemoteOperation, err error)
+	MoveStoragePoolVolume(pool string, source ContainerServer, sourcePool string, volume api.StorageVolume, args *StoragePoolVolumeMoveArgs) (op *RemoteOperation, err error)
+
+	// Cluster functions ("cluster" API extensions)
+	GetCluster() (cluster *api.Cluster, ETag string, err error)
+	UpdateCluster(cluster api.ClusterPut, ETag string) (op *Operation, err error)
+	DeleteClusterMember(name string, force bool) (err error)
+	GetClusterMemberNames() (names []string, err error)
+	GetClusterMembers() (members []api.ClusterMember, err error)
+	GetClusterMember(name string) (member *api.ClusterMember, ETag string, err error)
+	RenameClusterMember(name string, member api.ClusterMemberPost) (err error)
 
 	// Internal functions (for internal use)
 	RawQuery(method string, path string, data interface{}, queryETag string) (resp *api.Response, ETag string, err error)
 	RawWebsocket(path string) (conn *websocket.Conn, err error)
+	RawOperation(method string, path string, data interface{}, queryETag string) (op *Operation, ETag string, err error)
 }
 
 // The ConnectionInfo struct represents general information for a connection
@@ -170,21 +186,6 @@ type ConnectionInfo struct {
 	Addresses   []string
 	Certificate string
 	Protocol    string
-}
-
-// The ProgressData struct represents new progress information on an operation
-type ProgressData struct {
-	// Preferred string repreentation of progress (always set)
-	Text string
-
-	// Progress in percent
-	Percentage int
-
-	// Number of bytes transferred (for files)
-	TransferredBytes int64
-
-	// Total number of bytes (for files)
-	TotalBytes int64
 }
 
 // The ImageCreateArgs struct is used for direct image upload
@@ -202,7 +203,7 @@ type ImageCreateArgs struct {
 	RootfsName string
 
 	// Progress handler (called with upload progress)
-	ProgressHandler func(progress ProgressData)
+	ProgressHandler func(progress ioprogress.ProgressData)
 }
 
 // The ImageFileRequest struct is used for an image download request
@@ -214,7 +215,7 @@ type ImageFileRequest struct {
 	RootfsFile io.WriteSeeker
 
 	// Progress handler (called whenever some progress is made)
-	ProgressHandler func(progress ProgressData)
+	ProgressHandler func(progress ioprogress.ProgressData)
 
 	// A canceler that can be used to interrupt some part of the image download request
 	Canceler *cancel.Canceler
@@ -252,6 +253,19 @@ type ImageCopyArgs struct {
 
 	// Whether this image is to be made available to unauthenticated users
 	Public bool
+}
+
+// The StoragePoolVolumeCopyArgs struct is used to pass additional options
+// during storage volume copy
+type StoragePoolVolumeCopyArgs struct {
+	// New name for the target
+	Name string
+}
+
+// The StoragePoolVolumeMoveArgs struct is used to pass additional options
+// during storage volume move
+type StoragePoolVolumeMoveArgs struct {
+	StoragePoolVolumeCopyArgs
 }
 
 // The ContainerCopyArgs struct is used to pass additional options during container copy

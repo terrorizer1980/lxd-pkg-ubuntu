@@ -89,7 +89,7 @@ testloopmounts() {
   ensure_fs_unmounted "removed fs re-appeared after restart"
   lxc stop foo --force
   losetup -d "${lpath}"
-  sed -i "\|^${lpath}|d" "${TEST_DIR}/loops"
+  sed -i "\\|^${lpath}|d" "${TEST_DIR}/loops"
 }
 
 test_mount_order() {
@@ -153,8 +153,20 @@ test_config_profiles() {
   lxc profile device add onenic eth0 nic nictype=p2p
   lxc profile assign foo onenic
   lxc profile create unconfined
-  lxc profile set unconfined raw.lxc "lxc.aa_profile=unconfined"
+
+  # Look at the LXC version to decide whether to use the new
+  # or the new config key for apparmor.
+  lxc_version=$(lxc info | grep "driver_version: " | cut -d' ' -f4)
+  lxc_major=$(echo "${lxc_version}" | cut -d. -f1)
+  lxc_minor=$(echo "${lxc_version}" | cut -d. -f2)
+  if [ "${lxc_major}" -lt 2 ] || ([ "${lxc_major}" = "2" ] && [ "${lxc_minor}" -lt "1" ]); then
+      lxc profile set unconfined raw.lxc "lxc.aa_profile=unconfined"
+  else
+      lxc profile set unconfined raw.lxc "lxc.apparmor.profile=unconfined"
+  fi
+
   lxc profile assign foo onenic,unconfined
+
   # test profile rename
   lxc profile create foo
   lxc profile rename foo bar
@@ -295,7 +307,7 @@ test_container_metadata() {
     # template content can be updated
     echo "some content" | lxc config template edit c my.tpl
     lxc config template show c my.tpl | grep -q "some content"
-    
+
     # templates can be removed
     lxc config template delete c my.tpl
     ! lxc config template list c | grep -q my.tpl || false

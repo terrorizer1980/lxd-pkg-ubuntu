@@ -1,72 +1,35 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
-	"github.com/lxc/lxd/shared/idmap"
+	"github.com/lxc/lxd/shared/version"
 )
 
-func help(me string, status int) {
-	fmt.Printf("Usage: %s directory [-t] [-r] <range1> [<range2> ...]\n", me)
-	fmt.Printf("  -t implies test mode.  No file ownerships will be changed.\n")
-	fmt.Printf("  -r means reverse, that is shift the uids out of the container.\n")
-	fmt.Printf("\n")
-	fmt.Printf("  A range is [u|b|g]:<first_container_id:first_host_id:range>.\n")
-	fmt.Printf("  where u means shift uids, g means shift gids, b means shift both.\n")
-	fmt.Printf("  For example: %s directory b:0:100000:65536 u:10000:1000:1\n", me)
-	os.Exit(status)
+type cmdGlobal struct {
+	flagVersion bool
+	flagHelp    bool
 }
 
 func main() {
-	if err := run(); err != nil {
-		fmt.Printf("Error: %q\n", err)
-		help(os.Args[0], 1)
-	}
-}
+	// shift command (main)
+	shiftCmd := cmdShift{}
+	app := shiftCmd.Command()
+	app.SilenceUsage = true
 
-func run() error {
-	if len(os.Args) < 3 {
-		if len(os.Args) > 1 && (os.Args[1] == "-h" || os.Args[1] == "--help" || os.Args[1] == "help") {
-			help(os.Args[0], 0)
-		} else {
-			help(os.Args[0], 1)
-		}
-	}
+	// Global flags
+	globalCmd := cmdGlobal{}
+	shiftCmd.global = &globalCmd
+	app.PersistentFlags().BoolVar(&globalCmd.flagVersion, "version", false, "Print version number")
+	app.PersistentFlags().BoolVarP(&globalCmd.flagHelp, "help", "h", false, "Print help")
 
-	directory := os.Args[1]
-	idmapSet := idmap.IdmapSet{}
-	testmode := false
-	reverse := false
+	// Version handling
+	app.SetVersionTemplate("{{.Version}}\n")
+	app.Version = version.Version
 
-	for pos := 2; pos < len(os.Args); pos++ {
-
-		switch os.Args[pos] {
-		case "-r", "--reverse":
-			reverse = true
-		case "t", "-t", "--test", "test":
-			testmode = true
-		default:
-			var err error
-			idmapSet, err = idmapSet.Append(os.Args[pos])
-			if err != nil {
-				return err
-			}
-		}
-	}
-
-	if idmapSet.Len() == 0 {
-		fmt.Printf("No idmaps given\n")
-		help(os.Args[0], 1)
-	}
-
-	if !testmode && os.Geteuid() != 0 {
-		fmt.Printf("This must be run as root\n")
+	// Run the main command and handle errors
+	err := app.Execute()
+	if err != nil {
 		os.Exit(1)
 	}
-
-	if reverse {
-		return idmapSet.UidshiftFromContainer(directory, testmode)
-	}
-	return idmapSet.UidshiftIntoContainer(directory, testmode)
 }

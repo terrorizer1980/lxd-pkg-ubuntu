@@ -200,6 +200,7 @@ won't work and PUT needs to be used instead.
        * `/1.0/images/<fingerprint>`
          * `/1.0/images/<fingerprint>/export`
          * `/1.0/images/<fingerprint>/refresh`
+         * `/1.0/images/<fingerprint>/secret`
        * `/1.0/images/aliases`
          * `/1.0/images/aliases/<name>`
      * `/1.0/networks`
@@ -210,7 +211,15 @@ won't work and PUT needs to be used instead.
          * `/1.0/operations/<uuid>/websocket`
      * `/1.0/profiles`
        * `/1.0/profiles/<name>`
+     * `/1.0/storage-pools`
+       * `/1.0/storage-pools/<name>`
+         * `/1.0/storage-pools/<name>/resources`
+         * `/1.0/storage-pools/<name>/volumes`
+           * `/1.0/storage-pools/<name>/volumes/<volume type>/<volume>`
      * `/1.0/resources`
+     * `/1.0/cluster`
+       * `/1.0/cluster/members`
+         * `/1.0/cluster/members/<name>`
 
 # API details
 ## `/`
@@ -1749,6 +1758,8 @@ Input (none at present):
  * Operation: sync
  * Return: list of URLs for networks that are current defined on the host
 
+Return:
+
     [
         "/1.0/networks/eth0",
         "/1.0/networks/lxdbr0"
@@ -1779,6 +1790,8 @@ Input:
  * Authentication: trusted
  * Operation: sync
  * Return: dict representing a network
+
+Return:
 
     {
         "config": {},
@@ -1863,6 +1876,8 @@ HTTP code for this should be 202 (Accepted).
  * Authentication: trusted
  * Operation: sync
  * Return: list of URLs for operations that are currently going on/queued
+
+Return:
 
     [
         "/1.0/operations/c0fc0d0d-a997-462b-842b-f8bd0df82507",
@@ -2080,6 +2095,8 @@ HTTP code for this should be 202 (Accepted).
  * Operation: sync
  * Return: list of storage pools that are currently defined on the host
 
+Return:
+
     [
         "/1.0/storage-pools/default",
         "/1.0/storage-pools/pool1"
@@ -2112,6 +2129,8 @@ Input:
  * Authentication: trusted
  * Operation: sync
  * Return: dict representing a storage pool
+
+Return:
 
     {
         "type": "sync",
@@ -2211,6 +2230,8 @@ Input (none at present):
  * Operation: sync
  * Return: dict representing the storage pool resources
 
+Return:
+
     {
         "type": "sync",
         "status": "Success",
@@ -2239,6 +2260,8 @@ Input (none at present):
  * Operation: sync
  * Return: list of storage volumes that currently exist on a given storage pool
 
+Return:
+
     [
         "/1.0/storage-pools/default/volumes/containers/alp1",
         "/1.0/storage-pools/default/volumes/containers/alp10",
@@ -2263,62 +2286,11 @@ Input (none at present):
         "/1.0/storage-pools/default/volumes/images/62e850a334bb9d99cac00b2e618e0291e5e7bb7db56c4246ecaf8e46fa0631a6"
     ]
 
-## `/1.0/storage-pools/<pool>/volumes`
-### GET
- * Description: list all storage volumes on a storage pool
- * Introduced: with API extension `storage`
- * Authentication: trusted
- * Operation: sync
- * Return: standard return value or standard error
-
-    {
-        "type": "sync",
-        "status": "Success",
-        "status_code": 200,
-        "error_code": 0,
-        "error": "",
-        "metadata": [
-            {
-                "type": "container",
-                "used_by": [],
-                "name": "alp1",
-                "config": {
-                "size": "0"
-                }
-            },
-            {
-                "type": "container",
-                "used_by": [],
-                "name": "alp1/snap0",
-                "config": {
-                    "size": "0"
-                }
-            },
-            {
-                "type": "image",
-                "used_by": [],
-                "name": "ade3a9bcd7ba27456673611304238c424ced1772f69d7c6b031356831d94e8ee",
-                "config": {
-                    "size": "0"
-                }
-            },
-            {
-                "type": "custom",
-                "used_by": [],
-                "name": "bla",
-                "config": {
-                    "size": "0"
-                }
-            }
-        ]
-    }
-
-
 ### POST
  * Description: create a new storage volume on a given storage pool
  * Introduced: with API extension `storage`
  * Authentication: trusted
- * Operation: sync
+ * Operation: sync or async (when copying an existing volume)
  * Return: standard return value or standard error
 
 Input:
@@ -2330,19 +2302,33 @@ Input:
         "type": "custom"
     }
 
+Input (when copying a volume):
+
+    {
+        "config": {},
+        "pool": "pool1",
+        "name": "vol1",
+        "type": "custom"
+        "source": {
+            "pool": "pool2",
+            "name": "vol2",
+            "type": "custom"
+        }
+    }
 
 ## `/1.0/storage-pools/<pool>/volumes/<type>/<name>`
 ### POST
  * Description: rename a storage volume on a given storage pool
  * Introduced: with API extension `storage_api_volume_rename`
  * Authentication: trusted
- * Operation: sync
+ * Operation: sync or async (when moving to a different pool)
  * Return: standard return value or standard error
 
 Input:
 
     {
         "name": "vol1",
+        "pool": "pool3"
     }
 
 ### GET
@@ -2351,6 +2337,8 @@ Input:
  * Authentication: trusted
  * Operation: sync
  * Return: dict representing a storage volume
+
+Return:
 
     {
         "type": "sync",
@@ -2428,6 +2416,8 @@ Input (none at present):
  * Operation: sync
  * Return: dict representing the system resources
 
+Return:
+
     {
         "type": "sync",
         "status": "Success",
@@ -2454,4 +2444,108 @@ Input (none at present):
                 "total": 8271765504
             }
         }
+    }
+
+## `/1.0/cluster`
+### GET
+ * Description: information about a cluster (such as networks and storage pools)
+ * Introduced: with API extension `clustering`
+ * Authentication: trusted or untrusted
+ * Operation: sync
+ * Return: dict representing a cluster
+
+Return:
+
+    {
+        "server_name": "node1",
+        "enabled": true,
+    }
+
+### PUT
+ * Description: bootstrap or join a cluster, or disable clustering on this node
+ * Introduced: with API extension `clustering`
+ * Authentication: trusted
+ * Operation: sync or async
+ * Return: various payloads depending on the input
+
+Input (bootstrap a new cluster):
+
+    {
+        "server_name": "lxd1",
+        "enabled": true,
+    }
+
+Return background operation or standard error.
+
+Input (request to join an existing cluster):
+
+    {
+        "server_name": "node2",
+        "enabled": true,
+        "cluster_address": "10.1.1.101:8443",
+        "cluster_certificate": "-----BEGIN CERTIFICATE-----MIFf\n-----END CERTIFICATE-----",
+    }
+
+Input (disable clustering on the node):
+
+    {
+        "enabled": false,
+    }
+
+## `/1.0/cluster/members`
+### GET
+ * Description: list of LXD members in the cluster
+ * Introduced: with API extension `clustering`
+ * Authentication: trusted
+ * Operation: sync
+ * Return: list of cluster members
+
+Return:
+
+    [
+        "/1.0/cluster/members/lxd1",
+        "/1.0/cluster/members/lxd2"
+    ]
+
+## `/1.0/cluster/members/<name>`
+### GET
+ * Description: retrieve the member's information and status
+ * Introduced: with API extension `clustering`
+ * Authentication: trusted
+ * Operation: sync
+ * Return: dict representing the member
+
+Return:
+
+    {
+        "name": "lxd1",
+        "url": "https://10.1.1.101:8443",
+        "database": true,
+        "state": "Online"
+    }
+
+## `/1.0/cluster/members/<name>`
+### POST
+ * Description: rename a cluster member
+ * Introduced: with API extension `clustering`
+ * Authentication: trusted
+ * Operation: sync
+ * Return: standard return value or standard error
+
+Input:
+
+    {
+        "server_name": "node1",
+    }
+
+### DELETE (optional `?force=1`)
+ * Description: remove a member of the cluster
+ * Introduced: with API extension `clustering`
+ * Authentication: trusted
+ * Operation: async
+ * Return: background operation or standard error
+
+Input (none at present):
+
+    {
     }

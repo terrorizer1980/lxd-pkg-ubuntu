@@ -15,6 +15,15 @@ import (
 
 func containerFileHandler(d *Daemon, r *http.Request) Response {
 	name := mux.Vars(r)["name"]
+
+	response, err := ForwardedResponseIfContainerIsRemote(d, r, name)
+	if err != nil {
+		return SmartError(err)
+	}
+	if response != nil {
+		return response
+	}
+
 	c, err := containerLoadByName(d.State(), name)
 	if err != nil {
 		return SmartError(err)
@@ -65,7 +74,7 @@ func containerFileGet(c container, path string, r *http.Request) Response {
 		"X-LXD-type": type_,
 	}
 
-	if type_ == "file" {
+	if type_ == "file" || type_ == "symlink" {
 		// Make a file response struct
 		files := make([]fileResponseEntry, 1)
 		files[0].identifier = filepath.Base(path)

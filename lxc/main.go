@@ -81,7 +81,7 @@ func run() error {
 		os.Args = []string{os.Args[0], "help", "--all"}
 	}
 
-	if shared.StringInSlice("--version", os.Args) {
+	if shared.StringInSlice("--version", os.Args) && !shared.StringInSlice("--", os.Args) {
 		os.Args = []string{os.Args[0], "version"}
 	}
 
@@ -168,7 +168,7 @@ func run() error {
 			return err
 		}
 
-		fmt.Fprintf(os.Stderr, i18n.G("If this is your first time using LXD, you should also run: lxd init")+"\n")
+		fmt.Fprintf(os.Stderr, i18n.G("If this is your first time running LXD on this machine, you should also run: lxd init")+"\n")
 		fmt.Fprintf(os.Stderr, i18n.G("To start your first container, try: lxc launch ubuntu:16.04")+"\n\n")
 	}
 
@@ -213,6 +213,8 @@ type command interface {
 }
 
 var commands = map[string]command{
+	"alias":     &aliasCmd{},
+	"cluster":   &clusterCmd{},
 	"config":    &configCmd{},
 	"console":   &consoleCmd{},
 	"copy":      &copyCmd{},

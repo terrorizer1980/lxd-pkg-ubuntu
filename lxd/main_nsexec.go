@@ -188,6 +188,8 @@ int manip_file_in_ns(char *rootfs, int pid, char *host, char *container, bool is
 	int exists = 1;
 	bool is_dir_manip = type != NULL && !strcmp(type, "directory");
 	bool is_symlink_manip = type != NULL && !strcmp(type, "symlink");
+	char link_target[PATH_MAX];
+	ssize_t link_length;
 
 	if (!is_dir_manip && !is_symlink_manip) {
 		host_fd = open(host, O_RDWR);
@@ -268,7 +270,7 @@ int manip_file_in_ns(char *rootfs, int pid, char *host, char *container, bool is
 		return 0;
 	}
 
-	if (stat(container, &st) < 0)
+	if (fstatat(AT_FDCWD, container, &st, AT_SYMLINK_NOFOLLOW) < 0)
 		exists = 0;
 
 	container_open_flags = O_RDWR;
@@ -282,6 +284,23 @@ int manip_file_in_ns(char *rootfs, int pid, char *host, char *container, bool is
 
 	if (exists && S_ISDIR(st.st_mode))
 		container_open_flags = O_DIRECTORY;
+
+	if (!is_put && exists && S_ISLNK(st.st_mode)) {
+		fprintf(stderr, "uid: %ld\n", (long)st.st_uid);
+		fprintf(stderr, "gid: %ld\n", (long)st.st_gid);
+		fprintf(stderr, "mode: %ld\n", (unsigned long)st.st_mode & (S_IRWXU | S_IRWXG | S_IRWXO));
+		fprintf(stderr, "type: symlink\n");
+
+		link_length = readlink(container, link_target, PATH_MAX);
+		if (link_length < 0 || link_length >= PATH_MAX) {
+			error("error: readlink");
+			goto close_host;
+		}
+		link_target[link_length] = '\0';
+
+		dprintf(host_fd, "%s\n", link_target);
+		goto close_container;
+	}
 
 	umask(0);
 	container_fd = open(container, container_open_flags, 0);
@@ -321,7 +340,6 @@ int manip_file_in_ns(char *rootfs, int pid, char *host, char *container, bool is
 		}
 		ret = 0;
 	} else {
-
 		if (fstat(container_fd, &st) < 0) {
 			error("error: stat");
 			goto close_container;
@@ -681,6 +699,96 @@ void forkgetnet(char *buf, char *cur, ssize_t size) {
 	// The rest happens in Go
 }
 
+void forkproxy(char *buf, char *cur, ssize_t size) {
+	int cmdline, listen_pid, connect_pid, fdnum, forked, childPid, ret;
+	char fdpath[80];
+	char *logPath = NULL, *pidPath = NULL;
+	FILE *logFile = NULL, *pidFile = NULL;
+
+	// Get the arguments
+	ADVANCE_ARG_REQUIRED();
+	listen_pid = atoi(cur);
+	ADVANCE_ARG_REQUIRED();
+	ADVANCE_ARG_REQUIRED();
+	connect_pid = atoi(cur);
+	ADVANCE_ARG_REQUIRED();
+	ADVANCE_ARG_REQUIRED();
+	fdnum = atoi(cur);
+	ADVANCE_ARG_REQUIRED();
+	forked = atoi(cur);
+	ADVANCE_ARG_REQUIRED();
+	logPath = cur;
+	ADVANCE_ARG_REQUIRED();
+	pidPath = cur;
+
+	// Check if proxy daemon already forked
+	if (forked == 0) {
+		logFile = fopen(logPath, "w+");
+		if (logFile == NULL) {
+			_exit(1);
+		}
+
+		if (dup2(fileno(logFile), STDOUT_FILENO) < 0) {
+			fprintf(logFile, "Failed to redirect STDOUT to logfile: %s\n", strerror(errno));
+			_exit(1);
+		}
+		if (dup2(fileno(logFile), STDERR_FILENO) < 0) {
+			fprintf(logFile, "Failed to redirect STDERR to logfile: %s\n", strerror(errno));
+			_exit(1);
+		}
+		fclose(logFile);
+
+		pidFile = fopen(pidPath, "w+");
+		if (pidFile == NULL) {
+			fprintf(stderr, "Failed to create pid file for proxy daemon: %s\n", strerror(errno));
+			_exit(1);
+		}
+
+		childPid = fork();
+		if (childPid < 0) {
+			fprintf(stderr, "Failed to fork proxy daemon: %s\n", strerror(errno));
+			_exit(1);
+		} else if (childPid != 0) {
+			fprintf(pidFile, "%d", childPid);
+			fclose(pidFile);
+			fclose(stdin);
+			fclose(stdout);
+			fclose(stderr);
+			_exit(0);
+		} else {
+			ret = setsid();
+			if (ret < 0) {
+				fprintf(stderr, "Failed to setsid in proxy daemon: %s\n", strerror(errno));
+				_exit(1);
+			}
+		}
+	}
+
+	// Cannot pass through -1 to runCommand since it is interpreted as a flag
+	fdnum = fdnum == 0 ? -1 : fdnum;
+
+	ret = snprintf(fdpath, sizeof(fdpath), "/proc/self/fd/%d", fdnum);
+	if (ret < 0 || (size_t)ret >= sizeof(fdpath)) {
+		fprintf(stderr, "Failed to format file descriptor path\n");
+		_exit(1);
+	}
+
+	// Join the listener ns if not already setup
+	if (access(fdpath, F_OK) < 0) {
+		// Attach to the network namespace of the listener
+		if (dosetns(listen_pid, "net") < 0) {
+			fprintf(stderr, "Failed setns to listener network namespace: %s\n", strerror(errno));
+			_exit(1);
+		}
+	} else {
+		// Join the connector ns now
+		if (dosetns(connect_pid, "net") < 0) {
+			fprintf(stderr, "Failed setns to connector network namespace: %s\n", strerror(errno));
+			_exit(1);
+		}
+	}
+}
+
 __attribute__((constructor)) void init(void) {
 	int cmdline;
 	char buf[CMDLINE_SIZE];
@@ -723,6 +831,8 @@ __attribute__((constructor)) void init(void) {
 		forkumount(buf, cur, size);
 	} else if (strcmp(cur, "forkgetnet") == 0) {
 		forkgetnet(buf, cur, size);
+	} else if (strcmp(cur, "forkproxy") == 0) {
+		forkproxy(buf, cur, size);
 	}
 }
 */

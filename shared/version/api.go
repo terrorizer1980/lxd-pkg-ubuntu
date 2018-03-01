@@ -1,5 +1,10 @@
 package version
 
+import (
+	"os"
+	"strconv"
+)
+
 // APIVersion contains the API base version. Only bumped for backward incompatible changes.
 var APIVersion = "1.0"
 
@@ -85,4 +90,32 @@ var APIExtensions = []string{
 	"migration_pre_copy",
 	"infiniband",
 	"maas_network",
+	"devlxd_events",
+	"proxy",
+	"network_dhcp_gateway",
+	"file_get_symlink",
+	"network_leases",
+	"unix_device_hotplug",
+	"storage_api_local_volume_handling",
+	"operation_description",
+	"clustering",
+}
+
+// APIExtensionsCount returns the number of available API extensions.
+func APIExtensionsCount() int {
+	count := len(APIExtensions)
+
+	// This environment variable is an internal one to force the code
+	// to believe that we an API extensions version greater than we
+	// actually have. It's used by integration tests to exercise the
+	// cluster upgrade process.
+	artificialBump := os.Getenv("LXD_ARTIFICIALLY_BUMP_API_EXTENSIONS")
+	if artificialBump != "" {
+		n, err := strconv.Atoi(artificialBump)
+		if err == nil {
+			count += n
+		}
+	}
+
+	return count
 }

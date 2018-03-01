@@ -4,13 +4,13 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/gob"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
-	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -24,6 +24,9 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/lxc/lxd/shared/cancel"
+	"github.com/lxc/lxd/shared/ioprogress"
 )
 
 const SnapshotDelimiter = "/"
@@ -305,11 +308,9 @@ func ReadStdin() ([]byte, error) {
 	return line, nil
 }
 
-func WriteAll(w io.Writer, buf []byte) error {
-	return WriteAllBuf(w, bytes.NewBuffer(buf))
-}
+func WriteAll(w io.Writer, data []byte) error {
+	buf := bytes.NewBuffer(data)
 
-func WriteAllBuf(w io.Writer, buf *bytes.Buffer) error {
 	toWrite := int64(buf.Len())
 	for {
 		n, err := io.Copy(w, buf)
@@ -403,19 +404,6 @@ func ExtractSnapshotName(name string) string {
 	return strings.SplitN(name, SnapshotDelimiter, 2)[1]
 }
 
-func ReadDir(p string) ([]string, error) {
-	ents, err := ioutil.ReadDir(p)
-	if err != nil {
-		return []string{}, err
-	}
-
-	var ret []string
-	for _, ent := range ents {
-		ret = append(ret, ent.Name())
-	}
-	return ret, nil
-}
-
 func MkdirAllOwner(path string, perm os.FileMode, uid int, gid int) error {
 	// This function is a slightly modified version of MkdirAll from the Go standard library.
 	// https://golang.org/src/os/path.go?s=488:535#L9
@@ -501,6 +489,20 @@ func IsTrue(value string) bool {
 	}
 
 	return false
+}
+
+func IsUnixDev(path string) bool {
+	stat, err := os.Stat(path)
+	if err != nil {
+		return false
+
+	}
+
+	if (stat.Mode() & os.ModeDevice) == 0 {
+		return false
+	}
+
+	return true
 }
 
 func IsBlockdev(fm os.FileMode) bool {
@@ -872,14 +874,6 @@ func TimeIsSet(ts time.Time) bool {
 	return true
 }
 
-func Round(x float64) int64 {
-	if x < 0 {
-		return int64(math.Ceil(x - 0.5))
-	}
-
-	return int64(math.Floor(x + 0.5))
-}
-
 // WriteTempFile creates a temp file with the specified content
 func WriteTempFile(dir string, prefix string, content string) (string, error) {
 	f, err := ioutil.TempFile(dir, prefix)
@@ -902,4 +896,62 @@ func EscapePathFstab(path string) string {
 		"\n", "\\012",
 		"\\", "\\\\")
 	return r.Replace(path)
+}
+
+func DownloadFileSha256(httpClient *http.Client, useragent string, progress func(progress ioprogress.ProgressData), canceler *cancel.Canceler, filename string, url string, hash string, target io.WriteSeeker) (int64, error) {
+	// Always seek to the beginning
+	target.Seek(0, 0)
+
+	// Prepare the download request
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return -1, err
+	}
+
+	if useragent != "" {
+		req.Header.Set("User-Agent", useragent)
+	}
+
+	// Perform the request
+	r, doneCh, err := cancel.CancelableDownload(canceler, httpClient, req)
+	if err != nil {
+		return -1, err
+	}
+	defer r.Body.Close()
+	defer close(doneCh)
+
+	if r.StatusCode != http.StatusOK {
+		return -1, fmt.Errorf("Unable to fetch %s: %s", url, r.Status)
+	}
+
+	// Handle the data
+	body := r.Body
+	if progress != nil {
+		body = &ioprogress.ProgressReader{
+			ReadCloser: r.Body,
+			Tracker: &ioprogress.ProgressTracker{
+				Length: r.ContentLength,
+				Handler: func(percent int64, speed int64) {
+					if filename != "" {
+						progress(ioprogress.ProgressData{Text: fmt.Sprintf("%s: %d%% (%s/s)", filename, percent, GetByteSizeString(speed, 2))})
+					} else {
+						progress(ioprogress.ProgressData{Text: fmt.Sprintf("%d%% (%s/s)", percent, GetByteSizeString(speed, 2))})
+					}
+				},
+			},
+		}
+	}
+
+	sha256 := sha256.New()
+	size, err := io.Copy(io.MultiWriter(target, sha256), body)
+	if err != nil {
+		return -1, err
+	}
+
+	result := fmt.Sprintf("%x", sha256.Sum(nil))
+	if result != hash {
+		return -1, fmt.Errorf("Hash mismatch for %s: %s != %s", url, result, hash)
+	}
+
+	return size, nil
 }

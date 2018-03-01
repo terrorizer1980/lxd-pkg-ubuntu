@@ -9,6 +9,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/lxc/lxd/lxd/migration"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/lxc/lxd/shared/idmap"
@@ -284,7 +285,7 @@ func (s *storageLvm) StoragePoolCreate() error {
 		}
 
 		// Check that we don't already use this volume group.
-		inUse, user, err := lxdUsesPool(s.db, poolName, s.pool.Driver, "lvm.vg_name")
+		inUse, user, err := lxdUsesPool(s.s.Cluster, poolName, s.pool.Driver, "lvm.vg_name")
 		if err != nil {
 			return err
 		}
@@ -555,7 +556,7 @@ func (s *storageLvm) StoragePoolVolumeDelete() error {
 		}
 	}
 
-	err = s.db.StoragePoolVolumeDelete(
+	err = s.s.Cluster.StoragePoolVolumeDelete(
 		s.volume.Name,
 		storagePoolVolumeTypeCustom,
 		s.poolID)
@@ -852,7 +853,7 @@ func (s *storageLvm) StoragePoolVolumeRename(newName string) error {
 	logger.Infof(`Renamed ZFS storage volume on storage pool "%s" from "%s" to "%s`,
 		s.pool.Name, s.volume.Name, newName)
 
-	return s.db.StoragePoolVolumeRename(s.volume.Name, newName,
+	return s.s.Cluster.StoragePoolVolumeRename(s.volume.Name, newName,
 		storagePoolVolumeTypeCustom, s.poolID)
 }
 
@@ -1724,8 +1725,8 @@ func (s *storageLvm) ImageUmount(fingerprint string) (bool, error) {
 	return true, nil
 }
 
-func (s *storageLvm) MigrationType() MigrationFSType {
-	return MigrationFSType_RSYNC
+func (s *storageLvm) MigrationType() migration.MigrationFSType {
+	return migration.MigrationFSType_RSYNC
 }
 
 func (s *storageLvm) PreservesInodes() bool {
@@ -1736,7 +1737,7 @@ func (s *storageLvm) MigrationSource(container container, containerOnly bool) (M
 	return rsyncMigrationSource(container, containerOnly)
 }
 
-func (s *storageLvm) MigrationSink(live bool, container container, snapshots []*Snapshot, conn *websocket.Conn, srcIdmap *idmap.IdmapSet, op *operation, containerOnly bool) error {
+func (s *storageLvm) MigrationSink(live bool, container container, snapshots []*migration.Snapshot, conn *websocket.Conn, srcIdmap *idmap.IdmapSet, op *operation, containerOnly bool) error {
 	return rsyncMigrationSink(live, container, snapshots, conn, srcIdmap, op, containerOnly)
 }
 
@@ -1794,7 +1795,7 @@ func (s *storageLvm) StorageEntitySetQuota(volumeType int, size int64, data inte
 
 	// Update the database
 	s.volume.Config["size"] = shared.GetByteSizeString(size, 0)
-	err = s.db.StoragePoolVolumeUpdate(
+	err = s.s.Cluster.StoragePoolVolumeUpdate(
 		s.volume.Name,
 		volumeType,
 		s.poolID,
@@ -1844,4 +1845,80 @@ func (s *storageLvm) StoragePoolResources() (*api.ResourcesStoragePool, error) {
 	}
 
 	return &res, nil
+}
+
+func (s *storageLvm) StoragePoolVolumeCopy(source *api.StorageVolumeSource) error {
+	logger.Infof("Copying LVM storage volume \"%s\" on storage pool \"%s\" as \"%s\" to storage pool \"%s\"", source.Name, source.Pool, s.volume.Name, s.pool.Name)
+	successMsg := fmt.Sprintf("Copied LVM storage volume \"%s\" on storage pool \"%s\" as \"%s\" to storage pool \"%s\"", source.Name, source.Pool, s.volume.Name, s.pool.Name)
+
+	srcMountPoint := getStoragePoolVolumeMountPoint(source.Pool, source.Name)
+	dstMountPoint := getStoragePoolVolumeMountPoint(s.pool.Name, s.volume.Name)
+
+	if s.pool.Name == source.Pool && s.useThinpool {
+		err := os.MkdirAll(dstMountPoint, 0711)
+		if err != nil {
+			logger.Errorf("Failed to create mountpoint \"%s\" for LVM storage volume \"%s\" on storage pool \"%s\": %s", dstMountPoint, s.volume.Name, s.pool.Name, err)
+			return err
+		}
+
+		poolName := s.getOnDiskPoolName()
+		lvFsType := s.getLvmFilesystem()
+		lvSize, err := s.getLvmVolumeSize()
+		if lvSize == "" {
+			logger.Errorf("Failed to get size for LVM storage volume \"%s\" on storage pool \"%s\": %s", s.volume.Name, s.pool.Name, err)
+			return err
+		}
+
+		_, err = s.createSnapshotLV(poolName, source.Name, storagePoolVolumeAPIEndpointCustom, s.volume.Name, storagePoolVolumeAPIEndpointCustom, false, s.useThinpool)
+		if err != nil {
+			logger.Errorf("Failed to create snapshot for LVM storage volume \"%s\" on storage pool \"%s\": %s", s.volume.Name, s.pool.Name, err)
+			return err
+		}
+
+		lvDevPath := getLvmDevPath(poolName, storagePoolVolumeAPIEndpointCustom, s.volume.Name)
+		msg, err := fsGenerateNewUUID(lvFsType, lvDevPath)
+		if err != nil {
+			logger.Errorf("Failed to create new UUID for filesystem \"%s\" for RBD storage volume \"%s\" on storage pool \"%s\": %s: %s", lvFsType, s.volume.Name, s.pool.Name, msg, err)
+			return err
+		}
+
+		logger.Infof(successMsg)
+		return nil
+	}
+
+	if s.pool.Name != source.Pool {
+		// setup storage for the source volume
+		srcStorage, err := storagePoolVolumeInit(s.s, source.Pool, source.Name, storagePoolVolumeTypeCustom)
+		if err != nil {
+			logger.Errorf("Failed to initialize LVM storage volume \"%s\" on storage pool \"%s\": %s", s.volume.Name, s.pool.Name, err)
+			return err
+		}
+
+		ourMount, err := srcStorage.StoragePoolVolumeMount()
+		if err != nil {
+			logger.Errorf("Failed to mount LVM storage volume \"%s\" on storage pool \"%s\": %s", s.volume.Name, s.pool.Name, err)
+			return err
+		}
+
+		if ourMount {
+			defer srcStorage.StoragePoolVolumeUmount()
+		}
+	}
+
+	err := s.StoragePoolVolumeCreate()
+	if err != nil {
+		logger.Errorf("Failed to create LVM storage volume \"%s\" on storage pool \"%s\": %s", s.volume.Name, s.pool.Name, err)
+		return err
+	}
+
+	bwlimit := s.pool.Config["rsync.bwlimit"]
+	_, err = rsyncLocalCopy(srcMountPoint, dstMountPoint, bwlimit)
+	if err != nil {
+		os.RemoveAll(dstMountPoint)
+		logger.Errorf("Failed to rsync into LVM storage volume \"%s\" on storage pool \"%s\": %s", s.volume.Name, s.pool.Name, err)
+		return err
+	}
+
+	logger.Infof(successMsg)
+	return nil
 }

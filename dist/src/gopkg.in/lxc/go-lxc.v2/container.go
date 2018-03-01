@@ -1853,24 +1853,6 @@ func (c *Container) DetachInterfaceRename(source, target string) error {
 	return nil
 }
 
-// SetRunningConfigItem sets the value of the given config item in the
-// container's in-memory config.
-func (c *Container) SetRunningConfigItem(key string, value string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	ckey := C.CString(key)
-	defer C.free(unsafe.Pointer(ckey))
-
-	cvalue := C.CString(value)
-	defer C.free(unsafe.Pointer(cvalue))
-
-	if !bool(C.go_lxc_set_running_config_item(c.container, ckey, cvalue)) {
-		return ErrSettingConfigItemFailed
-	}
-	return nil
-}
-
 // ConsoleLog allows to perform operations on the container's in-memory console
 // buffer.
 func (c *Container) ConsoleLog(opt ConsoleLogOptions) ([]byte, error) {
@@ -1878,10 +1860,9 @@ func (c *Container) ConsoleLog(opt ConsoleLogOptions) ([]byte, error) {
 	defer c.mu.Unlock()
 
 	cl := C.struct_lxc_console_log{
-		clear:         C.bool(opt.ClearLog),
-		read:          C.bool(opt.ReadLog),
-		data:          nil,
-		write_logfile: C.bool(opt.WriteToLogFile),
+		clear: C.bool(opt.ClearLog),
+		read:  C.bool(opt.ReadLog),
+		data:  nil,
 	}
 	// CGO is a fickle little beast:
 	// We need to manually allocate memory here that we pass to C. If we
@@ -1909,4 +1890,10 @@ func (c *Container) ConsoleLog(opt ConsoleLogOptions) ([]byte, error) {
 	}
 
 	return C.GoBytes(unsafe.Pointer(cl.data), numBytes), nil
+}
+
+// ErrorNum returns the error_num field of the container.
+func (c *Container) ErrorNum() int {
+	cError := C.go_lxc_error_num(c.container)
+	return int(cError)
 }

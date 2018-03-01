@@ -38,9 +38,23 @@ type Network struct {
 
 	// API extension: network
 	Managed bool `json:"managed" yaml:"managed"`
+
+	// API extension: clustering
+	Status    string   `json:"status" yaml:"status"`
+	Locations []string `json:"locations" yaml:"locations"`
 }
 
 // Writable converts a full Network struct into a NetworkPut struct (filters read-only fields)
 func (network *Network) Writable() NetworkPut {
 	return network.NetworkPut
+}
+
+// NetworkLease represents a DHCP lease
+//
+// API extension: network_leases
+type NetworkLease struct {
+	Hostname string `json:"hostname" yaml:"hostname"`
+	Hwaddr   string `json:"hwaddr" yaml:"hwaddr"`
+	Address  string `json:"address" yaml:"address"`
+	Type     string `json:"type" yaml:"type"`
 }
