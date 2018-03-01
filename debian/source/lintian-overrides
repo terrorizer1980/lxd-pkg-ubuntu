@@ -1,0 +1,6 @@
+# Required for backports
+lxd source: package-uses-old-debhelper-compat-version 10
+
+# Go examples from bundled packages
+lxd source: package-does-not-install-examples dist/src/github.com/gorilla/websocket/examples/
+lxd source: package-does-not-install-examples dist/src/gopkg.in/lxc/go-lxc.v2/examples/
