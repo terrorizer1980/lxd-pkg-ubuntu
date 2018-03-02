@@ -1,3 +1,19 @@
+lxd (3.0.0~beta1-0ubuntu1) bionic; urgency=medium
+
+  * New upstream beta (3.0.0~beta1)
+    - Move bash completion script
+    - Use custom clustered sqlite3
+
+  * Update testsuite to deal wtih Go 1.10
+
+  * Update to new standards
+    - Bump compat to 10
+    - Bump standards to 4.1.3
+    - Update copyright URLs to https
+    - Refresh lintian overrides
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Thu, 01 Mar 2018 15:18:21 -0500
+
 lxd (2.21-0ubuntu4) bionic; urgency=medium
 
   * Preparation for LXD 3.0 and Ubuntu 18.04:
