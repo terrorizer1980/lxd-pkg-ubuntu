@@ -24,6 +24,12 @@ trap cleanup EXIT HUP INT TERM
 # Define lxdbr0 if missing
 lxc network show lxdbr0 --force-local >/dev/null || lxc network create lxdbr0 --force-local
 
+# Unset proxy (messes with our tests)
+unset http_proxy
+unset https_proxy
+unset HTTP_PROXY
+unset HTTPS_PROXY
+
 # Run the tests
 export LXD_OFFLINE=1
 (cd test/ && ./main.sh)
