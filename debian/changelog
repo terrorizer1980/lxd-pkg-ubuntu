@@ -1,3 +1,10 @@
+lxd (3.0.0~beta2-0ubuntu1) bionic; urgency=medium
+
+  * New upstream beta (3.0.0~beta2)
+  * Update testsuite for clustering (unset proxy)
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Fri, 02 Mar 2018 16:05:22 -0500
+
 lxd (3.0.0~beta1-0ubuntu1) bionic; urgency=medium
 
   * New upstream beta (3.0.0~beta1)
