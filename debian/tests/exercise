@@ -32,4 +32,6 @@ unset HTTPS_PROXY
 
 # Run the tests
 export LXD_OFFLINE=1
+export LXD_TMPFS=1
+export LXD_VERBOSE=1
 (cd test/ && ./main.sh)
