@@ -1,3 +1,11 @@
+lxd (3.0.0~beta2-0ubuntu2) bionic; urgency=medium
+
+  * Update testsuite environment to better match upstream:
+    - Run tests inside a tmpfs
+    - Turn on verbose logging (easier to debug failures)
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Fri, 02 Mar 2018 20:40:06 -0500
+
 lxd (3.0.0~beta2-0ubuntu1) bionic; urgency=medium
 
   * New upstream beta (3.0.0~beta2)
