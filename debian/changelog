@@ -1,3 +1,10 @@
+lxd (3.0.0~beta3-0ubuntu2) bionic; urgency=medium
+
+  * Cherry-pick upstream fix:
+    - 0001-lxd-shutdown-Fix-error-string-check.patch
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Tue, 06 Mar 2018 23:16:47 +0100
+
 lxd (3.0.0~beta3-0ubuntu1) bionic; urgency=medium
 
   * New upstream beta (3.0.0~beta3)
