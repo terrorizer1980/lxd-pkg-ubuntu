@@ -1,7 +1,4 @@
 test_clustering_membership() {
-  # shellcheck disable=SC2034
-  LXD_DEBUG=1
-
   setup_clustering_bridge
   prefix="lxd$$"
   bridge="${prefix}"
@@ -106,7 +103,6 @@ test_clustering_membership() {
 
   # Remove a node gracefully.
   LXD_DIR="${LXD_FOUR_DIR}" lxc cluster delete node5
-  LXD_DIR="${LXD_FOUR_DIR}" lxc cluster list
   LXD_DIR="${LXD_FOUR_DIR}" lxc cluster list | grep -q "https://0.0.0.0"
 
   LXD_DIR="${LXD_FOUR_DIR}" lxd shutdown
@@ -122,8 +118,6 @@ test_clustering_membership() {
 
   teardown_clustering_netns
   teardown_clustering_bridge
-
-  unset LXD_DEBUG
 }
 
 test_clustering_containers() {
