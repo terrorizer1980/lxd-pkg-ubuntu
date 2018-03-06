@@ -1,0 +1,41 @@
+From e19a175b6cd3f8ce1c14c0b9cbcfbec293a2a192 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@ubuntu.com>
+Date: Tue, 6 Mar 2018 08:58:08 +0100
+Subject: Add some debugging to the cluster tests
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
+---
+ test/suites/clustering.sh | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/test/suites/clustering.sh b/test/suites/clustering.sh
+index b0122f3e..6363bb98 100644
+--- a/test/suites/clustering.sh
++++ b/test/suites/clustering.sh
+@@ -1,4 +1,6 @@
+ test_clustering_membership() {
++  LXD_DEBUG=1
++
+   setup_clustering_bridge
+   prefix="lxd$$"
+   bridge="${prefix}"
+@@ -103,6 +105,7 @@ test_clustering_membership() {
+ 
+   # Remove a node gracefully.
+   LXD_DIR="${LXD_FOUR_DIR}" lxc cluster delete node5
++  LXD_DIR="${LXD_FOUR_DIR}" lxc cluster list
+   LXD_DIR="${LXD_FOUR_DIR}" lxc cluster list | grep -q "https://0.0.0.0"
+ 
+   LXD_DIR="${LXD_FOUR_DIR}" lxd shutdown
+@@ -118,6 +121,8 @@ test_clustering_membership() {
+ 
+   teardown_clustering_netns
+   teardown_clustering_bridge
++
++  unset LXD_DEBUG
+ }
+ 
+ test_clustering_containers() {
