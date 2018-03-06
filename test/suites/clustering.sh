@@ -1,4 +1,5 @@
 test_clustering_membership() {
+  # shellcheck disable=SC2034
   LXD_DEBUG=1
 
   setup_clustering_bridge
