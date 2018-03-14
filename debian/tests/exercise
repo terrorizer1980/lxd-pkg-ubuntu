@@ -14,12 +14,16 @@ cd "${GOPATH}/src/github.com/lxc/lxd"
 chmod +x "${GOPATH}"
 
 cleanup() {
+    set +e
+    [ -e /sbin/lvm.orig ] && mv /sbin/lvm.orig /sbin/lvm
     mv "${TEMPDIST}/dist" dist
     rm -Rf "${TEMPDIST}"
     rm -Rf "${GOPATH}"
 }
 
 trap cleanup EXIT HUP INT TERM
+# Disable LVM tests on systems (adt runners don't have a suitable LVM setup)
+[ -e /sbin/lvm ] && mv /sbin/lvm /sbin/lvm.orig
 
 # Define lxdbr0 if missing
 lxc network show lxdbr0 --force-local >/dev/null || lxc network create lxdbr0 --force-local
