@@ -367,8 +367,14 @@ func (d *Daemon) Init() error {
 }
 
 func (d *Daemon) init() error {
+	// Lets check if there's an existing LXD running
+	err := endpoints.CheckAlreadyRunning(d.UnixSocket())
+	if err != nil {
+		return err
+	}
+
 	/* Set the LVM environment */
-	err := os.Setenv("LVM_SUPPRESS_FD_WARNINGS", "1")
+	err = os.Setenv("LVM_SUPPRESS_FD_WARNINGS", "1")
 	if err != nil {
 		return err
 	}
@@ -487,6 +493,20 @@ func (d *Daemon) init() error {
 		logger.Infof("Migrating data from lxd.db to db.bin")
 		err = d.cluster.ImportPreClusteringData(dump)
 		if err != nil {
+			// Restore the local sqlite3 backup and wipe the raft
+			// directory, so users can fix problems and retry.
+			path := filepath.Join(d.os.VarDir, "lxd.db")
+			copyErr := shared.FileCopy(path+".bak", path)
+			if copyErr != nil {
+				// Ignore errors here, there's not much we can do
+				logger.Errorf("Failed to restore lxd.db: %v", copyErr)
+			}
+			rmErr := os.RemoveAll(filepath.Join(d.os.VarDir, "raft"))
+			if rmErr != nil {
+				// Ignore errors here, there's not much we can do
+				logger.Errorf("Failed to cleanup raft db: %v", rmErr)
+			}
+
 			return fmt.Errorf("Failed to migrate data to db.bin: %v", err)
 		}
 	}
