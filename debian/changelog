@@ -1,3 +1,9 @@
+lxd (3.0.0~beta5-0ubuntu2) bionic; urgency=medium
+
+  * Disable lvm in autopkgtest (requires proper LVM setup)
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 14 Mar 2018 18:56:13 -0400
+
 lxd (3.0.0~beta5-0ubuntu1) bionic; urgency=medium
 
   * New upstream beta (3.0.0~beta5)
