@@ -200,7 +200,7 @@ func createFromMigration(d *Daemon, req *api.ContainersPost) Response {
 	storagePool := ""
 	storagePoolProfile := ""
 
-	localRootDiskDeviceKey, localRootDiskDevice, _ := containerGetRootDiskDevice(req.Devices)
+	localRootDiskDeviceKey, localRootDiskDevice, _ := shared.GetRootDiskDevice(req.Devices)
 	if localRootDiskDeviceKey != "" {
 		storagePool = localRootDiskDevice["pool"]
 	}
@@ -224,7 +224,7 @@ func createFromMigration(d *Daemon, req *api.ContainersPost) Response {
 				return SmartError(err)
 			}
 
-			k, v, _ := containerGetRootDiskDevice(p.Devices)
+			k, v, _ := shared.GetRootDiskDevice(p.Devices)
 			if k != "" && v["pool"] != "" {
 				// Keep going as we want the last one in the profile chain
 				storagePool = v["pool"]
@@ -306,7 +306,7 @@ func createFromMigration(d *Daemon, req *api.ContainersPost) Response {
 			return InternalError(err)
 		}
 
-		_, rootDiskDevice, err := containerGetRootDiskDevice(cM.ExpandedDevices())
+		_, rootDiskDevice, err := shared.GetRootDiskDevice(cM.ExpandedDevices())
 		if err != nil {
 			return InternalError(err)
 		}
@@ -551,12 +551,15 @@ func containersPost(d *Daemon, r *http.Request) Response {
 			if err != nil {
 				return SmartError(err)
 			}
+
 			logger.Debugf("Forward container post request to %s", address)
 			op, err := client.UseTarget(targetNode).CreateContainer(req)
 			if err != nil {
 				return SmartError(err)
 			}
-			return ForwardedOperationResponse(&op.Operation)
+
+			opAPI := op.Get()
+			return ForwardedOperationResponse(&opAPI)
 		}
 	}
 

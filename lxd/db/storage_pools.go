@@ -140,13 +140,12 @@ INSERT INTO storage_volumes(name, storage_pool_id, node_id, type, description)
 		return errors.Wrap(err, "failed to create node ceph volumes")
 	}
 
+	// Create entries of all the ceph volumes configs for the new node.
 	stmt = `
 SELECT id FROM storage_volumes WHERE storage_pool_id=? AND node_id=?
   ORDER BY name, type
 `
-
-	// Create entries of all the ceph volumes configs for the new node.
-	volumeIDs, err := query.SelectIntegers(c.tx, stmt, poolID, otherNodeID)
+	volumeIDs, err := query.SelectIntegers(c.tx, stmt, poolID, nodeID)
 	if err != nil {
 		return errors.Wrap(err, "failed to get joining node's ceph volume IDs")
 	}
@@ -660,7 +659,7 @@ func (c *Cluster) StoragePoolDelete(poolName string) (*api.StoragePool, error) {
 		return nil, err
 	}
 
-	_, err = exec(c.db, "DELETE FROM storage_pools WHERE id=?", poolID)
+	err = exec(c.db, "DELETE FROM storage_pools WHERE id=?", poolID)
 	if err != nil {
 		return nil, err
 	}
@@ -843,6 +842,7 @@ func (c *Cluster) StoragePoolVolumeUpdate(volumeName string, volumeType int, poo
 		return StorageVolumeDescriptionUpdate(tx, volumeID, volumeDescription)
 	})
 	if err != nil {
+		tx.Rollback()
 		return err
 	}
 
@@ -1052,6 +1052,6 @@ func StoragePoolVolumeTypeToName(volumeType int) (string, error) {
 }
 
 func (c *Cluster) StoragePoolInsertZfsDriver() error {
-	_, err := exec(c.db, "UPDATE storage_pools SET driver='zfs', description='' WHERE driver=''")
+	err := exec(c.db, "UPDATE storage_pools SET driver='zfs', description='' WHERE driver=''")
 	return err
 }

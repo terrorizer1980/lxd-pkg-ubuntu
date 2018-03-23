@@ -543,10 +543,11 @@ func (c *imageCmd) run(conf *config.Config, args []string) error {
 			if err != nil {
 				return err
 			}
+			opAPI := op.Get()
 
 			// Check if refreshed
 			refreshed := false
-			flag, ok := op.Metadata["refreshed"]
+			flag, ok := opAPI.Metadata["refreshed"]
 			if ok {
 				refreshed = flag.(bool)
 			}
@@ -677,7 +678,10 @@ func (c *imageCmd) run(conf *config.Config, args []string) error {
 			imageFile = args[1]
 			properties = properties[1:]
 		}
-		imageFile = shared.HostPath(filepath.Clean(imageFile))
+
+		if shared.PathExists(shared.HostPath(filepath.Clean(imageFile))) {
+			imageFile = shared.HostPath(filepath.Clean(imageFile))
+		}
 
 		d, err := conf.GetContainerServer(remote)
 		if err != nil {
@@ -772,9 +776,10 @@ func (c *imageCmd) run(conf *config.Config, args []string) error {
 			progress.Done("")
 			return err
 		}
+		opAPI := op.Get()
 
 		// Get the fingerprint
-		fingerprint := op.Metadata["fingerprint"].(string)
+		fingerprint := opAPI.Metadata["fingerprint"].(string)
 		progress.Done(fmt.Sprintf(i18n.G("Image imported with fingerprint: %s"), fingerprint))
 
 		// Add the aliases
