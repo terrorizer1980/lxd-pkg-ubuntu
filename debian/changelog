@@ -1,3 +1,10 @@
+lxd (3.0.0~beta6-0ubuntu1) bionic; urgency=medium
+
+  * New upstream beta (3.0.0~beta6)
+  * Update sqlite build options for clustering
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Fri, 23 Mar 2018 18:38:03 -0400
+
 lxd (3.0.0~beta5-0ubuntu2) bionic; urgency=medium
 
   * Disable lvm in autopkgtest (requires proper LVM setup)
