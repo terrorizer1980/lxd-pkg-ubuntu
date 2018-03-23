@@ -19,7 +19,7 @@ func Retry(f func() error) error {
 	for i := 0; i < 20; i++ {
 		err = f()
 		if err != nil {
-			logger.Debugf("Database error %#v", err)
+			logger.Debugf("Database error: %#v", err)
 
 			if IsRetriableError(err) {
 				logger.Debugf("Retry failed db interaction (%v)", err)
@@ -50,7 +50,9 @@ func IsRetriableError(err error) bool {
 	if strings.Contains(err.Error(), "bad connection") {
 		return true
 	}
-	if strings.Contains(err.Error(), "leadership lost") {
+
+	// Despite the description this is usually a lost leadership error.
+	if strings.Contains(err.Error(), "disk I/O error") {
 		return true
 	}
 

@@ -315,7 +315,7 @@ func containerLXCCreate(s *state.State, args db.ContainerArgs) (container, error
 	}
 
 	// Retrieve the container's storage pool
-	_, rootDiskDevice, err := containerGetRootDiskDevice(c.expandedDevices)
+	_, rootDiskDevice, err := shared.GetRootDiskDevice(c.expandedDevices)
 	if err != nil {
 		c.Delete()
 		return nil, err
@@ -439,6 +439,8 @@ func containerLXCCreate(s *state.State, args db.ContainerArgs) (container, error
 	networkUpdateStatic(s, "")
 
 	logger.Info("Created container", ctxMap)
+	eventSendLifecycle("container-created",
+		fmt.Sprintf("/1.0/containers/%s", c.name), nil)
 
 	return c, nil
 }
@@ -1500,7 +1502,7 @@ func (c *containerLXC) initLXC(config bool) error {
 			// bump network index
 			networkidx++
 		} else if m["type"] == "disk" {
-			isRootfs := isRootDiskDevice(m)
+			isRootfs := shared.IsRootDiskDevice(m)
 
 			// source paths
 			srcPath := shared.HostPath(m["source"])
@@ -2386,6 +2388,8 @@ func (c *containerLXC) Start(stateful bool) error {
 	c.restartProxyDevices()
 
 	logger.Info("Started container", ctxMap)
+	eventSendLifecycle("container-started",
+		fmt.Sprintf("/1.0/containers/%s", c.name), nil)
 
 	return nil
 }
@@ -2550,6 +2554,8 @@ func (c *containerLXC) Stop(stateful bool) error {
 
 		op.Done(nil)
 		logger.Info("Stopped container", ctxMap)
+		eventSendLifecycle("container-stopped",
+			fmt.Sprintf("/1.0/containers/%s", c.name), nil)
 		return nil
 	} else if shared.PathExists(c.StatePath()) {
 		os.RemoveAll(c.StatePath())
@@ -2595,6 +2601,9 @@ func (c *containerLXC) Stop(stateful bool) error {
 	}
 
 	logger.Info("Stopped container", ctxMap)
+	eventSendLifecycle("container-stopped",
+		fmt.Sprintf("/1.0/containers/%s", c.name), nil)
+
 	return nil
 }
 
@@ -2642,6 +2651,8 @@ func (c *containerLXC) Shutdown(timeout time.Duration) error {
 	}
 
 	logger.Info("Shut down container", ctxMap)
+	eventSendLifecycle("container-shutdown",
+		fmt.Sprintf("/1.0/containers/%s", c.name), nil)
 
 	return nil
 }
@@ -2786,6 +2797,8 @@ func (c *containerLXC) Freeze() error {
 	}
 
 	logger.Info("Froze container", ctxMap)
+	eventSendLifecycle("container-paused",
+		fmt.Sprintf("/1.0/containers/%s", c.name), nil)
 
 	return err
 }
@@ -2821,6 +2834,8 @@ func (c *containerLXC) Unfreeze() error {
 	}
 
 	logger.Info("Unfroze container", ctxMap)
+	eventSendLifecycle("container-resumed",
+		fmt.Sprintf("/1.0/containers/%s", c.name), nil)
 
 	return err
 }
@@ -3087,6 +3102,11 @@ func (c *containerLXC) Restore(sourceContainer container, stateful bool) error {
 		return nil
 	}
 
+	eventSendLifecycle("container-snapshot-restored",
+		fmt.Sprintf("/1.0/containers/%s", c.name), map[string]interface{}{
+			"snapshot_name": c.name,
+		})
+
 	// Restart the container
 	if wasRunning {
 		logger.Info("Restored container", ctxMap)
@@ -3205,6 +3225,16 @@ func (c *containerLXC) Delete() error {
 	}
 
 	logger.Info("Deleted container", ctxMap)
+
+	if c.IsSnapshot() {
+		eventSendLifecycle("container-snapshot-deleted",
+			fmt.Sprintf("/1.0/containers/%s", c.name), map[string]interface{}{
+				"snapshot_name": c.name,
+			})
+	} else {
+		eventSendLifecycle("container-deleted",
+			fmt.Sprintf("/1.0/containers/%s", c.name), nil)
+	}
 
 	return nil
 }
@@ -3325,6 +3355,19 @@ func (c *containerLXC) Rename(newName string) error {
 	networkUpdateStatic(c.state, "")
 
 	logger.Info("Renamed container", ctxMap)
+
+	if c.IsSnapshot() {
+		eventSendLifecycle("container-snapshot-renamed",
+			fmt.Sprintf("/1.0/containers/%s", oldName), map[string]interface{}{
+				"new_name":      newName,
+				"snapshot_name": oldName,
+			})
+	} else {
+		eventSendLifecycle("container-renamed",
+			fmt.Sprintf("/1.0/containers/%s", oldName), map[string]interface{}{
+				"new_name": newName,
+			})
+	}
 
 	return nil
 }
@@ -3719,19 +3762,19 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 	}
 
 	// Retrieve old root disk devices.
-	oldLocalRootDiskDeviceKey, oldLocalRootDiskDevice, _ := containerGetRootDiskDevice(oldLocalDevices)
+	oldLocalRootDiskDeviceKey, oldLocalRootDiskDevice, _ := shared.GetRootDiskDevice(oldLocalDevices)
 	var oldProfileRootDiskDevices []string
 	for k, v := range oldExpandedDevices {
-		if isRootDiskDevice(v) && k != oldLocalRootDiskDeviceKey && !shared.StringInSlice(k, oldProfileRootDiskDevices) {
+		if shared.IsRootDiskDevice(v) && k != oldLocalRootDiskDeviceKey && !shared.StringInSlice(k, oldProfileRootDiskDevices) {
 			oldProfileRootDiskDevices = append(oldProfileRootDiskDevices, k)
 		}
 	}
 
 	// Retrieve new root disk devices.
-	newLocalRootDiskDeviceKey, newLocalRootDiskDevice, _ := containerGetRootDiskDevice(c.localDevices)
+	newLocalRootDiskDeviceKey, newLocalRootDiskDevice, _ := shared.GetRootDiskDevice(c.localDevices)
 	var newProfileRootDiskDevices []string
 	for k, v := range c.expandedDevices {
-		if isRootDiskDevice(v) && k != newLocalRootDiskDeviceKey && !shared.StringInSlice(k, newProfileRootDiskDevices) {
+		if shared.IsRootDiskDevice(v) && k != newLocalRootDiskDeviceKey && !shared.StringInSlice(k, newProfileRootDiskDevices) {
 			newProfileRootDiskDevices = append(newProfileRootDiskDevices, k)
 		}
 	}
@@ -4565,6 +4608,9 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 	// Success, update the closure to mark that the changes should be kept.
 	undoChanges = false
 
+	eventSendLifecycle("container-updated",
+		fmt.Sprintf("/1.0/containers/%s", c.name), nil)
+
 	return nil
 }
 
@@ -5191,7 +5237,8 @@ func (c *containerLXC) FileExists(path string) error {
 	// Check if the file exists in the container
 	out, err := shared.RunCommand(
 		c.state.OS.ExecPath,
-		"forkcheckfile",
+		"forkfile",
+		"exists",
 		c.RootfsPath(),
 		fmt.Sprintf("%d", c.InitPID()),
 		path,
@@ -5237,11 +5284,12 @@ func (c *containerLXC) FilePull(srcpath string, dstpath string) (int64, int64, o
 	// Get the file from the container
 	out, err := shared.RunCommand(
 		c.state.OS.ExecPath,
-		"forkgetfile",
+		"forkfile",
+		"pull",
 		c.RootfsPath(),
 		fmt.Sprintf("%d", c.InitPID()),
-		dstpath,
 		srcpath,
+		dstpath,
 	)
 
 	// Tear down container storage if needed
@@ -5380,7 +5428,8 @@ func (c *containerLXC) FilePush(type_ string, srcpath string, dstpath string, ui
 	// Push the file to the container
 	out, err := shared.RunCommand(
 		c.state.OS.ExecPath,
-		"forkputfile",
+		"forkfile",
+		"push",
 		c.RootfsPath(),
 		fmt.Sprintf("%d", c.InitPID()),
 		srcpath,
@@ -5448,7 +5497,8 @@ func (c *containerLXC) FileRemove(path string) error {
 	// Remove the file from the container
 	out, err := shared.RunCommand(
 		c.state.OS.ExecPath,
-		"forkremovefile",
+		"forkfile",
+		"remove",
 		c.RootfsPath(),
 		fmt.Sprintf("%d", c.InitPID()),
 		path,
@@ -5700,7 +5750,8 @@ func (c *containerLXC) networkState() map[string]api.ContainerStateNetwork {
 	// Get the network state from the container
 	out, err := shared.RunCommand(
 		c.state.OS.ExecPath,
-		"forkgetnet",
+		"forknet",
+		"info",
 		fmt.Sprintf("%d", pid))
 
 	// Process forkgetnet response
@@ -5959,7 +6010,7 @@ func (c *containerLXC) insertMount(source, target, fstype string, flags int) err
 	mntsrc := filepath.Join("/dev/.lxd-mounts", filepath.Base(tmpMount))
 	pidStr := fmt.Sprintf("%d", pid)
 
-	out, err := shared.RunCommand(c.state.OS.ExecPath, "forkmount", pidStr, mntsrc, target)
+	out, err := shared.RunCommand(c.state.OS.ExecPath, "forkmount", "mount", pidStr, mntsrc, target)
 
 	if out != "" {
 		for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
@@ -5984,7 +6035,7 @@ func (c *containerLXC) removeMount(mount string) error {
 
 	// Remove the mount from the container
 	pidStr := fmt.Sprintf("%d", pid)
-	out, err := shared.RunCommand(c.state.OS.ExecPath, "forkumount", pidStr, mount)
+	out, err := shared.RunCommand(c.state.OS.ExecPath, "forkmount", "umount", pidStr, mount)
 
 	if out != "" {
 		for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
