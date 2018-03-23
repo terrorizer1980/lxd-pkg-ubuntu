@@ -25,7 +25,7 @@ endif
 
 override_dh_auto_build:
 	# Build our own sqlite3
-	cd dist/sqlite && ./configure && make
+	cd dist/sqlite && ./configure --enable-replication && make
 
 	# And then build using it
 	dh_auto_build -- -tags libsqlite3
