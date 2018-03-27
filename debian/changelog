@@ -1,3 +1,9 @@
+lxd (3.0.0~beta7-0ubuntu1) bionic; urgency=medium
+
+  * New upstream beta (3.0.0~beta7)
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Tue, 27 Mar 2018 00:28:28 -0400
+
 lxd (3.0.0~beta6-0ubuntu1) bionic; urgency=medium
 
   * New upstream beta (3.0.0~beta6)
