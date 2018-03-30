@@ -1,1 +1,2 @@
-lxd-client: manpage-has-bad-whatis-entry usr/share/man/man1/lxc.*
+# cobra's fault
+lxd-client: manpage-section-mismatch usr/share/man/man1/lxc.*
