@@ -273,7 +273,7 @@ func containerLXCCreate(s *state.State, args db.ContainerArgs) (container, error
 	// Create the container struct
 	c := &containerLXC{
 		state:        s,
-		id:           args.Id,
+		id:           args.ID,
 		name:         args.Name,
 		description:  args.Description,
 		ephemeral:    args.Ephemeral,
@@ -450,7 +450,7 @@ func containerLXCLoad(s *state.State, args db.ContainerArgs) (container, error) 
 	// Create the container struct
 	c := &containerLXC{
 		state:        s,
-		id:           args.Id,
+		id:           args.ID,
 		name:         args.Name,
 		description:  args.Description,
 		ephemeral:    args.Ephemeral,
@@ -1162,6 +1162,39 @@ func (c *containerLXC) initLXC(config bool) error {
 			if err != nil {
 				return err
 			}
+		}
+	}
+
+	// Setup NVIDIA runtime
+	if shared.IsTrue(c.expandedConfig["nvidia.runtime"]) {
+		hookDir := os.Getenv("LXD_LXC_HOOK")
+		if hookDir == "" {
+			hookDir = "/usr/share/lxc/hooks"
+		}
+
+		hookPath := filepath.Join(hookDir, "nvidia")
+		if !shared.PathExists(hookPath) {
+			return fmt.Errorf("The NVIDIA LXC hook couldn't be found")
+		}
+
+		_, err := exec.LookPath("nvidia-container-cli")
+		if err != nil {
+			return fmt.Errorf("The NVIDIA container tools couldn't be found")
+		}
+
+		err = lxcSetConfigItem(cc, "lxc.environment", "NVIDIA_VISIBLE_DEVICES=none")
+		if err != nil {
+			return err
+		}
+
+		err = lxcSetConfigItem(cc, "lxc.environment", "NVIDIA_DRIVER_CAPABILITIES=compute,utility")
+		if err != nil {
+			return err
+		}
+
+		err = lxcSetConfigItem(cc, "lxc.hook.mount", hookPath)
+		if err != nil {
+			return err
 		}
 	}
 
@@ -2012,7 +2045,7 @@ func (c *containerLXC) startCommon() (string, error) {
 				sawNvidia = true
 			}
 
-			if sawNvidia {
+			if sawNvidia && !shared.IsTrue(c.expandedConfig["nvidia.runtime"]) {
 				for _, gpu := range nvidiaDevices {
 					err := c.setupUnixDevice(fmt.Sprintf("unix.%s", k), m, gpu.major, gpu.minor, gpu.path, true)
 					if err != nil {
@@ -4232,7 +4265,7 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 					}
 				}
 
-				if !nvidiaExists {
+				if !nvidiaExists && !shared.IsTrue(c.expandedConfig["nvidia.runtime"]) {
 					for _, gpu := range nvidiaDevices {
 						if !c.deviceExistsInDevicesFolder(fmt.Sprintf("unix.%s", k), gpu.path) {
 							continue
@@ -4352,7 +4385,7 @@ func (c *containerLXC) Update(args db.ContainerArgs, userRequested bool) error {
 					sawNvidia = true
 				}
 
-				if sawNvidia {
+				if sawNvidia && !shared.IsTrue(c.expandedConfig["nvidia.runtime"]) {
 					for _, gpu := range nvidiaDevices {
 						if c.deviceExistsInDevicesFolder(k, gpu.path) {
 							continue

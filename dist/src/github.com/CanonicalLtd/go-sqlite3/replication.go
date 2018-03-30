@@ -29,7 +29,26 @@ static sqlite3_replication_methods replicationMethods = {
 // Wrapper around sqlite3_config() for invoking the SQLITE_CONFIG_REPLICATION
 // opcode, since there's no way to use C varargs from Go.
 static int replicationConfig() {
-  return sqlite3_config(SQLITE_CONFIG_REPLICATION, &replicationMethods);
+  int rc = sqlite3_config(SQLITE_CONFIG_REPLICATION, &replicationMethods);
+  sqlite3_replication_methods currentMethods;
+
+  // TODO: this retry will revert all previous initialization. We should find a better way.
+  if( rc!=SQLITE_OK ){
+    rc = sqlite3_config(SQLITE_CONFIG_GETREPLICATION, &currentMethods);
+    if( rc==SQLITE_OK ){
+      if (&currentMethods != &replicationMethods){
+        rc = SQLITE_ERROR;
+      }
+    }
+    if( rc!=SQLITE_OK ){
+      rc = sqlite3_shutdown();
+      if( rc==SQLITE_OK ){
+        rc = sqlite3_config(SQLITE_CONFIG_REPLICATION, &replicationMethods);
+      }
+    }
+  }
+
+  return rc;
 }
 
 // Allocate the given number of replication pages.
@@ -69,7 +88,7 @@ func init() {
 	// Register the replication implementation
 	rc := C.replicationConfig()
 	if rc != C.SQLITE_OK {
-		panic("failed to configure SQLite replication")
+		//panic("failed to configure SQLite replication")
 	}
 }
 
