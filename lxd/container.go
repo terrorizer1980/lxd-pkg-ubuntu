@@ -862,16 +862,23 @@ func containerCreateInternal(s *state.State, args db.ContainerArgs) (container, 
 		return nil, err
 	}
 
+	checkedProfiles := []string{}
 	for _, profile := range args.Profiles {
 		if !shared.StringInSlice(profile, profiles) {
 			return nil, fmt.Errorf("Requested profile '%s' doesn't exist", profile)
 		}
+
+		if shared.StringInSlice(profile, checkedProfiles) {
+			return nil, fmt.Errorf("Duplicate profile found in request")
+		}
+
+		checkedProfiles = append(checkedProfiles, profile)
 	}
 
 	// Create the container entry
 	id, err := s.Cluster.ContainerCreate(args)
 	if err != nil {
-		if err == db.DbErrAlreadyDefined {
+		if err == db.ErrAlreadyDefined {
 			thing := "Container"
 			if shared.IsSnapshot(args.Name) {
 				thing = "Snapshot"
@@ -884,7 +891,7 @@ func containerCreateInternal(s *state.State, args db.ContainerArgs) (container, 
 	// Wipe any existing log for this container name
 	os.RemoveAll(shared.LogPath(args.Name))
 
-	args.Id = id
+	args.ID = id
 
 	// Read the timestamp from the database
 	dbArgs, err := s.Cluster.ContainerGet(args.Name)

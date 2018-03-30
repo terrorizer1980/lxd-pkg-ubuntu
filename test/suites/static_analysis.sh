@@ -68,6 +68,7 @@ test_static_analysis() {
       golint -set_exit_status lxd-p2c
 
       golint -set_exit_status lxd/config
+      golint -set_exit_status lxd/db
       golint -set_exit_status lxd/db/node
       golint -set_exit_status lxd/db/query
       golint -set_exit_status lxd/db/schema
@@ -87,7 +88,6 @@ test_static_analysis() {
       golint -set_exit_status shared/cancel/
       golint -set_exit_status shared/cmd/
       golint -set_exit_status shared/eagain/
-      golint -set_exit_status shared/gnuflag/
       golint -set_exit_status shared/i18n/
       golint -set_exit_status shared/ioprogress/
       golint -set_exit_status shared/log15/stack

@@ -27,7 +27,6 @@ type initDataCluster struct {
 }
 
 type cmdInit struct {
-	cmd    *cobra.Command
 	global *cmdGlobal
 
 	flagAuto    bool
@@ -66,7 +65,6 @@ func (c *cmdInit) Command() *cobra.Command {
 	cmd.Flags().StringVar(&c.flagStoragePool, "storage-pool", "", "Storage pool to use or create"+"``")
 	cmd.Flags().StringVar(&c.flagTrustPassword, "trust-password", "", "Password required to add new clients"+"``")
 
-	c.cmd = cmd
 	return cmd
 }
 
@@ -119,8 +117,8 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 	return c.ApplyConfig(cmd, args, d, *config)
 }
 
-func (c *cmdInit) availableStorageDrivers() []string {
-	drivers := []string{"dir"}
+func (c *cmdInit) availableStorageDrivers(poolType string) []string {
+	drivers := []string{}
 
 	backingFs, err := util.FilesystemDetect(shared.VarPath())
 	if err != nil {
@@ -129,7 +127,16 @@ func (c *cmdInit) availableStorageDrivers() []string {
 
 	// Check available backends
 	for _, driver := range supportedStoragePoolDrivers {
+		if poolType == "remote" && driver != "ceph" {
+			continue
+		}
+
+		if poolType == "local" && driver == "ceph" {
+			continue
+		}
+
 		if driver == "dir" {
+			drivers = append(drivers, driver)
 			continue
 		}
 

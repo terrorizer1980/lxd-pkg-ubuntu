@@ -1,67 +1,50 @@
 package main
 
 import (
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
+	"github.com/spf13/cobra"
+	"github.com/spf13/cobra/doc"
 
-	"github.com/lxc/lxd/lxc/config"
+	cli "github.com/lxc/lxd/shared/cmd"
 	"github.com/lxc/lxd/shared/i18n"
 )
 
-type manpageCmd struct{}
-
-func (c *manpageCmd) showByDefault() bool {
-	return false
+type cmdManpage struct {
+	global *cmdGlobal
 }
 
-func (c *manpageCmd) usage() string {
-	return i18n.G(
-		`Usage: lxc manpage <directory>
+func (c *cmdManpage) Command() *cobra.Command {
+	cmd := &cobra.Command{}
+	cmd.Use = i18n.G("manpage <target>")
+	cmd.Short = i18n.G("Generate manpages for all commands")
+	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G(
+		`Generate manpages for all commands`))
+	cmd.Hidden = true
 
-Generate all the LXD manpages.`)
+	cmd.RunE = c.Run
+
+	return cmd
 }
 
-func (c *manpageCmd) flags() {
-}
-
-func (c *manpageCmd) run(conf *config.Config, args []string) error {
-	if len(args) != 1 {
-		return errArgs
+func (c *cmdManpage) Run(cmd *cobra.Command, args []string) error {
+	// Sanity checks
+	exit, err := c.global.CheckArgs(cmd, args, 1, 1)
+	if exit {
+		return err
 	}
 
-	_, err := exec.LookPath("help2man")
-	if err != nil {
-		return fmt.Errorf(i18n.G("Unable to find help2man."))
+	// Generate the manpages
+	header := &doc.GenManHeader{
+		Title:   i18n.G("LXD - Command line client"),
+		Section: "1",
 	}
 
-	help2man := func(command string, title string, path string) error {
-		target, err := os.Create(path)
-		if err != nil {
-			return err
-		}
-		defer target.Close()
-
-		cmd := exec.Command("help2man", command, "-n", title, "--no-info")
-		cmd.Stdout = target
-
-		return cmd.Run()
+	opts := doc.GenManTreeOptions{
+		Header:           header,
+		Path:             args[0],
+		CommandSeparator: ".",
 	}
 
-	// Generate the main manpage
-	err = help2man(fmt.Sprintf("%s --all", execName), "LXD - client", filepath.Join(args[0], fmt.Sprintf("lxc.1")))
-	if err != nil {
-		return fmt.Errorf(i18n.G("Failed to generate 'lxc.1': %v"), err)
-	}
-
-	// Generate the pages for the subcommands
-	for k, cmd := range commands {
-		err := help2man(fmt.Sprintf("%s %s", execName, k), summaryLine(cmd.usage()), filepath.Join(args[0], fmt.Sprintf("lxc.%s.1", k)))
-		if err != nil {
-			return fmt.Errorf(i18n.G("Failed to generate 'lxc.%s.1': %v"), k, err)
-		}
-	}
+	doc.GenManTreeFromOpts(c.global.cmd, opts)
 
 	return nil
 }
