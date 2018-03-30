@@ -1,3 +1,11 @@
+lxd (3.0.0-0ubuntu1) bionic; urgency=medium
+
+  * New upstream LTS release:
+    - LXD 3.0 will be supported until June 2023.
+    - Announcement: https://linuxcontainers.org/lxd/news/
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Fri, 30 Mar 2018 00:10:30 -0400
+
 lxd (3.0.0~beta7-0ubuntu1) bionic; urgency=medium
 
   * New upstream beta (3.0.0~beta7)
