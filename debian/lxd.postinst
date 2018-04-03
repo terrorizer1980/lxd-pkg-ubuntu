@@ -35,7 +35,7 @@ if [ -z "${2}" ]; then
 fi
 
 # Upgrade LXD bridge
-if [ -e "/etc/default/lxd-bridge" ] && [ ! -e "/etc/default/lxd-bridge.upgrade" ]; then
+if [ -e "/etc/default/lxd-bridge" ] && [ ! -e "/etc/default/lxd-bridge.upgraded" ]; then
     echo ""
     echo "Old bridge configuration detected in /etc/default/lxd-bridge, upgrading"
     /usr/lib/lxd/upgrade-bridge
