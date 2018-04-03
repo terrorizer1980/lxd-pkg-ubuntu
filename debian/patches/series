@@ -1,0 +1,14 @@
+0001-lxc-Fix-mistakenly-hidden-commands.patch
+0002-lxd-main-Add-version-subcommand.patch
+0003-lxc-main-Add-version-subcommand.patch
+0004-i18n-Update-translation-templates.patch
+0005-lxd-migration-Pre-validate-profiles.patch
+0006-client-Improve-remote-operation-errors.patch
+0007-Fix-some-typos-and-wording.patch
+0008-Wording-fix.patch
+0009-lxc-image-Fix-crash-due-to-bad-arg-parsing.patch
+0010-lxd-add-missing-limits.h-include.patch
+0011-lxd-init-Fix-auto-with-network-config.patch
+0012-lxc-Consistent-naming-of-clustering-terms.patch
+0013-i18n-Update-translation-templates.patch
+0014-lxc-file-Fix-pushing-files-to-remote.patch
