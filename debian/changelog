@@ -1,3 +1,23 @@
+lxd (3.0.0-0ubuntu2) bionic; urgency=medium
+
+  * Cherry-pick upstream fixes:
+    - lxc/file: Fix pushing files to remote
+    - lxc: Consistent naming of clustering terms
+    - lxd/init: Fix --auto with network config
+    - lxd: add missing limits.h include
+    - lxc/image: Fix crash due to bad arg parsing
+    - doc: wording fix in cluster documentation
+    - client: Improve remote operation errors
+    - lxd/migration: Pre-validate profiles
+    - i18n: Update translation templates
+    - lxc/main: Add version subcommand
+    - lxd/main: Add version subcommand
+    - lxc: Fix mistakenly hidden commands
+
+  * Fix upgrade-bridge for LXD 3.0 (LP: #1760812)
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Tue, 03 Apr 2018 12:57:32 -0400
+
 lxd (3.0.0-0ubuntu1) bionic; urgency=medium
 
   * New upstream LTS release:
