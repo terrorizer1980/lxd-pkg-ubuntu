@@ -1,3 +1,20 @@
+lxd (3.0.0-0ubuntu3) bionic; urgency=medium
+
+  * Cherry-pick upstream fixes:
+    - lxd/init: Don't setup a remote storage pool by default
+    - lxd/init: Fix cluster join failure when using an existing zfs dataset
+    - lxc/query: Fix -d and -X parameters
+    - lxc/help: Make help respect --all too
+    - lxc/network: Fix typo in help
+    - lxd/db: Properly filter node-level storage configs by pool ID
+    - i18n: Update translation templates
+    - lxd/init: Make questions consistent
+    - lxd/db: Make new gofmt happy
+    - lxc/file: Allow using -r to follow symlinks
+    - lxc/config: Fix adding trust cert on snap
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Fri, 06 Apr 2018 13:45:31 -0400
+
 lxd (3.0.0-0ubuntu2) bionic; urgency=medium
 
   * Cherry-pick upstream fixes:
