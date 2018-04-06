@@ -12,3 +12,14 @@
 0012-lxc-Consistent-naming-of-clustering-terms.patch
 0013-i18n-Update-translation-templates.patch
 0014-lxc-file-Fix-pushing-files-to-remote.patch
+0015-lxd-init-Don-t-setup-a-remote-storage-pool-by-defaul.patch
+0016-Fix-lxd-init-failing-to-join-a-cluster-in-interactiv.patch
+0017-lxc-query-Fix-d-and-X.patch
+0018-lxc-help-Make-help-respect-all-too.patch
+0019-Fix-typo-in-help-of-lxc-network.patch
+0020-Properly-filter-node-level-storage-configs-by-pool-I.patch
+0021-i18n-Update-translation-templates.patch
+0022-lxd-init-Consistency.patch
+0023-Make-new-gofmt-happy.patch
+0024-lxc-file-Allow-using-r-to-follow-symlinks.patch
+0025-lxc-config-Fix-adding-trust-cert-on-snap.patch
