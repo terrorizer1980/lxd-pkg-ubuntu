@@ -2,7 +2,7 @@ Source: lxd
 Section: admin
 Priority: optional
 Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
-Standards-Version: 4.1.3
+Standards-Version: 4.1.4
 Homepage: https://linuxcontainers.org/
 Vcs-Git: https://github.com/lxc/lxd-pkg-ubuntu
 Vcs-Browser: https://github.com/lxc/lxd-pkg-ubuntu
@@ -16,6 +16,7 @@ Build-Depends: debhelper (>= 10),
                pkg-config,
                python3-lxc,
                tcl8.6-dev
+XS-Go-Import-Path: github.com/lxc/lxd
 
 Package: lxd-client
 Architecture: amd64 arm64 armhf i386 ppc64el s390x
