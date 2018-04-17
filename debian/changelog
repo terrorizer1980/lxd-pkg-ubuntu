@@ -1,3 +1,43 @@
+lxd (3.0.0-0ubuntu4) bionic; urgency=medium
+
+  * Cherry-pick upstream fixes:
+    - lxc/alias: Fix example in help message
+    - i18n: Update translation templates
+    - client: Introduce LXD_SOCKET
+    - Makefile: Add a manifest
+    - containers: fix snapshot deletion
+    - lxc/init: Add missing --no-profiles
+    - i18n: Update translations
+    - lxc/file: Fix pull target logic
+    - doc: Fix example in userns-idmap
+    - devices: fail if Nvidia device minor is missing
+    - Add db.ContainersNodeList
+    - storage: createContainerMountpoint() fix perms
+    - ceph: s/0755/0711/g
+    - lvm: s/0755/0711/g
+    - storage utils: s/0755/0711/g
+    - zfs: s/0755/0711/g
+    - patches: add "storage_api_path_permissions"
+    - sys/fs: s/MkdirAll/Mkdir/g
+    - btrfs: fix permissions
+    - Pass a logger to raft-http
+    - Add new cluster.Promote function
+    - Add new cluster.Rebalance function
+    - Notify the cluster leader after a node removal, so it can rebalance
+    - Add integration test
+    - doc: Tweak backup.md
+    - lxd/init: Require root for interactive cluster join
+    - Disable flaky unit tests for now
+    - Log the error that made Daemon.Init() fail
+    - client: Expose http URL in ConnectionInfo
+    - lxc/query: Add support for non-JSON endpoints
+    - lxd/containers: Fix lxc.net check
+
+  * Really don't restart lxd-containers on upgrades (LP: #1762680)
+  * Bump standards to 4.1.4
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Tue, 17 Apr 2018 13:35:28 -0400
+
 lxd (3.0.0-0ubuntu3) bionic; urgency=medium
 
   * Cherry-pick upstream fixes:
