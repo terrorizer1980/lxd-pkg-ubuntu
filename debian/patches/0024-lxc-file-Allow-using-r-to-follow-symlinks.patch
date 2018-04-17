@@ -10,7 +10,7 @@ Closes #4411
 
 Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
 ---
- lxc/file.go | 58 +++++++++++++++++++++++++++++++++++++++-------------------
+ lxc/file.go | 58 +++++++++++++++++++++++++++++++++++------------------
  1 file changed, 39 insertions(+), 19 deletions(-)
 
 diff --git a/lxc/file.go b/lxc/file.go

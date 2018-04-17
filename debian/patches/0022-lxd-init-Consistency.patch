@@ -8,7 +8,7 @@ Content-Transfer-Encoding: 8bit
 
 Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
 ---
- lxd/main_init_interactive.go | 57 ++++++++++++++++++++++----------------------
+ lxd/main_init_interactive.go | 57 ++++++++++++++++++------------------
  1 file changed, 29 insertions(+), 28 deletions(-)
 
 diff --git a/lxd/main_init_interactive.go b/lxd/main_init_interactive.go

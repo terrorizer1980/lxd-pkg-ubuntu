@@ -12,7 +12,7 @@ Closes #4382
 Signed-off-by: Stéphane Graber <stgraber@ubuntu.com>
 ---
  lxc/main.go    |  4 ++++
- lxc/version.go | 61 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ lxc/version.go | 61 ++++++++++++++++++++++++++++++++++++++++++++++++++
  2 files changed, 65 insertions(+)
  create mode 100644 lxc/version.go
 

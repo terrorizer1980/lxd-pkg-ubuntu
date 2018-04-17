@@ -6,7 +6,7 @@ Subject: Properly filter node-level storage configs by pool ID
 Signed-off-by: Free Ekanayaka <free.ekanayaka@canonical.com>
 ---
  lxd/db/storage_pools.go      |  3 ++-
- lxd/db/storage_pools_test.go | 38 ++++++++++++++++++++++++++++++++++++++
+ lxd/db/storage_pools_test.go | 38 ++++++++++++++++++++++++++++++++++++
  2 files changed, 40 insertions(+), 1 deletion(-)
 
 diff --git a/lxd/db/storage_pools.go b/lxd/db/storage_pools.go

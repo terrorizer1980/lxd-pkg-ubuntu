@@ -216,6 +216,11 @@ func (d *Daemon) State() *state.State {
 // UnixSocket returns the full path to the unix.socket file that this daemon is
 // listening on. Used by tests.
 func (d *Daemon) UnixSocket() string {
+	path := os.Getenv("LXD_SOCKET")
+	if path != "" {
+		return path
+	}
+
 	return filepath.Join(d.os.VarDir, "unix.socket")
 }
 
@@ -360,6 +365,7 @@ func (d *Daemon) Init() error {
 	// cleanup any state we produced so far. Errors happening here will be
 	// ignored.
 	if err != nil {
+		logger.Errorf("Failed to start the daemon: %v", err)
 		d.Stop()
 	}
 
@@ -443,6 +449,7 @@ func (d *Daemon) init() error {
 	/* Setup the web server */
 	config := &endpoints.Config{
 		Dir:                  d.os.VarDir,
+		UnixSocket:           d.UnixSocket(),
 		Cert:                 certInfo,
 		RestServer:           RestServer(d),
 		DevLxdServer:         DevLxdServer(d),
@@ -693,6 +700,7 @@ func (d *Daemon) Kill() {
 
 // Stop stops the shared daemon.
 func (d *Daemon) Stop() error {
+	logger.Info("Starting shutdown sequence")
 	errs := []error{}
 	trackError := func(err error) {
 		if err != nil {
@@ -773,6 +781,9 @@ func (d *Daemon) Stop() error {
 			format += fmt.Sprintf(" (and %d more errors)", n)
 		}
 		err = fmt.Errorf(format, errs[0])
+	}
+	if err != nil {
+		logger.Errorf("Failed to cleanly shutdown daemon: %v", err)
 	}
 	return err
 }
