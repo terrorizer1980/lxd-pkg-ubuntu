@@ -148,7 +148,7 @@ endif
 	dh_systemd_enable -plxd --name=lxd-containers lxd-containers.service
 	dh_installinit -plxd --no-start
 	dh_installinit -plxd --name=lxd-containers --no-start --noscripts
-	dh_systemd_start -plxd lxd-containers.service --no-restart-on-upgrade
+	dh_systemd_start -plxd lxd-containers.service --no-restart-on-upgrade --no-restart-after-upgrade
 
 	# Update arch-specific paths
 	sed -i "s#@LIBEXECDIR@#/usr/lib/${DEB_HOST_MULTIARCH}#g" debian/lxd/lib/systemd/system/lxd.service
