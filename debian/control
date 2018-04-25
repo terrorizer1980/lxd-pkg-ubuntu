@@ -51,6 +51,7 @@ Depends: acl,
          ${misc:Depends},
          ${shlibs:Depends}
 Built-Using: ${misc:Built-Using}
+Recommends: apparmor
 Suggests: criu, lxd-tools
 Description: Container hypervisor based on LXC - daemon
  LXD offers a REST API to remotely manage containers over the network,
