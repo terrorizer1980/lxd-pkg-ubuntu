@@ -898,7 +898,7 @@ func (s *storageLvm) ContainerCreate(container container) error {
 		sourceName, _, _ := containerGetParentAndSnapshotName(containerName)
 		snapshotMntPointSymlinkTarget := shared.VarPath("storage-pools", s.pool.Name, "snapshots", sourceName)
 		snapshotMntPointSymlink := shared.VarPath("snapshots", sourceName)
-		err := os.MkdirAll(containerMntPoint, 0755)
+		err := os.MkdirAll(containerMntPoint, 0711)
 		if err != nil {
 			return err
 		}
@@ -909,7 +909,7 @@ func (s *storageLvm) ContainerCreate(container container) error {
 	} else {
 		containerMntPoint := getContainerMountPoint(s.pool.Name, containerName)
 		containerPath := container.Path()
-		err := os.MkdirAll(containerMntPoint, 0755)
+		err := os.MkdirAll(containerMntPoint, 0711)
 		if err != nil {
 			return err
 		}
@@ -955,7 +955,7 @@ func (s *storageLvm) ContainerCreateFromImage(container container, fingerprint s
 
 	containerMntPoint := getContainerMountPoint(s.pool.Name, containerName)
 	containerPath := container.Path()
-	err = os.MkdirAll(containerMntPoint, 0755)
+	err = os.MkdirAll(containerMntPoint, 0711)
 	if err != nil {
 		return err
 	}
@@ -985,7 +985,7 @@ func (s *storageLvm) ContainerCreateFromImage(container container, fingerprint s
 	if container.IsPrivileged() {
 		err = os.Chmod(containerMntPoint, 0700)
 	} else {
-		err = os.Chmod(containerMntPoint, 0755)
+		err = os.Chmod(containerMntPoint, 0711)
 	}
 	if err != nil {
 		return err
@@ -1138,7 +1138,10 @@ func (s *storageLvm) ContainerCopy(target container, source container, container
 }
 
 func (s *storageLvm) ContainerMount(c container) (bool, error) {
-	name := c.Name()
+	return s.doContainerMount(c.Name())
+}
+
+func (s *storageLvm) doContainerMount(name string) (bool, error) {
 	logger.Debugf("Mounting LVM storage volume for container \"%s\" on storage pool \"%s\".", s.volume.Name, s.pool.Name)
 
 	containerLvmName := containerNameToLVName(name)

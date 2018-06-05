@@ -90,7 +90,7 @@ Pre-defined column shorthand chars:
   s - State
   S - Number of snapshots
   t - Type (persistent or ephemeral)
-  L - Location of the container (e.g. its node)
+  L - Location of the container (e.g. its cluster member)
 
 Custom columns are defined with "key[:name][:maxWidth]":
   KEY: The (extended) config key to display
@@ -201,7 +201,7 @@ func (c *cmdList) shouldShow(filters []string, state *api.Container) bool {
 	return true
 }
 
-func (c *cmdList) listContainers(conf *config.Config, remote string, cinfos []api.Container, filters []string, columns []column) error {
+func (c *cmdList) listContainers(conf *config.Config, d lxd.ContainerServer, cinfos []api.Container, filters []string, columns []column) error {
 	headers := []string{}
 	for _, column := range columns {
 		headers = append(headers, column.Name)
@@ -225,20 +225,10 @@ func (c *cmdList) listContainers(conf *config.Config, remote string, cinfos []ap
 	for i := 0; i < threads; i++ {
 		cStatesWg.Add(1)
 		go func() {
-			var d lxd.ContainerServer
-			var err error
 			for {
 				cName, more := <-cStatesQueue
 				if !more {
 					break
-				}
-
-				if d == nil {
-					d, err = conf.GetContainerServer(remote)
-					if err != nil {
-						cStatesWg.Done()
-						return
-					}
 				}
 
 				state, _, err := d.GetContainerState(cName)
@@ -255,21 +245,10 @@ func (c *cmdList) listContainers(conf *config.Config, remote string, cinfos []ap
 
 		cSnapshotsWg.Add(1)
 		go func() {
-			var d lxd.ContainerServer
-			var err error
 			for {
 				cName, more := <-cSnapshotsQueue
 				if !more {
 					break
-				}
-
-				if d == nil {
-					d, err = conf.GetContainerServer(remote)
-					if err != nil {
-						cSnapshotsWg.Done()
-						return
-					}
-
 				}
 
 				snaps, err := d.GetContainerSnapshots(cName)
@@ -460,7 +439,7 @@ func (c *cmdList) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	// Fetch any remaining data and render the table
-	return c.listContainers(conf, remote, cts, filters, columns)
+	return c.listContainers(conf, d, cts, filters, columns)
 }
 
 func (c *cmdList) parseColumns(clustered bool) ([]column, error) {

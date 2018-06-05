@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/lxc/lxd/lxc/config"
+	"github.com/lxc/lxd/lxc/utils"
 	"github.com/lxc/lxd/shared"
 	"github.com/lxc/lxd/shared/api"
 	cli "github.com/lxc/lxd/shared/cmd"
@@ -70,7 +71,6 @@ func (c *cmdRestart) Command() *cobra.Command {
 		`Restart containers
 
 The opposite of "lxc pause" is "lxc start".`))
-	cmd.Hidden = true
 
 	return cmd
 }
@@ -90,7 +90,6 @@ func (c *cmdStop) Command() *cobra.Command {
 	cmd.Short = i18n.G("Stop containers")
 	cmd.Long = cli.FormatSection(i18n.G("Description"), i18n.G(
 		`Stop containers`))
-	cmd.Hidden = true
 
 	return cmd
 }
@@ -127,6 +126,11 @@ func (c *cmdAction) Command(action string) *cobra.Command {
 
 func (c *cmdAction) doAction(action string, conf *config.Config, nameArg string) error {
 	state := false
+
+	// Pause is called freeze
+	if action == "pause" {
+		action = "freeze"
+	}
 
 	// Only store state if asked to
 	if action == "stop" && c.flagStateful {
@@ -176,7 +180,15 @@ func (c *cmdAction) doAction(action string, conf *config.Config, nameArg string)
 		return err
 	}
 
+	progress := utils.ProgressRenderer{}
+	_, err = op.AddHandler(progress.UpdateOp)
+	if err != nil {
+		progress.Done("")
+		return err
+	}
+
 	err = op.Wait()
+	progress.Done("")
 	if err != nil {
 		return fmt.Errorf("%s\n"+i18n.G("Try `lxc info --show-log %s` for more info"), err, nameArg)
 	}
