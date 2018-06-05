@@ -1,3 +1,41 @@
+test_clustering_enable() {
+  LXD_INIT_DIR=$(mktemp -d -p "${TEST_DIR}" XXX)
+  chmod +x "${LXD_INIT_DIR}"
+  spawn_lxd "${LXD_INIT_DIR}" false
+
+  (
+    set -e
+    # shellcheck disable=SC2034
+    LXD_DIR=${LXD_INIT_DIR}
+
+    # Launch a container.
+    ensure_import_testimage
+    lxc storage create default dir
+    lxc profile device add default root disk path="/" pool="default"
+    lxc launch testimage c1
+
+    # A node name is required.
+    ! lxc cluster enable
+
+    # Enable clustering.
+    lxc cluster enable node1
+    lxc cluster list | grep -q node1
+
+    # The container is still there and now shows up as
+    # running on node 1.
+    lxc list | grep c1 | grep -q node1
+
+    # Clustering can't be enabled on an already clustered instance.
+    ! lxc cluster enable node2
+
+    # Delete the container
+    lxc stop c1 --force
+    lxc delete c1
+  )
+
+  kill_lxd "${LXD_INIT_DIR}"
+}
+
 test_clustering_membership() {
   setup_clustering_bridge
   prefix="lxd$$"
@@ -74,39 +112,44 @@ test_clustering_membership() {
   LXD_DIR="${LXD_ONE_DIR}" lxc remote set-url cluster https://10.1.1.102:8443
   lxc network list cluster: | grep -q "${bridge}"
 
-  # Shutdown a non-database node, and wait a few seconds so it will be
+  # Shutdown a database node, and wait a few seconds so it will be
   # detected as down.
   LXD_DIR="${LXD_ONE_DIR}" lxc config set cluster.offline_threshold 5
-  LXD_DIR="${LXD_FIVE_DIR}" lxd shutdown
+  LXD_DIR="${LXD_THREE_DIR}" lxd shutdown
   sleep 10
-  LXD_DIR="${LXD_THREE_DIR}" lxc cluster list | grep "node5" | grep -q "OFFLINE"
+  LXD_DIR="${LXD_TWO_DIR}" lxc cluster list | grep "node3" | grep -q "OFFLINE"
   LXD_DIR="${LXD_TWO_DIR}" lxc config set cluster.offline_threshold 20
 
   # Trying to delete the preseeded network now fails, because a node is degraded.
   ! LXD_DIR="${LXD_TWO_DIR}" lxc network delete "${bridge}"
 
   # Force the removal of the degraded node.
-  LXD_DIR="${LXD_THREE_DIR}" lxc cluster remove node5 --force
+  LXD_DIR="${LXD_TWO_DIR}" lxc cluster remove node3 --force
+
+  # Sleep a bit to let a heartbeat occur and update the list of raft nodes
+  # everywhere, showing that node 4 has been promoted to database node.
+  sleep 8
+  LXD_DIR="${LXD_TWO_DIR}" lxc cluster list | grep "node4" | grep -q "YES"
 
   # Now the preseeded network can be deleted, and all nodes are
   # notified.
   LXD_DIR="${LXD_TWO_DIR}" lxc network delete "${bridge}"
 
   # Rename a node using the pre-existing name.
-  LXD_DIR="${LXD_THREE_DIR}" lxc cluster rename node4 node5
+  LXD_DIR="${LXD_ONE_DIR}" lxc cluster rename node4 node3
 
   # Trying to delete a container which is the only one with a copy of
   # an image results in an error
   LXD_DIR="${LXD_FOUR_DIR}" ensure_import_testimage
-  ! LXD_DIR="${LXD_FOUR_DIR}" lxc cluster remove node5
+  ! LXD_DIR="${LXD_FOUR_DIR}" lxc cluster remove node3
   LXD_DIR="${LXD_TWO_DIR}" lxc image delete testimage
 
   # Remove a node gracefully.
-  LXD_DIR="${LXD_FOUR_DIR}" lxc cluster remove node5
+  LXD_DIR="${LXD_FOUR_DIR}" lxc cluster remove node3
   ! LXD_DIR="${LXD_FOUR_DIR}" lxc cluster list
 
+  LXD_DIR="${LXD_FIVE_DIR}" lxd shutdown
   LXD_DIR="${LXD_FOUR_DIR}" lxd shutdown
-  LXD_DIR="${LXD_THREE_DIR}" lxd shutdown
   LXD_DIR="${LXD_TWO_DIR}" lxd shutdown
   LXD_DIR="${LXD_ONE_DIR}" lxd shutdown
   sleep 2
@@ -118,6 +161,12 @@ test_clustering_membership() {
 
   teardown_clustering_netns
   teardown_clustering_bridge
+
+  kill_lxd "${LXD_ONE_DIR}"
+  kill_lxd "${LXD_TWO_DIR}"
+  kill_lxd "${LXD_THREE_DIR}"
+  kill_lxd "${LXD_FOUR_DIR}"
+  kill_lxd "${LXD_FIVE_DIR}"
 }
 
 test_clustering_containers() {
@@ -268,6 +317,10 @@ test_clustering_containers() {
 
   teardown_clustering_netns
   teardown_clustering_bridge
+
+  kill_lxd "${LXD_ONE_DIR}"
+  kill_lxd "${LXD_TWO_DIR}"
+  kill_lxd "${LXD_THREE_DIR}"
 }
 
 test_clustering_storage() {
@@ -351,7 +404,7 @@ test_clustering_storage() {
   if [ "${driver}" = "lvm" ]; then
       LXD_DIR="${LXD_TWO_DIR}" lxc storage create pool1 "${driver}" volume.size=25MB
   elif [ "${driver}" = "ceph" ]; then
-      LXD_DIR="${LXD_TWO_DIR}" lxc storage create pool1 "${driver}" volume.size=25MB ceph.osd.pg_num=8
+      LXD_DIR="${LXD_TWO_DIR}" lxc storage create pool1 "${driver}" volume.size=25MB ceph.osd.pg_num=1
   else
       LXD_DIR="${LXD_TWO_DIR}" lxc storage create pool1 "${driver}"
   fi
@@ -438,6 +491,46 @@ test_clustering_storage() {
     LXD_DIR="${LXD_ONE_DIR}" lxc image delete testimage
   fi
 
+  # Test migration of zfs/btrfs-based containers
+  if [ "${driver}" = "zfs" ] || [ "${driver}" = "btrfs" ]; then
+    # Launch a container on node2
+    LXD_DIR="${LXD_TWO_DIR}" ensure_import_testimage
+    LXD_DIR="${LXD_ONE_DIR}" lxc launch --target node2 testimage foo
+    LXD_DIR="${LXD_ONE_DIR}" lxc info foo | grep -q "Location: node2"
+
+    # Stop the container and move it to node1
+    LXD_DIR="${LXD_ONE_DIR}" lxc stop foo --force
+    LXD_DIR="${LXD_TWO_DIR}" lxc move foo bar --target node1
+    LXD_DIR="${LXD_ONE_DIR}" lxc info bar | grep -q "Location: node1"
+
+    # Start and stop the migrated container on node1
+    LXD_DIR="${LXD_TWO_DIR}" lxc start bar
+    LXD_DIR="${LXD_ONE_DIR}" lxc stop bar --force
+
+    # Rename the container locally on node1
+    LXD_DIR="${LXD_TWO_DIR}" lxc rename bar foo
+    LXD_DIR="${LXD_ONE_DIR}" lxc info foo | grep -q "Location: node1"
+
+    # Copy the container without specifying a target, it will be placed on node2
+    # since it's the one with the least number of containers (0 vs 1)
+    LXD_DIR="${LXD_ONE_DIR}" lxc copy foo bar
+    LXD_DIR="${LXD_ONE_DIR}" lxc info bar | grep -q "Location: node2"
+
+    # Start and stop the copied container on node2
+    LXD_DIR="${LXD_TWO_DIR}" lxc start bar
+    LXD_DIR="${LXD_ONE_DIR}" lxc stop bar --force
+
+    # Purge the containers
+    LXD_DIR="${LXD_ONE_DIR}" lxc delete bar
+    LXD_DIR="${LXD_ONE_DIR}" lxc delete foo
+
+    # Delete the image too, and remove its volumes since they are not
+    # automatically deleted.
+    fp="$(LXD_DIR="${LXD_ONE_DIR}" lxc image list -c f --format json | jq .[0].fingerprint)"
+    LXD_DIR="${LXD_ONE_DIR}" lxc image delete testimage
+    LXD_DIR="${LXD_ONE_DIR}" lxc storage volume delete data "image/${fp}"
+  fi
+
   # Delete the storage pool
   LXD_DIR="${LXD_ONE_DIR}" lxc storage delete pool1
   ! LXD_DIR="${LXD_ONE_DIR}" lxc storage list | grep -q pool1
@@ -489,6 +582,12 @@ test_clustering_storage() {
 
   teardown_clustering_netns
   teardown_clustering_bridge
+
+  kill_lxd "${LXD_ONE_DIR}"
+  kill_lxd "${LXD_TWO_DIR}"
+  if [ -n "${LXD_THREE_DIR:-}" ]; then
+    kill_lxd "${LXD_THREE_DIR}"
+  fi
 }
 
 test_clustering_network() {
@@ -555,6 +654,9 @@ test_clustering_network() {
 
   teardown_clustering_netns
   teardown_clustering_bridge
+
+  kill_lxd "${LXD_ONE_DIR}"
+  kill_lxd "${LXD_TWO_DIR}"
 }
 
 test_clustering_upgrade() {
@@ -643,4 +745,123 @@ test_clustering_upgrade() {
 
   teardown_clustering_netns
   teardown_clustering_bridge
+
+  kill_lxd "${LXD_ONE_DIR}"
+  kill_lxd "${LXD_TWO_DIR}"
+  kill_lxd "${LXD_THREE_DIR}"
+}
+
+test_clustering_publish() {
+  setup_clustering_bridge
+  prefix="lxd$$"
+  bridge="${prefix}"
+
+  setup_clustering_netns 1
+  LXD_ONE_DIR=$(mktemp -d -p "${TEST_DIR}" XXX)
+  chmod +x "${LXD_ONE_DIR}"
+  ns1="${prefix}1"
+  spawn_lxd_and_bootstrap_cluster "${ns1}" "${bridge}" "${LXD_ONE_DIR}"
+
+  # Add a newline at the end of each line. YAML as weird rules..
+  cert=$(sed ':a;N;$!ba;s/\n/\n\n/g' "${LXD_ONE_DIR}/server.crt")
+
+  # Spawn a second node
+  setup_clustering_netns 2
+  LXD_TWO_DIR=$(mktemp -d -p "${TEST_DIR}" XXX)
+  chmod +x "${LXD_TWO_DIR}"
+  ns2="${prefix}2"
+  spawn_lxd_and_join_cluster "${ns2}" "${bridge}" "${cert}" 2 1 "${LXD_TWO_DIR}"
+
+  # Init a container on node2, using a client connected to node1
+  LXD_DIR="${LXD_TWO_DIR}" ensure_import_testimage
+  LXD_DIR="${LXD_ONE_DIR}" lxc init --target node2 testimage foo
+
+  LXD_DIR="${LXD_ONE_DIR}" lxc publish foo --alias=foo-image
+  LXD_DIR="${LXD_ONE_DIR}" lxc image show foo-image | grep -q "public: false"
+  LXD_DIR="${LXD_TWO_DIR}" lxc image delete foo-image
+
+  LXD_DIR="${LXD_TWO_DIR}" lxc snapshot foo backup
+  LXD_DIR="${LXD_ONE_DIR}" lxc publish foo/backup --alias=foo-backup-image
+  LXD_DIR="${LXD_ONE_DIR}" lxc image show foo-backup-image | grep -q "public: false"
+
+  LXD_DIR="${LXD_TWO_DIR}" lxd shutdown
+  LXD_DIR="${LXD_ONE_DIR}" lxd shutdown
+  sleep 2
+  rm -f "${LXD_TWO_DIR}/unix.socket"
+  rm -f "${LXD_ONE_DIR}/unix.socket"
+
+  teardown_clustering_netns
+  teardown_clustering_bridge
+
+  kill_lxd "${LXD_ONE_DIR}"
+  kill_lxd "${LXD_TWO_DIR}"
+}
+
+test_clustering_profiles() {
+  setup_clustering_bridge
+  prefix="lxd$$"
+  bridge="${prefix}"
+
+  setup_clustering_netns 1
+  LXD_ONE_DIR=$(mktemp -d -p "${TEST_DIR}" XXX)
+  chmod +x "${LXD_ONE_DIR}"
+  ns1="${prefix}1"
+  spawn_lxd_and_bootstrap_cluster "${ns1}" "${bridge}" "${LXD_ONE_DIR}"
+
+  # Add a newline at the end of each line. YAML as weird rules..
+  cert=$(sed ':a;N;$!ba;s/\n/\n\n/g' "${LXD_ONE_DIR}/server.crt")
+
+  # Spawn a second node
+  setup_clustering_netns 2
+  LXD_TWO_DIR=$(mktemp -d -p "${TEST_DIR}" XXX)
+  chmod +x "${LXD_TWO_DIR}"
+  ns2="${prefix}2"
+  spawn_lxd_and_join_cluster "${ns2}" "${bridge}" "${cert}" 2 1 "${LXD_TWO_DIR}"
+
+  # Create an empty profile.
+  LXD_DIR="${LXD_TWO_DIR}" lxc profile create web
+
+  # Launch two containers on the two nodes, using the above profile.
+  LXD_DIR="${LXD_TWO_DIR}" ensure_import_testimage
+  LXD_DIR="${LXD_ONE_DIR}" lxc launch --target node1 -p default -p web testimage c1
+  LXD_DIR="${LXD_ONE_DIR}" lxc launch --target node2 -p default -p web testimage c2
+
+  # Edit the profile.
+  source=$(mktemp -d -p "${TEST_DIR}" XXX)
+  touch "${source}/hello"
+  chmod 755 "${source}"
+  chmod 644 "${source}/hello"
+  (
+    cat <<EOF
+config: {}
+description: ""
+devices:
+  web:
+    path: /mnt
+    source: "${source}"
+    type: disk
+name: web
+used_by:
+- /1.0/containers/c1
+- /1.0/containers/c2
+EOF
+  ) | LXD_DIR="${LXD_TWO_DIR}" lxc profile edit web
+
+  LXD_DIR="${LXD_TWO_DIR}" lxc exec c1 ls /mnt | grep -q hello
+  LXD_DIR="${LXD_TWO_DIR}" lxc exec c2 ls /mnt | grep -q hello
+
+  LXD_DIR="${LXD_TWO_DIR}" lxc stop c1 --force
+  LXD_DIR="${LXD_ONE_DIR}" lxc stop c2 --force
+
+  LXD_DIR="${LXD_TWO_DIR}" lxd shutdown
+  LXD_DIR="${LXD_ONE_DIR}" lxd shutdown
+  sleep 2
+  rm -f "${LXD_TWO_DIR}/unix.socket"
+  rm -f "${LXD_ONE_DIR}/unix.socket"
+
+  teardown_clustering_netns
+  teardown_clustering_bridge
+
+  kill_lxd "${LXD_ONE_DIR}"
+  kill_lxd "${LXD_TWO_DIR}"
 }

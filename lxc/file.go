@@ -223,7 +223,7 @@ func (c *cmdFilePull) Run(cmd *cobra.Command, args []string) error {
 		if !targetIsDir && len(args)-1 > 1 {
 			return fmt.Errorf(i18n.G("More than one file to download, but target is not a directory"))
 		}
-	} else if strings.HasSuffix(target, string(os.PathSeparator)) || len(args)-1 > 1 || c.file.flagRecursive {
+	} else if strings.HasSuffix(args[len(args)-1], string(os.PathSeparator)) || len(args)-1 > 1 {
 		err := os.MkdirAll(target, 0755)
 		if err != nil {
 			return err
@@ -243,22 +243,31 @@ func (c *cmdFilePull) Run(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf(i18n.G("Invalid source %s"), resource.name)
 		}
 
-		if c.file.flagRecursive {
-			err := c.file.recursivePullFile(resource.server, pathSpec[0], pathSpec[1], target)
-			if err != nil {
-				return err
-			}
-
-			continue
-		}
-
 		buf, resp, err := resource.server.GetContainerFile(pathSpec[0], pathSpec[1])
 		if err != nil {
 			return err
 		}
 
+		// Deal with recursion
 		if resp.Type == "directory" {
-			return fmt.Errorf(i18n.G("Can't pull a directory without --recursive"))
+			if c.file.flagRecursive {
+				if !shared.PathExists(target) {
+					err := os.MkdirAll(target, 0755)
+					if err != nil {
+						return err
+					}
+					targetIsDir = true
+				}
+
+				err := c.file.recursivePullFile(resource.server, pathSpec[0], pathSpec[1], target)
+				if err != nil {
+					return err
+				}
+
+				continue
+			} else {
+				return fmt.Errorf(i18n.G("Can't pull a directory without --recursive"))
+			}
 		}
 
 		var targetPath string
@@ -270,16 +279,30 @@ func (c *cmdFilePull) Run(cmd *cobra.Command, args []string) error {
 
 		logger.Infof("Pulling %s from %s (%s)", targetPath, pathSpec[1], resp.Type)
 
-		var f *os.File
-		if targetPath == "-" {
-			f = os.Stdout
-		} else {
-			if resp.Type == "symlink" {
-				linkTarget, err := ioutil.ReadAll(buf)
-				if err != nil {
-					return err
-				}
+		if resp.Type == "symlink" {
+			linkTarget, err := ioutil.ReadAll(buf)
+			if err != nil {
+				return err
+			}
 
+			// Follow the symlink
+			if targetPath == "-" || c.file.flagRecursive {
+				for {
+					newPath := strings.TrimSuffix(string(linkTarget), "\n")
+					if !strings.HasPrefix(newPath, "/") {
+						newPath = filepath.Clean(filepath.Join(filepath.Dir(pathSpec[1]), newPath))
+					}
+
+					buf, resp, err = resource.server.GetContainerFile(pathSpec[0], newPath)
+					if err != nil {
+						return err
+					}
+
+					if resp.Type != "symlink" {
+						break
+					}
+				}
+			} else {
 				err = os.Symlink(strings.TrimSpace(string(linkTarget)), targetPath)
 				if err != nil {
 					return err
@@ -287,7 +310,12 @@ func (c *cmdFilePull) Run(cmd *cobra.Command, args []string) error {
 
 				continue
 			}
+		}
 
+		var f *os.File
+		if targetPath == "-" {
+			f = os.Stdout
+		} else {
 			f, err = os.Create(targetPath)
 			if err != nil {
 				return err
@@ -351,7 +379,6 @@ func (c *cmdFilePush) Run(cmd *cobra.Command, args []string) error {
 	if len(pathSpec) != 2 {
 		return fmt.Errorf(i18n.G("Invalid target %s"), target)
 	}
-	container := pathSpec[0]
 
 	targetIsDir := strings.HasSuffix(target, "/")
 	// re-add leading / that got stripped by the SplitN
@@ -413,7 +440,7 @@ func (c *cmdFilePush) Run(cmd *cobra.Command, args []string) error {
 
 			mode, uid, gid := shared.GetOwnerMode(finfo)
 
-			err = c.file.recursiveMkdir(resource.server, container, targetPath, &mode, int64(uid), int64(gid))
+			err = c.file.recursiveMkdir(resource.server, resource.name, targetPath, &mode, int64(uid), int64(gid))
 			if err != nil {
 				return err
 			}
@@ -421,7 +448,7 @@ func (c *cmdFilePush) Run(cmd *cobra.Command, args []string) error {
 
 		// Transfer the files
 		for _, fname := range sourcefilenames {
-			err := c.file.recursivePushFile(resource.server, container, fname, targetPath)
+			err := c.file.recursivePushFile(resource.server, resource.name, fname, targetPath)
 			if err != nil {
 				return err
 			}
@@ -488,7 +515,7 @@ func (c *cmdFilePush) Run(cmd *cobra.Command, args []string) error {
 				}
 			}
 
-			err = c.file.recursiveMkdir(resource.server, container, path.Dir(fpath), nil, int64(uid), int64(gid))
+			err = c.file.recursiveMkdir(resource.server, resource.name, path.Dir(fpath), nil, int64(uid), int64(gid))
 			if err != nil {
 				return err
 			}
@@ -534,7 +561,7 @@ func (c *cmdFilePush) Run(cmd *cobra.Command, args []string) error {
 		args.Type = "file"
 
 		logger.Infof("Pushing %s to %s (%s)", f.Name(), fpath, args.Type)
-		err = resource.server.CreateContainerFile(container, fpath, args)
+		err = resource.server.CreateContainerFile(resource.name, fpath, args)
 		if err != nil {
 			return err
 		}

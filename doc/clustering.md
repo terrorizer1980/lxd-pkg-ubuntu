@@ -1,10 +1,11 @@
 # Clustering
 
-LXD can be run in clustering mode, where any number of LXD instance
+LXD can be run in clustering mode, where any number of LXD instances
 share the same distributed database and can be managed uniformly using
 the lxc client or the REST API.
 
-Note that this feature was introduced as part of API extension "clustering".
+Note that this feature was introduced as part of the API extension 
+"clustering".
 
 ## Forming a cluster
 
@@ -19,9 +20,9 @@ networks. The only configuration that can be node-specific are the
 `source` and `size` keys for storage pools and the
 `bridge.external_interfaces` key for networks.
 
-It is recommended that the number of nodes in the cluster is at least
+It is recommended that the number of nodes in the cluster be at least
 three, so the cluster can survive the loss of at least one node and
-still be able to have a quorum for its distributed state (which is
+still be able to establish quorum for its distributed state (which is
 kept in a SQLite database replicated using the Raft algorithm).
 
 ### Interactively
@@ -36,15 +37,15 @@ available on your network.
 
 You can now join further nodes to the cluster. Note however that these
 nodes should be brand new LXD instances, or alternatively you should
-clear them up before joining, since any existing data on them will be
-lost.
+clear their contents before joining, since any existing data on them
+will be lost.
 
-Run `lxd init` and answer `yes` to the question about whether to use
-clustering. Pick a new node name which must be different from the one
-of the bootstrap node or any other nodes you joined so far. Then pick
-an IP or DNS address for the node and answer `yes` to the question
-about whether you're joining an existing cluster. Pick an address of
-an existing node in the cluster and check the fingerprint that gets
+To add an additional node, run `lxd init` and answer `yes` to the question
+about whether to use clustering. Choose a node name that is different from
+the one chosen for the bootstrap node or any other nodes you have joined so
+far. Then pick an IP or DNS address for the node and answer `yes` to the
+question about whether you're joining an existing cluster. Pick an address
+of an existing node in the cluster and check the fingerprint that gets
 printed.
 
 ### Preseed
@@ -151,7 +152,7 @@ To cleanly delete a node from the cluster use `lxc cluster remove <node name>`.
 At each time there will be an elected cluster leader that will monitor
 the health of the other nodes. If a node is down for more than 20
 seconds, its status will be marked as OFFLINE and no operation will be
-possible on it, as well as operations that require a state changes
+possible on it, as well as operations that require a state change
 across all nodes.
 
 If the node that goes offline is the leader itself, the other nodes
@@ -165,8 +166,8 @@ delete it from the cluster using `lxc cluster remove --force <node name>`.
 
 ### Upgrading nodes
 
-To upgrade a cluster you need to upgrade all its nodes, making sure
-that they all upgrade to the very same LXD version.
+To upgrade a cluster you need to upgrade all of its nodes, making sure
+that they all upgrade to the same version of LXD.
 
 To upgrade a single node, simply upgrade the lxd/lxc binaries on the
 host (via snap or other packaging systems) and restart the lxd daemon.
@@ -174,8 +175,8 @@ host (via snap or other packaging systems) and restart the lxd daemon.
 If the new version of the daemon has database schema or API changes,
 the restarted node might transition into a Blocked state. That happens
 if there are still nodes in the cluster that have not been upgraded
-and that are running a less recent version. When a node is in the
-Blocked state it will not serve any LXD API request (in particular,
+and that are running an older version. When a node is in the
+Blocked state it will not serve any LXD API requests (in particular,
 lxc commands on that node will not work, although any running
 container will continue to run).
 
@@ -220,7 +221,7 @@ lxc pull file xenial/etc/hosts .
 
 As mentioned above, all nodes must have identical storage pools. The
 only difference between pools on different nodes might be their
-`source` and `size` configuration keys.
+`source`, `size` or `zfs.pool_name` configuration keys.
 
 To create a new storage pool, you first have to define it across all
 nodes, for example:
@@ -229,6 +230,9 @@ nodes, for example:
 lxc storage create --target node1 data zfs source=/dev/vdb1
 lxc storage create --target node2 data zfs source=/dev/vdc1
 ```
+
+Note that when defining a new storage pool on a node the only valid
+configuration keys you can pass are the node-specific ones mentioned above.
 
 At this point the pool hasn't been actually created yet, but just
 defined (it's state is marked as Pending if you run `lxc storage list`).
@@ -239,15 +243,18 @@ Now run:
 lxc storage create data zfs
 ```
 
-and the storage will be actually created on all nodes. If you didn't
-define it on some node, or some node is down, an error will be
+and the storage will be instantiated on all nodes. If you didn't
+define it on a particular node, or a node is down, an error will be
 returned.
+
+You can pass to this final ``storage create`` command any configuration key
+which is not node-specific (see above).
 
 ## Storage volumes
 
-Each volume is lives on a specific node. The `lxc storage volume list`
-includes a `NODE` column to indicate which node a certain volume lives
-on.
+Each volume lives on a specific node. The `lxc storage volume list`
+includes a `NODE` column to indicate on which node a certain volume
+resides.
 
 Different volumes can have the same name as long as they live on
 different nodes (for example image volumes). You can manage storage
@@ -268,3 +275,37 @@ lxc storage volume create default web --target node2
 lxc storage volume show default web --target node1
 lxc storage volume show default web --target node2
 ```
+
+## Networks
+
+As mentioned above, all nodes must have identical networks defined. The only
+difference between networks on different nodes might be their
+`bridge.external_interfaces` optional configuration key (see also documentation
+about [network configuration](networks.md)).
+
+To create a new network, you first have to define it across all
+nodes, for example:
+
+```bash
+lxc network create --target node1 my-network
+lxc network create --target node2 my-network
+```
+
+Note that when defining a new network on a node the only valid configuration
+key you can pass is `bridge.external_interfaces`, as mentioned above.
+
+At this point the network hasn't been actually created yet, but just
+defined (it's state is marked as Pending if you run `lxc network list`).
+
+Now run:
+
+```bash
+lxc network create my-network
+```
+
+and the network will be instantiated on all nodes. If you didn't
+define it on a particular node, or a node is down, an error will be
+returned.
+
+You can pass to this final ``network create`` command any configuration key
+which is not node-specific (see above).
