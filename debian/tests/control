@@ -11,7 +11,7 @@ Depends: acl,
          sqlite3,
          thin-provisioning-tools,
          uuid-runtime,
-         zfsutils-linux [amd64 arm64 ppc64el],
+         zfsutils-linux [amd64 arm64 ppc64el s390x],
          @builddeps@,
          @
 Restrictions: needs-root allow-stderr isolation-machine
