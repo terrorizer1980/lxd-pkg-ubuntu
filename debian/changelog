@@ -1,3 +1,9 @@
+lxd (3.0.2-0ubuntu2) cosmic; urgency=medium
+
+  * Disable static analysis tests in autopkgtest
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 22 Aug 2018 00:16:47 -0400
+
 lxd (3.0.2-0ubuntu1) cosmic; urgency=medium
 
   * New upstream bugfix release (LP: #1788280):
