@@ -1,3 +1,9 @@
+lxd (3.0.2-0ubuntu3) cosmic; urgency=medium
+
+  * Add missing test dependency (socat)
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 22 Aug 2018 01:50:48 -0400
+
 lxd (3.0.2-0ubuntu2) cosmic; urgency=medium
 
   * Disable static analysis tests in autopkgtest
