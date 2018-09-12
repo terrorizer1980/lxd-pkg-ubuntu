@@ -1,3 +1,15 @@
+lxd (1:0.1) cosmic; urgency=medium
+
+  * Switch over to the snap (LP: #1788040)
+    - Empty the source package
+    - Bump epoch to 1
+    - Switch package to native
+    - Drop lxd-client and lxd-tools packages
+  * When installing/upgrading to this package, a preinst script will
+    install the LXD snap and transition all data over to it.
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 12 Sep 2018 17:39:23 -0400
+
 lxd (3.0.2-0ubuntu3) cosmic; urgency=medium
 
   * Add missing test dependency (socat)
