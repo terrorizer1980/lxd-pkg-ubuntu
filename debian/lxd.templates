@@ -1,0 +1,35 @@
+Template: lxd/snap-upgrade-warning
+Type: note
+_Description: Upgrade to the LXD snap
+ Starting with LXD 3.1, all new releases of LXD are only available to
+ Ubuntu users through the snap package.
+ .
+ This package update will transition your system over to the snap by
+ installing it and then running an automated migration tool.
+ .
+ As part of this upgrade, all containers will briefly be shutdown and
+ brought back up. Before continuing, make sure that you are ready for
+ this downtime.
+
+Template: lxd/snap-no-connectivity
+Type: note
+_Description: Unable to reach the snap store
+ Your system is unable to reach the snap store, please make sure you're
+ connected to the Internet and update any firewall or proxy settings as
+ needed so that you can reach the snap store.
+ .
+ You can manually check for connectivity by running "snap info lxd"
+
+Template: lxd/snap-track
+Type: select
+Choices: latest, 3.0
+_Description: LXD snap track
+ The LXD project puts out monthly feature releases which while backward
+ compatible at an API and CLI level, will contain some behavior change
+ and potentially require manual intervention during an upgrade.
+ .
+ In addition to those, every 2 years a LTS release is made which comes
+ with 5 years of support through frequent bugfix-only releases.
+ .
+ The LXD team recommends you pick "3.0" for production environments and use
+ "latest" if you're interested in getting the latest LXD features.

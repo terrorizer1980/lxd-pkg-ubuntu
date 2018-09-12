@@ -1,10 +1,9 @@
-# cobra's fault
-lxd: manpage-section-mismatch usr/share/man/man1/lxd.*
+# Switching to native
+lxd: latest-debian-changelog-entry-changed-to-native
 
-# Coming from an external source
-lxd: spelling-error-in-binary usr/lib/lxd/lxd Nam Name
-lxd: spelling-error-in-binary usr/lib/lxd/lxd wiH with
-lxd: spelling-error-in-binary usr/lib/lxd/lxd containe contained
+# manpages
+lxd: binary-without-manpage usr/bin/lxc
+lxd: binary-without-manpage usr/bin/lxd
 
-# Unknown origin but not our code
-lxd: package-has-unnecessary-activation-of-ldconfig-trigger
+# lintian bug
+lxd: unused-debconf-template lxd/snap-no-connectivity
