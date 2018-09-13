@@ -1,3 +1,10 @@
+lxd (1:0.2) cosmic; urgency=medium
+
+  * Make it possible to abort the upgrade when run interactively
+  * Introduce transitional packages to make proposed-migration happy
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Thu, 13 Sep 2018 10:26:17 -0400
+
 lxd (1:0.1) cosmic; urgency=medium
 
   * Switch over to the snap (LP: #1788040)
