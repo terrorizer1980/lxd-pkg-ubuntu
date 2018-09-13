@@ -19,3 +19,21 @@ Description: Transitional package - lxd -> snap (lxd)
  This is a transitional dummy package. It can safely be removed.
  .
  lxd is now replaced by the LXD snap.
+
+Package: lxd-client
+Architecture: all
+Depends: lxd (>= ${source:Version}), ${misc:Depends}
+Section: oldlibs
+Description: Transitional package - lxd-client -> LXD snap
+ This is a transitional dummy package. It can safely be removed.
+ .
+ lxd-client is now replaced by the LXD snap.
+
+Package: lxd-tools
+Architecture: all
+Depends: lxd (>= ${source:Version}), ${misc:Depends}
+Section: oldlibs
+Description: Transitional package - lxc-tools -> LXD snap
+ This is a transitional dummy package. It can safely be removed.
+ .
+ lxd-tools is no longer available in the Ubuntu archive.
