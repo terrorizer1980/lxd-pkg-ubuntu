@@ -1,6 +1,7 @@
 lxd (1:0.3) cosmic; urgency=medium
 
-  * Install the snap on package installation too, not just upgrades.
+  * Install the snap on package installation too, not just upgrades
+  * Make snapd a Pre-Depends for the case where snapd isn't installed
 
  -- Stéphane Graber <stgraber@ubuntu.com>  Thu, 13 Sep 2018 14:28:29 -0400
 

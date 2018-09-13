@@ -10,8 +10,8 @@ Build-Depends: debhelper (>= 11)
 
 Package: lxd
 Architecture: all
-Depends: snapd, ${misc:Depends}
-Pre-Depends: debconf
+Depends: ${misc:Depends}
+Pre-Depends: debconf, snapd
 Breaks: lxd-client (<< 1:0.0~), lxd-tools (<< 1:0.0~)
 Replaces: lxd-client (<< 1:0.0~), lxd-tools (<< 1:0.0~)
 Section: oldlibs
