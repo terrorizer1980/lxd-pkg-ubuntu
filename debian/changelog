@@ -1,3 +1,9 @@
+lxd (1:0.3) cosmic; urgency=medium
+
+  * Install the snap on package installation too, not just upgrades.
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Thu, 13 Sep 2018 14:28:29 -0400
+
 lxd (1:0.2) cosmic; urgency=medium
 
   * Make it possible to abort the upgrade when run interactively
