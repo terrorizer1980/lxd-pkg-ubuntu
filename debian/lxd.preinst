@@ -5,109 +5,107 @@ case "$1" in
     install|upgrade)
         . /usr/share/debconf/confmodule
 
-        if [ -e "/var/lib/lxd" ]; then
-            echo "=> Migrating to the LXD snap"
+        echo "=> Installing the LXD snap"
 
-            # Warn about downtime
+        # Warn about downtime
+        if [ -e "/var/lib/lxd/server.crt" ]; then
             db_input high lxd/snap-upgrade-warning || true
             db_go
-
-            # Check store connectivity
-            echo "==> Checking connectivity with the snap store"
-            COUNT=0
-            while :; do
-                snap info lxd >/dev/null 2>&1 && break
-
-                db_fset lxd/snap-no-connectivity seen false
-                if ! db_input critical lxd/snap-no-connectivity; then
-                    db_go
-
-                    if [ "${COUNT}" = "0" ]; then
-                        echo "===> Unable to contact the store, trying every minute for the next 30 minutes"
-                    elif [ "${COUNT}" = "10" ]; then
-                        echo "===> Still unable to contact the store, trying for another 20 minutes"
-                    elif [ "${COUNT}" = "20" ]; then
-                        echo "===> Still unable to contact the store, trying for another 10 minutes"
-                    elif [ "${COUNT}" = "30" ]; then
-                        echo "===> Still unable to contact the store, aborting"
-                        exit 1
-                    fi
-
-                    sleep 1m
-                else
-                    db_go
-                    db_get lxd/snap-no-connectivity
-                    if [ "${RET}" = "Abort" ]; then
-                        echo "===> Aborting at user request"
-                        exit 1
-                    fi
-
-                    if [ "${COUNT}" = "0" ]; then
-                        echo "===> Unable to contact the store"
-                    fi
-                fi
-
-                COUNT=$((COUNT+1))
-            done
-
-            # Set the default track
-            db_get lxd/snap-track
-            if [ -z "${RET}" ]; then
-                if [ -e "/etc/os-release" ] && grep -q " LTS " /etc/os-release; then
-                    db_set lxd/snap-track "3.0"
-                fi
-
-                db_fset lxd/snap-track seen false
-            fi
-
-            # Prompt about track
-            db_input high lxd/snap-track || true
-            db_go
-
-            # Get the track
-            db_get lxd/snap-track
-            track=${RET}
-
-            # Workaround for broken systems
-            mkdir -p /lib/modules
-
-            # Extract the OS release
-            RELEASE="18.10"
-            if [ -e "/etc/os-release" ]; then
-                RELEASE=$(. /etc/os-release && echo "${VERSION_ID}")
-            fi
-
-            # Install the snap
-            echo "==> Installing the LXD snap from the ${track} track for ubuntu-${RELEASE}"
-            if [ "${track}" = "latest" ]; then
-                snap install lxd --channel="stable/ubuntu-${RELEASE}"
-            else
-                snap install lxd --channel="${track}/stable/ubuntu-${RELEASE}"
-            fi
-
-            if [ -e "/var/lib/lxd/server.crt" ]; then
-                echo "==> Waiting for LXD to be online (10min timeout)"
-                /snap/bin/lxd waitready --timeout=600
-
-                echo "==> Running migration from Deb to Snap"
-                export LXD_PREINST=1
-                /snap/bin/lxd.migrate --yes
-            else
-                echo "==> LXD appears unconfigured/unused, skipping migration"
-            fi
-
-            echo "==> Cleaning up leftovers"
-            deb-systemd-invoke stop lxd.socket lxd.service lxd-containers.service || true
-            deb-systemd-invoke disable lxd.socket lxd.service lxd-containers.service || true
-            rm -rf --one-file-system /etc/dnsmasq.d-available/lxd
-            rm -rf --one-file-system /etc/init.d/lxd
-            rm -rf --one-file-system /etc/logrotate.d/lxd
-            rm -rf --one-file-system /etc/sysctl.d/10-lxd-inotify.conf
-            rm -rf --one-file-system /var/lib/lxd
-            rm -rf --one-file-system /var/log/lxd
-
-            echo "=> Migration complete"
         fi
+
+        # Check store connectivity
+        echo "==> Checking connectivity with the snap store"
+        COUNT=0
+        while :; do
+            snap info lxd >/dev/null 2>&1 && break
+
+            db_fset lxd/snap-no-connectivity seen false
+            if ! db_input critical lxd/snap-no-connectivity; then
+                db_go
+
+                if [ "${COUNT}" = "0" ]; then
+                    echo "===> Unable to contact the store, trying every minute for the next 30 minutes"
+                elif [ "${COUNT}" = "10" ]; then
+                    echo "===> Still unable to contact the store, trying for another 20 minutes"
+                elif [ "${COUNT}" = "20" ]; then
+                    echo "===> Still unable to contact the store, trying for another 10 minutes"
+                elif [ "${COUNT}" = "30" ]; then
+                    echo "===> Still unable to contact the store, aborting"
+                    exit 1
+                fi
+
+                sleep 1m
+            else
+                db_go
+                db_get lxd/snap-no-connectivity
+                if [ "${RET}" = "Abort" ]; then
+                    echo "===> Aborting at user request"
+                    exit 1
+                fi
+
+                if [ "${COUNT}" = "0" ]; then
+                    echo "===> Unable to contact the store"
+                fi
+            fi
+
+            COUNT=$((COUNT+1))
+        done
+
+        # Set the default track
+        db_get lxd/snap-track
+        if [ -z "${RET}" ]; then
+            if [ -e "/etc/os-release" ] && grep -q " LTS " /etc/os-release; then
+                db_set lxd/snap-track "3.0"
+            fi
+
+            db_fset lxd/snap-track seen false
+        fi
+
+        # Prompt about track
+        db_input high lxd/snap-track || true
+        db_go
+
+        # Get the track
+        db_get lxd/snap-track
+        track=${RET}
+
+        # Workaround for broken systems
+        mkdir -p /lib/modules
+
+        # Extract the OS release
+        RELEASE="18.10"
+        if [ -e "/etc/os-release" ]; then
+            RELEASE=$(. /etc/os-release && echo "${VERSION_ID}")
+        fi
+
+        # Install the snap
+        echo "==> Installing the LXD snap from the ${track} track for ubuntu-${RELEASE}"
+        if [ "${track}" = "latest" ]; then
+            snap install lxd --channel="stable/ubuntu-${RELEASE}"
+        else
+            snap install lxd --channel="${track}/stable/ubuntu-${RELEASE}"
+        fi
+
+        if [ -e "/var/lib/lxd/server.crt" ]; then
+            echo "==> Waiting for LXD to be online (10min timeout)"
+            /snap/bin/lxd waitready --timeout=600
+
+            echo "==> Running migration from Deb to Snap"
+            export LXD_PREINST=1
+            /snap/bin/lxd.migrate --yes
+        fi
+
+        echo "==> Cleaning up leftovers"
+        deb-systemd-invoke stop lxd.socket lxd.service lxd-containers.service || true
+        deb-systemd-invoke disable lxd.socket lxd.service lxd-containers.service || true
+        rm -rf --one-file-system /etc/dnsmasq.d-available/lxd
+        rm -rf --one-file-system /etc/init.d/lxd
+        rm -rf --one-file-system /etc/logrotate.d/lxd
+        rm -rf --one-file-system /etc/sysctl.d/10-lxd-inotify.conf
+        rm -rf --one-file-system /var/lib/lxd
+        rm -rf --one-file-system /var/log/lxd
+
+        echo "=> Snap installation complete"
     ;;
 
     abort-upgrade|abort-remove|abort-deconfigure)
