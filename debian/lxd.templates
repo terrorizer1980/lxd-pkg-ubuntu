@@ -12,13 +12,17 @@ _Description: Upgrade to the LXD snap
  this downtime.
 
 Template: lxd/snap-no-connectivity
-Type: note
+Type: select
+Choices: Retry, Abort
 _Description: Unable to reach the snap store
  Your system is unable to reach the snap store, please make sure you're
  connected to the Internet and update any firewall or proxy settings as
  needed so that you can reach the snap store.
  .
  You can manually check for connectivity by running "snap info lxd"
+ .
+ Aborting will cause the upgrade to fail and will require it to be re-attempted
+ once snapd is functional on the system.
 
 Template: lxd/snap-track
 Type: select

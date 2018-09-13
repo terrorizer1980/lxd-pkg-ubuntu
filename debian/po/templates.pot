@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: lxd\n"
 "Report-Msgid-Bugs-To: lxd@packages.debian.org\n"
-"POT-Creation-Date: 2018-09-12 17:39-0400\n"
+"POT-Creation-Date: 2018-09-13 10:25-0400\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -47,13 +47,13 @@ msgid ""
 "back up. Before continuing, make sure that you are ready for this downtime."
 msgstr ""
 
-#. Type: note
+#. Type: select
 #. Description
 #: ../lxd.templates:2001
 msgid "Unable to reach the snap store"
 msgstr ""
 
-#. Type: note
+#. Type: select
 #. Description
 #: ../lxd.templates:2001
 msgid ""
@@ -62,10 +62,18 @@ msgid ""
 "needed so that you can reach the snap store."
 msgstr ""
 
-#. Type: note
+#. Type: select
 #. Description
 #: ../lxd.templates:2001
 msgid "You can manually check for connectivity by running \"snap info lxd\""
+msgstr ""
+
+#. Type: select
+#. Description
+#: ../lxd.templates:2001
+msgid ""
+"Aborting will cause the upgrade to fail and will require it to be re-"
+"attempted once snapd is functional on the system."
 msgstr ""
 
 #. Type: select

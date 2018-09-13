@@ -20,6 +20,8 @@ case "$1" in
 
                 db_fset lxd/snap-no-connectivity seen false
                 if ! db_input critical lxd/snap-no-connectivity; then
+                    db_go
+
                     if [ "${COUNT}" = "0" ]; then
                         echo "===> Unable to contact the store, trying every minute for the next 30 minutes"
                     elif [ "${COUNT}" = "10" ]; then
@@ -33,12 +35,18 @@ case "$1" in
 
                     sleep 1m
                 else
+                    db_go
+                    db_get lxd/snap-no-connectivity
+                    if [ "${RET}" = "Abort" ]; then
+                        echo "===> Aborting at user request"
+                        exit 1
+                    fi
+
                     if [ "${COUNT}" = "0" ]; then
                         echo "===> Unable to contact the store"
                     fi
                 fi
 
-                db_go
                 COUNT=$((COUNT+1))
             done
 
