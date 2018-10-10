@@ -1,3 +1,9 @@
+lxd (1:0.4) cosmic; urgency=medium
+
+  * Remove rc.d symlinks (LP: #1797175)
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Wed, 10 Oct 2018 12:28:15 -0400
+
 lxd (1:0.3) cosmic; urgency=medium
 
   * Install the snap on package installation too, not just upgrades
