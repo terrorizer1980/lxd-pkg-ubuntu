@@ -98,6 +98,7 @@ case "$1" in
         echo "==> Cleaning up leftovers"
         deb-systemd-invoke stop lxd.socket lxd.service lxd-containers.service || true
         deb-systemd-invoke disable lxd.socket lxd.service lxd-containers.service || true
+        update-rc.d lxd remove || true
         rm -rf --one-file-system /etc/dnsmasq.d-available/lxd
         rm -rf --one-file-system /etc/init.d/lxd
         rm -rf --one-file-system /etc/logrotate.d/lxd
