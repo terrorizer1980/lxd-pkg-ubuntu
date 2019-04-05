@@ -9,7 +9,7 @@ msgstr ""
 "Project-Id-Version: lxd\n"
 "Report-Msgid-Bugs-To: lxd@packages.debian.org\n"
 "POT-Creation-Date: 2018-09-13 10:25-0400\n"
-"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"PO-Revision-Date:  2019-04-05 13:08+0200\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
 "Language: \n"
@@ -78,13 +78,37 @@ msgstr ""
 
 #. Type: select
 #. Description
+#: ../lxd.templates:2001
+msgid ""
+"Skipping will let the package upgrade to continue, but the lxd commands will "
+"not be functional until the lxd snap is installed. Skipping is allowed only "
+"when lxd is not activated on the system."
+msgstr ""
+
+#. Type: error
+#. Description
 #: ../lxd.templates:3001
+msgid "Skipping is not allowed when lxd is activated"
+msgstr ""
+
+#. Type: error
+#. Description
+#: ../lxd.templates:3001
+msgid ""
+"LXD is detected to be active or activated in the past. Please stop LXD and "
+"remove local data in /var/lib/lxd/ if you would like to skip installing the "
+"lxd snap and migrating the local data."
+msgstr ""
+
+#. Type: select
+#. Description
+#: ../lxd.templates:4001
 msgid "LXD snap track"
 msgstr ""
 
 #. Type: select
 #. Description
-#: ../lxd.templates:3001
+#: ../lxd.templates:4001
 msgid ""
 "The LXD project puts out monthly feature releases which while backward "
 "compatible at an API and CLI level, will contain some behavior change and "
@@ -93,7 +117,7 @@ msgstr ""
 
 #. Type: select
 #. Description
-#: ../lxd.templates:3001
+#: ../lxd.templates:4001
 msgid ""
 "In addition to those, every 2 years a LTS release is made which comes with 5 "
 "years of support through frequent bugfix-only releases."
@@ -101,7 +125,7 @@ msgstr ""
 
 #. Type: select
 #. Description
-#: ../lxd.templates:3001
+#: ../lxd.templates:4001
 msgid ""
 "The LXD team recommends you pick \"3.0\" for production environments and use "
 "\"latest\" if you're interested in getting the latest LXD features."
