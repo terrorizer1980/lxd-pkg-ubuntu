@@ -8,8 +8,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: lxd\n"
 "Report-Msgid-Bugs-To: lxd@packages.debian.org\n"
-"POT-Creation-Date: 2018-09-13 10:25-0400\n"
-"PO-Revision-Date:  2019-04-05 13:08+0200\n"
+"POT-Creation-Date: 2019-04-05 18:01-0400\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
 "Language: \n"
@@ -80,24 +80,24 @@ msgstr ""
 #. Description
 #: ../lxd.templates:2001
 msgid ""
-"Skipping will let the package upgrade to continue, but the lxd commands will "
-"not be functional until the lxd snap is installed. Skipping is allowed only "
-"when lxd is not activated on the system."
+"Skipping will let the package upgrade continue but the LXD commands will not "
+"be functional until the LXD snap is installed. Skipping is allowed only when "
+"LXD is not activated on the system."
 msgstr ""
 
 #. Type: error
 #. Description
 #: ../lxd.templates:3001
-msgid "Skipping is not allowed when lxd is activated"
+msgid "Skipping is not allowed when LXD has been initialized"
 msgstr ""
 
 #. Type: error
 #. Description
 #: ../lxd.templates:3001
 msgid ""
-"LXD is detected to be active or activated in the past. Please stop LXD and "
+"LXD appears to have been configured on this system. Please stop LXD and "
 "remove local data in /var/lib/lxd/ if you would like to skip installing the "
-"lxd snap and migrating the local data."
+"LXD snap and migrating the local data."
 msgstr ""
 
 #. Type: select
