@@ -63,7 +63,6 @@ case "$1" in
         done
 
         if ! ${SKIP}; then
-
             # Set the default track
             db_get lxd/snap-track
             if [ -z "${RET}" ]; then
@@ -86,7 +85,7 @@ case "$1" in
             mkdir -p /lib/modules
 
             # Extract the OS release
-            RELEASE="18.10"
+            RELEASE="19.04"
             if [ -e "/etc/os-release" ]; then
                 RELEASE=$(. /etc/os-release && echo "${VERSION_ID}")
             fi
