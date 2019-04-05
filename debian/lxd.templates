@@ -13,7 +13,7 @@ _Description: Upgrade to the LXD snap
 
 Template: lxd/snap-no-connectivity
 Type: select
-Choices: Retry, Abort
+Choices: Retry, Abort, Skip
 _Description: Unable to reach the snap store
  Your system is unable to reach the snap store, please make sure you're
  connected to the Internet and update any firewall or proxy settings as
@@ -23,6 +23,17 @@ _Description: Unable to reach the snap store
  .
  Aborting will cause the upgrade to fail and will require it to be re-attempted
  once snapd is functional on the system.
+ .
+ Skipping will let the package upgrade to continue, but the lxd commands
+ will not be functional until the lxd snap is installed. Skipping is allowed
+ only when lxd is not activated on the system.
+
+Template: lxd/snap-install-cant-be-skipped
+Type: error
+_Description: Skipping is not allowed when lxd is activated
+ LXD is detected to be active or activated in the past. Please stop LXD and
+ remove local data in /var/lib/lxd/ if you would like to skip installing
+ the lxd snap and migrating the local data.
 
 Template: lxd/snap-track
 Type: select
