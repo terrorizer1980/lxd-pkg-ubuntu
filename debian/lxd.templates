@@ -24,16 +24,16 @@ _Description: Unable to reach the snap store
  Aborting will cause the upgrade to fail and will require it to be re-attempted
  once snapd is functional on the system.
  .
- Skipping will let the package upgrade to continue, but the lxd commands
- will not be functional until the lxd snap is installed. Skipping is allowed
- only when lxd is not activated on the system.
+ Skipping will let the package upgrade continue but the LXD commands
+ will not be functional until the LXD snap is installed. Skipping is allowed
+ only when LXD is not activated on the system.
 
 Template: lxd/snap-install-cant-be-skipped
 Type: error
-_Description: Skipping is not allowed when lxd is activated
- LXD is detected to be active or activated in the past. Please stop LXD and
+_Description: Skipping is not allowed when LXD has been initialized
+ LXD appears to have been configured on this system. Please stop LXD and
  remove local data in /var/lib/lxd/ if you would like to skip installing
- the lxd snap and migrating the local data.
+ the LXD snap and migrating the local data.
 
 Template: lxd/snap-track
 Type: select
