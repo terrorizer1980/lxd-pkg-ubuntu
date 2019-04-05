@@ -4,6 +4,9 @@ lxd (1:0.4.1) cosmic; urgency=medium
   * Allow skipping snap installation when LXD was never used
     (LP: #1821924)
 
+  [ Stéphane Graber ]
+  * Tweak debconf messages a bit.
+
  -- Stéphane Graber <stgraber@ubuntu.com>  Fri, 05 Apr 2019 12:28:54 -0400
 
 lxd (1:0.4) cosmic; urgency=medium
