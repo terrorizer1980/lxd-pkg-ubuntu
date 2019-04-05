@@ -63,7 +63,6 @@ case "$1" in
         done
 
         if ! ${SKIP}; then
-
             # Set the default track
             db_get lxd/snap-track
             if [ -z "${RET}" ]; then
