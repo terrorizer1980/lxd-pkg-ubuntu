@@ -1,3 +1,10 @@
+lxd (1:0.4.2) cosmic; urgency=medium
+
+  [ Balint Reczey ]
+  * Fix error message on missing snap. (LP: #1821924)
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Thu, 11 Apr 2019 10:37:34 -0400
+
 lxd (1:0.4.1) cosmic; urgency=medium
 
   [ Balint Reczey ]
