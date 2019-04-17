@@ -5,6 +5,11 @@ case "$1" in
     install|upgrade)
         . /usr/share/debconf/confmodule
 
+        # Early check for systems that were already switched
+        if ([ ! -e "/var/lib/lxd/server.crt" ] || [ ! -e "/var/lib/lxd" ]) && [ -e "/var/snap/lxd" ]; then
+            exit 0
+        fi
+
         echo "=> Installing the LXD snap"
 
         # Warn about downtime
