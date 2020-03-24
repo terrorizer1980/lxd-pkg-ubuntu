@@ -37,7 +37,7 @@ _Description: Skipping is not allowed when LXD has been initialized
 
 Template: lxd/snap-track
 Type: select
-Choices: latest, 3.0
+Choices: latest, 3.0, 4.0
 _Description: LXD snap track
  The LXD project puts out monthly feature releases which while backward
  compatible at an API and CLI level, will contain some behavior change
@@ -46,5 +46,5 @@ _Description: LXD snap track
  In addition to those, every 2 years a LTS release is made which comes
  with 5 years of support through frequent bugfix-only releases.
  .
- The LXD team recommends you pick "3.0" for production environments and use
+ The LXD team recommends you pick "4.0" for production environments and use
  "latest" if you're interested in getting the latest LXD features.

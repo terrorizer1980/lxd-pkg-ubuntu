@@ -72,7 +72,7 @@ case "$1" in
             db_get lxd/snap-track
             if [ -z "${RET}" ]; then
                 if [ -e "/etc/os-release" ] && grep -q " LTS " /etc/os-release; then
-                    db_set lxd/snap-track "3.0"
+                    db_set lxd/snap-track "4.0"
                 fi
 
                 db_fset lxd/snap-track seen false
