@@ -1,3 +1,9 @@
+lxd (1:0.9) focal; urgency=medium
+
+  * Detect and handle systems that are unable to run snapd. (LP: #1862550)
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Fri, 17 Apr 2020 16:01:48 -0400
+
 lxd (1:0.8) focal; urgency=medium
 
   * Update for the LXD 4.0 track.
