@@ -1,6 +1,32 @@
 #!/bin/sh
 set -e
 
+skip_unusable_snapd() {
+    if [ -e "/run/snapd.socket" ]; then
+        # Snapd is present, run the upgrade
+        return 1
+    fi
+
+    if [ ! -e "/var/lib/lxd/server.crt" ]; then
+        # LXD was never used, safe to skip
+        return 0
+    fi
+
+    for path in containers images networks storage-pools; do
+        if [ ! -e "/var/lib/lxd/${path}" ]; then
+            # Path doesn't exist, continue to next one
+            continue
+        fi
+
+        if [ -n "$(ls -A "/var/lib/lxd/${path}")" ]; then
+            # Detected some data, unsafe to skip automatically
+            return 1
+        fi
+    done
+
+    return 0
+}
+
 case "$1" in
     install|upgrade)
         . /usr/share/debconf/confmodule
@@ -23,6 +49,12 @@ case "$1" in
         COUNT=0
         SKIP=false
         while :; do
+            if skip_unusable_snapd; then
+                echo "===> System doesn't have a working snapd and LXD was never used, skipping"
+                SKIP=true
+                break
+            fi
+
             snap info lxd >/dev/null 2>&1 && break
 
             db_fset lxd/snap-no-connectivity seen false
