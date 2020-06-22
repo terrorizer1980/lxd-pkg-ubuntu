@@ -1,3 +1,9 @@
+lxd (1:0.10) UNRELEASED; urgency=medium
+
+  * Umount shared paths before delete. (LP: #1876979)
+
+ -- Stéphane Graber <stgraber@ubuntu.com>  Mon, 22 Jun 2020 17:25:29 -0400
+
 lxd (1:0.9) focal; urgency=medium
 
   * Detect and handle systems that are unable to run snapd. (LP: #1862550)
